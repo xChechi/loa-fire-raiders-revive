@@ -1,0 +1,17 @@
+[paths]
+stock_dir = ".stock"
+db_path = "data/player.db"
+apk = "C:/Users/Stefan.Nasev/Downloads/LOA Fire Raiders 277sy.apk"
+
+[net]
+host = "192.168.1.50"
+port = 8112
+
+[account]
+username = "stefan"
+
+[player]
+# 0 runs the stock new-player guide. If the guide blocks the main city, set
+# 14302: the highest id in res/data/split/new_player_guide_info.db with
+# is_over = 1 (191 rows, ids 10000 to 14304, verified 20-10-2026).
+guide_id = 0

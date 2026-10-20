@@ -1,6 +1,15 @@
 .venv/
 __pycache__/
+.pytest_cache/
+.stock/
 data/
+captures/
 *.apk
-client/
+*.jks
 *.keystore
+local.properties
+client/android/.gradle/
+client/android/build/
+client/android/app/build/
+client/android/app/src/main/assets/
+client/android/app/src/main/jniLibs/
