@@ -1,0 +1,11 @@
+{
+  "Cocos2dxRenderer": ["nativeInit", "nativeRender", "nativeOnPause", "nativeOnResume",
+    "nativeTouchesBegin", "nativeTouchesEnd", "nativeTouchesMove", "nativeTouchesCancel",
+    "nativeKeyDown", "nativeInsertText", "nativeDeleteBackward", "nativeGetContentText"],
+  "Cocos2dxLuaJavaBridge": ["callLuaFunctionWithString", "callLuaGlobalFunctionWithString",
+    "retainLuaFunction", "releaseLuaFunction"],
+  "Cocos2dxHelper": ["nativeSetApkPath", "nativeSetEditTextDialogResult"],
+  "Cocos2dxBitmap": ["nativeInitBitmapDC"],
+  "Cocos2dxETCLoader": ["nativeSetTextureInfo"],
+  "Cocos2dxAccelerometer": ["onSensorChanged"]
+}
