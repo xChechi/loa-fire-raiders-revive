@@ -36,11 +36,13 @@ async def serve(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     conn_ids = count(1)
     log = log_path.open("a", encoding="utf-8", buffering=1)
+    handlers: set[asyncio.Task[None]] = set()
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         conn_id = next(conn_ids)
         peer = "%s:%d" % writer.get_extra_info("peername")[:2]
         offset = 0
+        handlers.add(asyncio.current_task())
         _emit(log, f"conn#{conn_id} {peer} OPEN")
         try:
             while data := await reader.read(65536):
@@ -48,15 +50,29 @@ async def serve(
                 _emit_raw(log, hexdump(data, offset))
                 offset += len(data)
         finally:
+            handlers.discard(asyncio.current_task())
             _emit(log, f"conn#{conn_id} {peer} CLOSE after {offset} bytes")
             writer.close()
 
-    server = await asyncio.start_server(handle, host, port)
-    _emit(log, f"capture listening on {host}:{port}, writing {log_path}")
-    if ready is not None:
-        ready.set()
-    async with server:
-        await server.serve_forever()
+    try:
+        server = await asyncio.start_server(handle, host, port)
+        _emit(log, f"capture listening on {host}:{port}, writing {log_path}")
+        if ready is not None:
+            ready.set()
+        try:
+            # Not serve_forever(): on cancellation it awaits wait_closed(),
+            # which drains the open connections and so never returns here.
+            await asyncio.Event().wait()
+        finally:
+            # Never wait for the connections to drain: the client abandons a
+            # socket without closing it, and an abandoned socket sends no EOF.
+            server.close()
+            for handler in list(handlers):
+                handler.cancel()
+            if handlers:
+                await asyncio.gather(*handlers, return_exceptions=True)
+    finally:
+        log.close()
 
 
 def _emit(log, line: str) -> None:
