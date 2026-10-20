@@ -1198,9 +1198,19 @@ def scan(scripts_root: Path) -> dict[str, dict[str, str]]:
             cls = raw.strip('"') if raw.startswith('"') else local.get(raw)
             if cls is None:
                 continue
-            found.setdefault(cls, {})[m.group("method")] = m.group("sig")
+            sigs = found.setdefault(cls, {}).setdefault(m.group("method"), [])
+            if m.group("sig") not in sigs:
+                sigs.append(m.group("sig"))
     return found
 ```
+
+`scan()` keeps **every** distinct sig per method as a list, because the stock Lua
+overloads some methods (`JavaComSDKManager.getGameServers` is called as both `()V`
+and `(Ljava/lang/String;)V`, `sendInvite` with one and with three strings).
+`render()` emits one Java overload per sig; a malformed sig (`java_decl` returns
+`None`) is skipped with a comment. Adjust the `render()` code and the Task 5 tests
+below accordingly: wherever they index `found[cls][method]` as a single string,
+treat it as a list and assert `"(Ljava/lang/String;)V" in found["com/uuzu/nslm/JavaComSDKManager"]["getGameServers"]`.
 
 Second half of the same file:
 
@@ -2540,7 +2550,7 @@ def test_two_concurrent_sessions_are_independent(reg, settings) -> None:
         peers.append(session.peer)
         session.data["server_id"] = req.server_id
         return reg.message_class("QuerySrvInfoRes")(
-            district=1, addr=f"127.0.0.1:{settings.port}"
+            district=1, addr=f"127.0.0.1:{session.bound_port}"
         )
 
     def on_protocol(session: Session, req):
@@ -2693,6 +2703,7 @@ Second half of `server/net/server.py`:
 class Session:
     writer: asyncio.StreamWriter
     peer: str
+    bound_port: int  # the port this server is really listening on (ephemeral in tests)
     player_id: int | None = None
     data: dict[str, object] = field(default_factory=dict)
 
@@ -2732,7 +2743,7 @@ class Server:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peer = "%s:%d" % writer.get_extra_info("peername")[:2]
-        session = Session(writer=writer, peer=peer)
+        session = Session(writer=writer, peer=peer, bound_port=self.port)
         log.info("connection from %s", peer)
         buf = b""
         try:
@@ -2873,7 +2884,7 @@ git commit -m "feat(server): asyncio core, per-connection sessions and the zero-
   - `server.modules.login.handlers(registry, settings, conn) -> dict[tuple[int, int], Handler]`, returning handlers for `(194, 2001)`, `(3, 2005)`, `(3, 2015)`, `(3, 2001)`, `(3, 2003)`, `(3, 2009)`.
 
 **Decisions this task locks in, each traced to the Lua:**
-- `QuerySrvInfoRes.district = 1` and `addr = f"{settings.host}:{settings.port}"`. `GameLoginScene:querySrvInfoRes` splits `addr` on a colon and rejects a port of 0 or less, so both halves must be present.
+- `QuerySrvInfoRes.district = 1` and `addr = f"{settings.host}:{session.bound_port}"` (the live bound port carried on the `Session`, so ephemeral test ports and the Task 15 fake client work). `GameLoginScene:querySrvInfoRes` splits `addr` on a colon and rejects a port of 0 or less, so both halves must be present.
 - `ProtocolRes.issue_required = f"{req.issue}:0"`. `checkServerVersion` splits on a colon and reads `serverData[1]`, so the string must contain one; with `CONFIG_DEVELOP == 1` neither half is compared.
 - `QuerySrvStateRes.state = 0` means "log in normally"; the inline Lua handler returns immediately on 0.
 - First `LoginReq` for an unknown username answers `status = STATUS_NO_ROLE` (327682). That is what makes the client send `GameplayReq`, which is this game's character creation. Every later `LoginReq` answers `status = STATUS_OK`.
@@ -3063,7 +3074,7 @@ def test_srvinfo_answers_host_and_port(reg, settings) -> None:
         res = reg.message_class("QuerySrvInfoRes")()
         res.ParseFromString(frame.body)
         assert res.district == 1
-        assert res.addr == f"127.0.0.1:{settings.port}"
+        assert res.addr == f"127.0.0.1:{port}"  # the live port, not settings.port
         await c.close()
         await _stop(task)
 
@@ -3224,8 +3235,10 @@ def handlers(
 ) -> dict[tuple[int, int], Handler]:
     def srv_info(session: Session, req):
         log.info("server info asked for server_id=%r", req.server_id)
+        # Live port from the Session, never settings.port: tests bind port 0 and
+        # the fake client of Task 15 really dials this address.
         return registry.message_class("QuerySrvInfoRes")(
-            district=1, addr=f"{settings.host}:{settings.port}"
+            district=1, addr=f"{settings.host}:{session.bound_port}"
         )
 
     def protocol(session: Session, req):
