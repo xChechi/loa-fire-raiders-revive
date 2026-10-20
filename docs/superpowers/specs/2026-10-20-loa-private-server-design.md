@@ -16,7 +16,9 @@ nothing is redistributed.
 3. Heroes: recruit, level, star up, gear, angels.
 4. Dailies: sign-in, shop, mail, rewards.
 
-Arena, guild, cross-server and events are hidden or stubbed. Chinese UI stays as is.
+Arena, guild, cross-server and events are hidden or stubbed. The UI text is
+translated to English (added 20-10-2026, see 3.3); text baked into images stays
+Chinese in v1.
 
 ## 2. What we have (verified facts)
 
@@ -101,13 +103,50 @@ dex and assets untouched. A script `build_apk.py` applies the patches and produc
 5. Sign: debug keystore via `apksigner` from the Android SDK build-tools already
    installed on this PC (`AppData/Local/Android/Sdk/build-tools/36.x`). Zipalign
    before signing.
+6. English build (once 3.3 has run): `Language_cn.lua` replaced by the English
+   table under the same keys, patched `language.db` and config `.db` files copied
+   over the originals in `assets/res/data/split/`. The server reads the same
+   patched tables so names match on both sides.
 
 Open risk, checked first (5.2): the Java-side channel SDK
 (`com.supersdk.openapi.SuperSdkApplication`) may demand its own login or network
 before Lua starts. If so, one extra step: `apktool` decode, patch the smali entry
 to skip SDK init, rebuild. Jadx is installed for reading; `apktool` would be added.
 
-### 3.3 Tools (`tools/`)
+### 3.3 English localisation (`localise/`)
+
+The Western localisation is not in these APKs (the 2016 global APK is behind
+download walls; not pursued). The English text is produced by **Gemma 4
+(`gemma4:e4b`) on llm00**, Stefan's choice on 20-10-2026.
+
+- **Source text:** every Chinese string the player can see lives in three places:
+  `res/language/Language_cn.lua` (3,425 UI keys), `data/split/language.db` (539
+  server status texts) and text columns of the config tables (names and
+  descriptions of heroes, angels, items, skills, buffs, stages, chapters, shop,
+  mail). Measured: 53,428 unique strings, 816k characters; after masking digits
+  with `#` they collapse to 10,788 templates, 142k characters, median 11 chars.
+- **Pipeline (`localise/translate.py`):** extract → template (digits → `#`) →
+  translate templates in batches of 40 through Ollama `/api/generate`,
+  temperature 0.1, line-numbered plain text output (not JSON; escapes broke
+  parsing in the probe) → validate (line count, every `#`, `%s`, `%d`, `{n}` and
+  `<color>` tag preserved, else retry the batch) → cache `template → en` in
+  `localise/cache.sqlite` so the job is resumable → re-expand digits → write
+  `Language_en.lua`, patched `language.db` and patched config `.db` copies.
+- **Glossary first:** hero, angel, item, skill and stage *names* are translated
+  in a first pass and fed as a glossary to every later batch, so a hero has one
+  name everywhere. Measured probe: Gemma renders 玫瑰骑士 "Rose Knight", 烈焰女神
+  "Blazing Goddess", UI strings correctly; one skill line dropped "to all
+  enemies", so skill and buff descriptions get a spot-check sample of 100 before
+  the pass is accepted.
+- **Throughput:** ~10 tokens/s on llm00, so the full pass is roughly 14 to 20
+  hours, run detached on llm00 or this PC per the event-watcher pattern, with the
+  cache making restarts free. Milestone 1 ships with Chinese text; the English
+  tables are swapped into the APK build (3.2 step 6) when the pass is done.
+- **Out of v1:** text inside PNGs (button labels, hero-name images under
+  `img/hero/name`, titles in UI atlases). Could be re-rendered later from the
+  glossary; not needed to play.
+
+### 3.4 Tools (`tools/`)
 
 - `capture_server.py`: a dummy TCP listener that logs raw bytes of whatever the
   client sends; used once to learn the framing, kept for debugging.
@@ -146,8 +185,11 @@ inside), derive the header layout. Expected: a length prefix plus service, cmd a
 status fields; confirmed from the bytes, not guessed. Written to
 `docs/protocol.md`.
 
-5.2 **Boot test on the phone (Stefan, 5 min, can run in parallel).** Install the
-stock 277sy APK on the S20 Ultra and report what appears after the splash. Decides
+5.2 **Boot test on the phone (Stefan).** Result so far (20-10-2026): the stock
+277sy APK installs and starts on the S20 Ultra and shows its own permission gate
+(storage + phone state, buttons "exit game" / "go to settings"). So the 32-bit
+lib runs and the Java layer starts. Next observation needed: the screen after
+the permissions are granted (login screen, channel-SDK dialog, or crash). Decides
 whether the client patch is Lua-only or needs the smali step.
 
 5.3 Milestones, each ending in a phone test by Stefan:
@@ -189,7 +231,8 @@ the gate.
 ## 8. Out of scope
 
 Arena, guild, cross-server, events, chat, friends, payments, anti-cheat,
-multi-account, public exposure of the server, English localisation, arm64 build.
+multi-account, public exposure of the server, English text inside images, arm64
+build.
 
 ## 9. Open points
 
