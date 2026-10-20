@@ -45,18 +45,19 @@ Chinese in v1.
 
 ## 3. Architecture
 
-Three deliverables, one repo (`loa-private-server`, this folder):
+Four deliverables, one repo (`loa-private-server`, this folder):
 
 ```
 loa-private-server/
   server/            Python 3.14 asyncio TCP server (the game server)
-  client-patch/      scripts that turn the stock APK into the private-server APK
+  client/            our own Android app (Gradle) + asset/Lua build script
+  localise/          Chinese → English pipeline (Gemma 4 on llm00)
   tools/             protocol capture, proto compile, dev helpers
   docs/              this spec, plans, protocol notes
 ```
 
-The stock APK and the extracted client tree stay outside git (size, licence);
-`client-patch/` refers to them by path.
+The stock APK, the extracted client tree, `libgame.so` and the assembled assets
+stay outside git (size, licence); build scripts refer to them by path.
 
 ### 3.1 Server (`server/`)
 
@@ -84,34 +85,75 @@ The stock APK and the extracted client tree stay outside git (size, licence);
   working for systems we have not implemented; the log tells us what to do next.
 - **Heartbeat / ping:** answered immediately.
 
-### 3.2 Client patch (`client-patch/`)
+### 3.2 Our own client APK (`client/`)
 
-Lua-only edits on the extracted 277sy tree, then re-zip and sign. Native lib,
-dex and assets untouched. A script `build_apk.py` applies the patches and produces
-`LOA-private.apk`:
+Decision 20-10-2026: Stefan will not grant permissions to the stock APK (channel
+SDKs for Alipay, WeChat, umeng-spy, turingad, xinstall, mob.com, plus phone-state
+and storage demands). So the stock dex, manifest and SDK native libs are **not
+reused at all**. We build our own Android app from source and take only three
+things from the stock APK: the native engine `libgame.so`, the assets, and the
+Lua scripts (patched).
 
+Why this is safe to build (verified on the binary):
+- `libgame.so` links only Android system libs (`libGLESv2`, `liblog`, `libz`,
+  `libstdc++`, `libm`, `libc`, `libdl`). None of the SDK `.so` files
+  (substrate, sygamehelper, umeng-spy, turingad, xenv, gism, EncryptorP,
+  gdbserver) are needed; they are dropped.
+- Its JNI surface is small and standard: the cocos2d-x 2.2.2 Java runtime
+  (`Cocos2dxRenderer` 12 natives, `Cocos2dxLuaJavaBridge` 4, `Cocos2dxHelper` 2,
+  `Cocos2dxBitmap`, `Cocos2dxETCLoader`, `Cocos2dxAccelerometer`,
+  `Cocos2dxGLSurfaceView`), which is open source (fetched from the cocos2d-x
+  2.2.2 tag, byte-identical signatures), plus one Yoozoo class `comSdk.IComSdk`
+  with 13 native callbacks (SDK results). We ship that class with the native
+  declarations and never call them.
+- Lua reaches Java only through `luaj` static calls on
+  `com/uuzu/nslm/JavaSuperSDKManager`, `JavaComSDKManager`, `Nslm` (login, pay,
+  float window, device id, forum, audio record). We ship stub classes with those
+  static methods returning safe constants, and the patched Lua does not call the
+  SDK login at all.
+
+Project layout: `client/android/` is a Gradle app (Android Studio and SDK
+platforms 36 already on this PC; Java from the Studio JBR):
+- `app/src/main/java/org/cocos2dx/lib/*` — cocos2d-x 2.2.2 runtime sources.
+- `app/src/main/java/comSdk/IComSdk.java`, `com/uuzu/nslm/*Stub.java` — stubs.
+- `app/src/main/java/.../GameActivity.java` — `Cocos2dxActivity` subclass
+  that loads `libgame.so` and starts the GL view; nothing else.
+- `app/src/main/jniLibs/armeabi-v7a/libgame.so` — copied from the stock APK by
+  the build script, never committed.
+- `app/src/main/assets/` — assembled by `client/build_assets.py` from the
+  extracted stock tree: `res/`, `scripts/` (patched), fonts.
+- Manifest: package `bg.stefan.loa` (new id, no collision with the stock app),
+  permissions `INTERNET` only (`VIBRATE` optional), `android:debuggable=false`,
+  `usesCleartextTraffic` irrelevant (raw TCP). No storage, no phone state, no
+  overlay, no tasks.
+- Signing: a dedicated release keystore generated once and kept outside git.
+
+Lua patches applied by `build_assets.py`:
 1. `config.lua` / `GameLoginScene.lua`: static server list with one entry
    `{name="Home", serverIp=<home PC LAN IP>, socket_port=8112, server_id=1}`;
    remote server-list fetch removed.
-2. `sdk/LuaSuperSDKManager.lua`: channel SDK login replaced by a fixed local
-   account (`username="stefan"`, `token="local"`); SDK calls for pay, share,
-   analytics made no-ops.
+2. `sdk/LuaSuperSDKManager.lua`: SDK login replaced by a fixed local account
+   (`username="stefan"`, `token="local"`); pay, share, analytics, float window
+   become no-ops; device id and IMEI replaced by a constant.
 3. `config.lua`: `CONFIG_DEVELOP = 1` (skips the server version string match and the
    DB MD5 check); `DEBUG_LOG = 0`.
 4. `upgrade/*.lua`, `app/MyApp.lua`: resource and script hot-update skipped; the
    game boots straight from the APK's own assets.
-5. Sign: debug keystore via `apksigner` from the Android SDK build-tools already
-   installed on this PC (`AppData/Local/Android/Sdk/build-tools/36.x`). Zipalign
-   before signing.
-6. English build (once 3.3 has run): `Language_cn.lua` replaced by the English
+5. English build (once 3.3 has run): `Language_cn.lua` replaced by the English
    table under the same keys, patched `language.db` and config `.db` files copied
-   over the originals in `assets/res/data/split/`. The server reads the same
-   patched tables so names match on both sides.
+   over the originals in `res/data/split/`. The server reads the same patched
+   tables so names match on both sides.
 
-Open risk, checked first (5.2): the Java-side channel SDK
-(`com.supersdk.openapi.SuperSdkApplication`) may demand its own login or network
-before Lua starts. If so, one extra step: `apktool` decode, patch the smali entry
-to skip SDK init, rebuild. Jadx is installed for reading; `apktool` would be added.
+What remains closed-source inside our APK: `libgame.so` itself (the Yoozoo game
+engine: cocos2d-x, LuaJIT, protobuf, curl, OpenSSL, DragonBones, SQLite). It has
+no network destination of its own; every host it connects to comes from the Lua
+config we control. The stock APK should be uninstalled from the phone; it is not
+needed again.
+
+Risk, now moved to the first build: the engine may expect specific Java
+behaviour we have not seen (an extra `FindClass` at runtime, an asset path
+convention). The symbol table is unstripped, so a crash log names the missing
+piece directly. The old 5.2 phone test of the stock APK is dropped.
 
 ### 3.3 English localisation (`localise/`)
 
@@ -185,12 +227,13 @@ inside), derive the header layout. Expected: a length prefix plus service, cmd a
 status fields; confirmed from the bytes, not guessed. Written to
 `docs/protocol.md`.
 
-5.2 **Boot test on the phone (Stefan).** Result so far (20-10-2026): the stock
-277sy APK installs and starts on the S20 Ultra and shows its own permission gate
-(storage + phone state, buttons "exit game" / "go to settings"). So the 32-bit
-lib runs and the Java layer starts. Next observation needed: the screen after
-the permissions are granted (login screen, channel-SDK dialog, or crash). Decides
-whether the client patch is Lua-only or needs the smali step.
+5.2 **First own-shell build (second task).** Gradle app from 3.2 with the stock
+assets and unpatched Lua except the server list, pointed at the capture server.
+Done when the S20 Ultra shows the game's login scene and the capture server logs
+the first packet. Observation from 20-10-2026: the stock APK installs and starts
+on the S20 Ultra up to its permission gate, so the 32-bit library runs on the
+phone; Stefan declined to grant it permissions, which is why we build our own
+shell.
 
 5.3 Milestones, each ending in a phone test by Stefan:
 
@@ -238,5 +281,5 @@ build.
 
 - Home PC = this machine (assumed; Docker 29 and Python 3.14 present). LAN address
   for the APK is read at build time.
-- Result of 5.2 (Java SDK gate).
+- First own-shell build (5.2) may reveal an engine expectation we have not seen; fixed from the crash log.
 - Exact status-code conventions per module, filled in as each module is built.
