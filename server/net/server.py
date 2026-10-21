@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from google.protobuf.descriptor import FieldDescriptor
+from google.protobuf.message import DecodeError
 
 from server.net import framing, msgmap
 from server.net.registry import Registry
@@ -16,6 +17,11 @@ from server.settings import Settings
 log = logging.getLogger("loa.net")
 
 Handler = Callable[["Session", object], object | None]
+
+# How much of a rejected body reaches the log. The largest real frame in the
+# capture is 169 bytes, so 64 is enough to recognise one and short enough that
+# a flood cannot fill the disk.
+_LOG_BODY_BYTES = 64
 
 _DEFAULTS = {
     FieldDescriptor.TYPE_DOUBLE: 0.0, FieldDescriptor.TYPE_FLOAT: 0.0,
@@ -154,7 +160,22 @@ class Server:
 
         req_cls = self.registry.message_class(name)
         req = req_cls()
-        req.ParseFromString(frame.body)
+        try:
+            req.ParseFromString(frame.body)
+        except DecodeError:
+            # spec §6: never drop the connection. A body that is not valid wire
+            # format for this id gets the same answer as a handler that raised.
+            log.warning(
+                "frame %d_%d %s from %s has an undecodable body, %d bytes, "
+                "first %d hex: %s",
+                *key, name, session.peer, len(frame.body),
+                min(len(frame.body), _LOG_BODY_BYTES),
+                frame.body[:_LOG_BODY_BYTES].hex(),
+            )
+            res = stub_response(self.registry, *key, status=1)
+            if res is not None:
+                await self._reply(session, key, res)
+            return
 
         handler = self.handlers.get(key)
         if handler is None:

@@ -7,6 +7,7 @@ client-side address baked into the APK.
 """
 
 import asyncio
+import logging
 from pathlib import Path
 
 import pytest
@@ -243,6 +244,65 @@ def test_handler_exception_answers_status_one_and_keeps_the_connection(reg, sett
         # still usable
         await client.send(151, 2041)
         assert (await client.recv()).cmd == 2042
+        await client.close()
+        await _stop(task)
+
+    asyncio.run(scenario())
+
+
+def test_malformed_body_answers_a_stub_and_keeps_the_connection(
+    reg, settings, caplog
+) -> None:
+    """spec §6: never drop the connection. A corrupt body is not a reason to.
+
+    b"\\xff\\xff" is not valid wire format for QuerySrvInfoReq, so
+    ParseFromString raises DecodeError before any handler sees the request.
+    """
+    called: list[object] = []
+
+    def on_srvinfo(session: Session, req):
+        called.append(req)
+        return reg.message_class("QuerySrvInfoRes")(district=1, addr="x")
+
+    async def scenario() -> None:
+        server = Server(reg, settings, {(194, 2001): on_srvinfo}, bind_host=BIND)
+        task, port = await _run_server(server)
+        client = await Client.connect(port)
+        await client.send(194, 2001, b"\xff\xff")
+        frame = await client.recv()
+        assert (frame.service, frame.cmd) == (194, 2002)
+        res = reg.message_class("QuerySrvInfoRes")()
+        res.ParseFromString(frame.body)
+        assert res.addr == ""  # the zero stub, not the handler's answer
+        # still usable
+        await client.send(151, 2041)
+        assert (await client.recv()).cmd == 2042
+        await client.close()
+        await _stop(task)
+
+    with caplog.at_level(logging.DEBUG, logger="loa.net"):
+        asyncio.run(scenario())
+
+    assert called == [], "the handler must not run on an undecodable body"
+    hits = [
+        r for r in caplog.records
+        if r.name == "loa.net" and "ffff" in r.getMessage()
+    ]
+    assert hits, [r.getMessage() for r in caplog.records]
+    assert "194_2001" in hits[0].getMessage()
+
+
+def test_malformed_body_without_a_paired_res_sends_nothing(reg, settings) -> None:
+    """BugReportReq has no BugReportRes, so a corrupt one is logged and dropped."""
+
+    async def scenario() -> None:
+        server = Server(reg, settings, {}, bind_host=BIND)
+        task, port = await _run_server(server)
+        client = await Client.connect(port)
+        await client.send(134, 2001, b"\xff\xff")
+        await client.send(151, 2041)  # a known-answerable id, as a fence
+        frame = await client.recv()
+        assert (frame.service, frame.cmd) == (151, 2042)
         await client.close()
         await _stop(task)
 
