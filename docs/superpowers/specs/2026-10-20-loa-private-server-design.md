@@ -155,6 +155,18 @@ behaviour we have not seen (an extra `FindClass` at runtime, an asset path
 convention). The symbol table is unstripped, so a crash log names the missing
 piece directly. The old 5.2 phone test of the stock APK is dropped.
 
+**Amendment (21-10-2026).** The text above says we ship `comSdk.IComSdk` with
+its 13 native declarations. We do not, and there was never such a class to
+copy: `comSdk.IComSdk` exists in neither stock dex (jadx 1.5.6), so the stock
+build runs without it too. JNI binds a `Java_comSdk_IComSdk_*` export only when
+a Java `native` method of that name is declared, and the short-form symbol
+names carry no parameter types to recover, so the declarations cannot be
+reconstructed. Ruling from Task 5: the class is not shipped, and the
+`comSdk/ComSdkImpl` `FindClass` failure in logcat is the dead ComSDK channel
+rather than a missing file. Detail: `client/comsdk_natives_note.md`. The
+`app/src/main/java/comSdk/IComSdk.java` entry in the layout above is therefore
+void; the `com/uuzu/nslm/*` stubs are shipped as described.
+
 ### 3.3 English localisation (`localise/`)
 
 The Western localisation is not in these APKs (the 2016 global APK is behind
@@ -208,6 +220,17 @@ main-city burst: `GameReadyReq(5_2317)`, `QueryMyPushMessageReq(5_2801)`,
 `TounamentQuerySeasonStateReq(151_2041)`, hero/angel/bag/mail queries, heartbeat
 every few seconds.
 
+**Amendment (21-10-2026).** The `LoginRes` → `GameplayReq(3_2003)` step above
+does not happen. The emulator run showed the server answering
+`LoginRes{status=327682}` ("no character yet") and the client's own dump
+printing `"status" = 327682`, while `LoginSocketData:loginReceiveHdr` still took
+its `rs.status == 0` branch and sent `QueryMyselfReq(5_2005)` instead of
+`GameplayReq(3_2003)`: the body's status never reaches that gate, so the
+character-creation handshake the design assumed can never be triggered. The
+server therefore creates the character on `LoginReq(3_2001)` itself
+(commit 67652bb), and `3_2003` stays supported as a handler that still creates
+exactly one character, for a client build that does send it.
+
 **Campaign stage:** `LevelIntoReq{level}` → server checks the stage is unlocked,
 rolls `urandom[64]` (uint32 0..9999, same scale the client's guide battle uses),
 pre-rolls drops from `drop_group`/`drop_base`, stores them against the session →
@@ -243,6 +266,9 @@ shell.
 | 2 | Campaign | level, item (drops), xp | Stage 1-1 through chapter 1 fought, stars and drops persist across restarts |
 | 3 | Heroes | hero, angel, item (gear) | Recruit, level, star up, equip; values match config tables |
 | 4 | Dailies | checkin, mail, shop | Sign-in reward claimed, shop purchase, mail with attachment |
+
+Milestone 1 reached on the emulator on 21-10-2026 (task-15 evidence); the phone
+pass on the S20 Ultra, which is the milestone's own "done when", is pending.
 
 5.4 Dev loop: the Android Studio emulator on this PC (x86_64 image with ARM
 translation) is tried first for my own iteration; if the 32-bit lib does not run
