@@ -63,22 +63,31 @@ Everything the brief predicted on success is there: `DEFAULT_OPID: 1`,
 translation works. Zero `UnsatisfiedLinkError`, zero `FATAL EXCEPTION`, zero
 `AndroidRuntime`, zero `dlopen failed` in the whole 90 s.
 
-### Where it stops — the next thing to fix
+### Where it stopped on 21-10-2026, and how that gate was closed
 
-`lua_setCallBack ... SUCCESS` at **10:16:15.621** is the last line the app ever logs.
-For the remaining 86 seconds it is alive, foregrounded and completely silent. The
-screenshot at +60 s is a plain black 2280x1080 landscape frame — correct orientation,
-no login scene, no error dialog.
+On the first run `lua_setCallBack ... SUCCESS` at **10:16:15.621** was the last line the
+app ever logged. For the remaining 86 seconds it stayed alive, foregrounded and
+completely silent; the screenshot at +60 s was a plain black 2280x1080 landscape frame.
+It never reached the login scene and never opened a socket, so the server address was
+not what stopped it. The Lua SDK-init chain registered its callback through the
+generated `JavaSuperSDKManager` stub and then waited: on Android the real channel SDK's
+Java side is what fires the init/version callbacks, and the generated stub answers the
+registration without ever calling back.
 
-It never reaches the login scene, and it never tries to reach `192.168.1.50:8112` — no
-socket or connect attempt appears in the log. So **the placeholder server address was
-not what stopped it.** The Lua SDK-init chain registers its callback through the
-generated `JavaSuperSDKManager` stub and then waits. The stub returns `SUCCESS` for the
-registration but nothing ever fires the callback back into Lua, so
-`开始 android sdk init .....` never completes and the boot sequence stalls there.
+**Task 9c closed that gate** (commits `997fdb3`, `094d2ca`, 21-10-2026) with two more
+Lua patches in `client/build_assets.py`:
 
-That is a client-stub problem, ahead of anything server-side, and it is the first thing
-to deal with before a capture can get useful traffic.
+- call `g_sdkManager:checkVersion()` from `upgrade:init()`, right after the
+  `comSdk_checkVersionCallback_event` listener is registered, so the boot leaves SDK
+  init on its own;
+- `lfs.mkdir(wrireUrl .. "/upgrade")` before `MyApp:updateDB()` copies the split `.db`
+  files, which otherwise died on a missing directory.
+
+With those in, the **login scene renders in about 4 seconds** (`denglu 成功` at
+`[3.8545]`) and zero `LUA ERROR` appears in the capture. Tapping Start game connects to
+**`10.0.2.2:8112`** — the emulator's alias for this PC — and sends `194_2001`
+(`QuerySrvInfoReq`). `settings.toml` `[net] host` is `10.0.2.2` for emulator builds; a
+phone build needs the LAN address put back.
 
 ## 2. `Medium_Phone_API_36.1` — why it is unusable
 
@@ -121,25 +130,111 @@ Reuse this pair; it is the first pair tried and the fallback was never needed.
 | JDK | `C:\Program Files\Android\Android Studio\jbr` |
 | compileSdk / targetSdk / minSdk | 36 / 33 / 21 |
 
-SDK command-line tools were missing and were installed for Task 9b:
-`cmdline-tools/latest` rev 23.0 (`commandlinetools-win-16111833_latest.zip`). Its
-`sdkmanager.bat` is now a deprecation shim over the new Android CLI, and that CLI
-**rejects the `system-images;android-30;google_apis;x86_64` semicolon form** — package
-paths must use slashes, `system-images/android-30/google_apis/x86_64`.
+## 4. One-time AVD setup
 
-## 4. The loop
+Done on 21-10-2026; repeat only on a fresh machine or if `LOA_API30` is deleted.
+
+**Command-line tools.** `Sdk/cmdline-tools` did not exist and Android Studio does not
+install it. Get the current build number from Google's own package list instead of
+guessing it:
+
+```bash
+SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
+curl -sS -o /c/tmp/repo2-3.xml https://dl.google.com/android/repository/repository2-3.xml
+grep -oE "commandlinetools-win-[0-9]+_latest\.zip" /c/tmp/repo2-3.xml | sort -u | tail -1
+# 21-10-2026: commandlinetools-win-16111833_latest.zip  (rev 23.0, 155 MB)
+
+curl -sS -L -o /c/tmp/cmdline-tools.zip \
+    https://dl.google.com/android/repository/commandlinetools-win-16111833_latest.zip
+mkdir -p /c/tmp/cltools "$SDK/cmdline-tools"
+unzip -q /c/tmp/cmdline-tools.zip -d /c/tmp/cltools
+mv /c/tmp/cltools/cmdline-tools "$SDK/cmdline-tools/latest"   # inner folder becomes "latest"
+
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+"$SDK/cmdline-tools/latest/bin/sdkmanager.bat" --version      # -> 1.0.16625370 (Android CLI)
+```
+
+**System image.** `sdkmanager --licenses` is now a no-op ("the --licenses option is no
+longer needed"); nothing gates on it.
+
+```bash
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
+"$SDK/cmdline-tools/latest/bin/sdkmanager.bat" \
+    --sdk_root="C:\\Users\\Stefan.Nasev\\AppData\\Local\\Android\\Sdk" \
+    --install "system-images/android-30/google_apis/x86_64"
+```
+
+**The slash-vs-semicolon split — the two tools disagree, and one of them lies.**
+
+| tool | package form | what the other form does |
+|---|---|---|
+| `sdkmanager.bat` (Android CLI shim) | **slashes**: `system-images/android-30/google_apis/x86_64` | the semicolon form prints `Package system-images not found.` / `android-30 not found` / `google_apis not found` / `x86_64 not found` **and still exits rc=0** |
+| `avdmanager.bat` | **semicolons**: `system-images;android-30;google_apis;x86_64` | the slash form is not a package id it knows |
+
+So a script that installs an SDK package must use slashes **and must not trust the exit
+code** — grep the output for the downloaded zip instead.
+
+**Create the AVD** (semicolon form here):
+
+```bash
+export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
+SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
+"$SDK/cmdline-tools/latest/bin/avdmanager.bat" create avd \
+    -n LOA_API30 -k "system-images;android-30;google_apis;x86_64" -d pixel_4 --force
+"$SDK/emulator/emulator.exe" -list-avds        # -> LOA_API30
+```
+
+**Launch it:**
+
+```bash
+"$SDK/emulator/emulator.exe" -avd LOA_API30 -no-snapshot-load
+```
+
+On Windows run that detached, or it dies with the shell that started it — and note that
+a `run_in_background` shell is killed at end of turn, which kills the emulator with it:
+
+```bash
+powershell.exe -NoProfile -Command "Start-Process \
+  -FilePath 'C:\Users\Stefan.Nasev\AppData\Local\Android\Sdk\emulator\emulator.exe' \
+  -ArgumentList '-avd','LOA_API30','-no-snapshot-load' \
+  -RedirectStandardOutput 'C:\tmp\loa-emu30-out.txt' \
+  -RedirectStandardError 'C:\tmp\loa-emu30-err.txt'"
+```
+
+`emulator.exe` then exits and `qemu-system-x86_64.exe` carries the AVD on its own.
+Cold boot takes about 20 s; wait for it properly:
+
+```bash
+"$SDK/platform-tools/adb.exe" wait-for-device
+until [ "$("$SDK/platform-tools/adb.exe" shell getprop sys.boot_completed | tr -d '\r\n')" = "1" ]; do sleep 5; done
+```
+
+## 5. The loop
 
 Iterate on `LOA_API30`, on this PC. Nothing needs Stefan or the phone for a routine check.
 
-1. Rebuild and reinstall with the commands in section 5. `adb install -r` takes about
+1. Rebuild and reinstall with the commands in section 6. `adb install -r` takes about
    25 seconds for the 340 MB APK.
-2. Run the server on this host. The AVD reaches it either way:
-   - `adb reverse tcp:8112 tcp:8112` and point the client at `127.0.0.1:8112`, or
-   - point the client at this host's LAN address directly.
-   Either needs `settings.toml` changed and `py -3.14 -m client.build_assets` re-run,
-   because the address is baked into the assets.
-3. Device logcat is available: `adb logcat -c`, launch, `adb logcat -d`. Filter on the
-   pid plus `cocos2d`, `LOAStub`, `luajc`.
+2. Run the server on this host and let the client reach it at **`10.0.2.2:8112`**, the
+   AVD's built-in alias for the host loopback — that is what `settings.toml` holds and
+   it needs no `adb reverse`. Changing the address means editing `settings.toml` and
+   re-running `py -3.14 -m client.build_assets`, because it is baked into the assets.
+3. Device logcat is available. Clear, launch, capture, then filter on the app's pid plus
+   the engine tags:
+
+   ```bash
+   SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"; A="$SDK/platform-tools/adb.exe"
+   "$A" logcat -c
+   "$A" shell am start -n bg.stefan.loa/.GameActivity
+   sleep 90
+   "$A" logcat -d > /c/tmp/loa-logcat.txt
+   PID=$("$A" shell pidof bg.stefan.loa | tr -d '\r\n')
+   grep -E "(^[0-9-]+ [0-9:.]+ +$PID )|FindClass|UnsatisfiedLink|dlopen|cocos2d|LuaJIT|LOAStub|luajc|FATAL|AndroidRuntime|ndk_translation" \
+       /c/tmp/loa-logcat.txt
+   ```
+
+   `LUA ERROR` is the one to grep for first after a Lua patch; a clean boot has none.
 4. **The phone stays the acceptance gate.** The AVD is an x86 host running ARM
    translation on Android 11; it proves the build boots and lets changes be iterated
    cheaply, it does not prove the build works on Stefan's device. Nothing ships on a
@@ -149,7 +244,7 @@ Standing caveat kept from the API 36 round: `adb` over USB to the **phone** has 
 been set up or tested. Do not assume a device logcat when the loop moves to the phone;
 the server's own logging is the diagnostic channel there.
 
-## 5. Rebuild, reinstall, relaunch — the exact commands
+## 6. Rebuild, reinstall, relaunch — the exact commands
 
 ```bash
 cd "/c/Users/Stefan.Nasev/Downloads/Claude Cowork/Claude Code/Projects/loa-private-server"
@@ -163,11 +258,5 @@ SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
 "$SDK/platform-tools/adb.exe" shell am start -n bg.stefan.loa/.GameActivity
 ```
 
-Boot the AVD, if it is not already up:
-
-```bash
-"$SDK/emulator/emulator.exe" -avd LOA_API30 -no-snapshot-load
-```
-
-On Windows, start it detached (`powershell.exe Start-Process`) or it dies with the
-shell that launched it.
+If the AVD is not already up, boot it with the detached `Start-Process` line in
+section 4.
