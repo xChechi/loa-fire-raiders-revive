@@ -53,8 +53,8 @@ def test_full_login_burst_against_a_live_server(reg, tmp_path: Path) -> None:
         (194, 2002),
         (3, 2006),
         (3, 2016),
-        (3, 2002),   # status 327682, no character yet
-        (3, 2004),   # character created
+        (3, 2002),   # status 0: 3_2001 created the character itself, so the
+                     # replay skips 3_2003, exactly as the real client does
         (5, 2006),
         (5, 2318),
         (151, 2042),
@@ -66,7 +66,7 @@ def test_full_login_burst_against_a_live_server(reg, tmp_path: Path) -> None:
     assert db.find_player(conn, "stefan") is not None
 
 
-def test_second_run_skips_character_creation(reg, tmp_path: Path) -> None:
+def test_second_run_reuses_the_character(reg, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     conn = db.connect(settings.db_path)
 
@@ -85,6 +85,7 @@ def test_second_run_skips_character_creation(reg, tmp_path: Path) -> None:
     assert (3, 2004) not in answered
     assert answered[3] == (3, 2002)
     assert answered[4] == (5, 2006)
+    assert conn.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 1
 
 
 def test_replay_echoes_the_district_from_query_srv_info_res(reg, tmp_path: Path) -> None:

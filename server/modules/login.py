@@ -16,8 +16,12 @@ from server.settings import Settings
 log = logging.getLogger("loa.login")
 
 STATUS_OK = 0
-# LoginSocketData:loginReceiveHdr branches on exactly this value to mean
-# "this account has no character yet", and answers with GameplayReq.
+# LoginSocketData:loginReceiveHdr reads this value as "this account has no
+# character yet" and answers with GameplayReq — but only if it ever sees it.
+# It does not: on 21-10-2026 the emulator's own dump printed
+# `"status" = 327682` for our LoginRes and the handler still took its
+# `rs.status == 0` branch (docs/protocol.md, open question 1). Kept as the
+# documented value of the status the server cannot deliver; not sent.
 STATUS_NO_ROLE = 327682
 
 
@@ -58,26 +62,23 @@ def handlers(
             timestamp=int(time.time()),
         )
 
+    def _player_id(username: str) -> int:
+        row = db.find_player(conn, username)
+        if row is not None:
+            return int(row["id"])
+        player_id = db.create_player(conn, username, username, settings.guide_id)
+        log.info("created character %r as player id %d", username, player_id)
+        return player_id
+
     def login(session: Session, req):
-        row = db.find_player(conn, req.username)
-        if row is None:
-            log.info("no character for %r yet, asking the client to create one",
-                     req.username)
-            return registry.message_class("LoginRes")(status=STATUS_NO_ROLE)
-        session.player_id = int(row["id"])
+        # STATUS_NO_ROLE never reaches the client's gate, so the server creates
+        # the character itself rather than wait for a 3_2003 that never comes.
+        session.player_id = _player_id(req.username)
         log.info("login ok, player id %d", session.player_id)
         return _session_fields("LoginRes", STATUS_OK, req.token)
 
     def gameplay(session: Session, req):
-        row = db.find_player(conn, req.username)
-        if row is None:
-            player_id = db.create_player(
-                conn, req.username, req.username, settings.guide_id
-            )
-            log.info("created character %r as player id %d", req.username, player_id)
-        else:
-            player_id = int(row["id"])
-        session.player_id = player_id
+        session.player_id = _player_id(req.username)
         return _session_fields("GameplayRes", STATUS_OK, req.token)
 
     def heartbeat(session: Session, req):

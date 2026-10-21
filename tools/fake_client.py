@@ -100,6 +100,8 @@ async def replay(
     answered.append((frame.service, frame.cmd))
     res = reg.message_class("LoginRes")()
     res.ParseFromString(frame.body)
+    # LoginSocketData:loginReceiveHdr has the same branch. Against this server
+    # it is not taken: 3_2001 creates the character and answers status 0.
     if res.status == 327682:
         frame = await game.call(3, 2003, _login_body(reg, "GameplayReq", username))
         answered.append((frame.service, frame.cmd))
