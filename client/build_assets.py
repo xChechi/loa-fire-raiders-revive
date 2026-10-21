@@ -102,13 +102,19 @@ def apply_patches(assets_root: Path, server_ip: str, username: str) -> list[str]
     changed: list[str] = []
     for patch in PATCHES:
         path = assets_root / patch.relpath
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        # The anchors are written with "\n", so match against normalised text;
+        # three of the four stock files are CRLF, so write back with the
+        # convention the file arrived with. Only the patched lines then differ
+        # from .stock, and the diff stays readable.
+        newline = "\r\n" if b"\r\n" in raw else ""
+        text = raw.decode("utf-8").replace("\r\n", "\n")
         count = text.count(patch.old)
         if count != 1:
             raise PatchNotFound(patch.relpath, patch.old, count)
         new = patch.new.replace("__LOA_SERVER_IP__", server_ip)
         new = new.replace("__LOA_USERNAME__", username)
-        path.write_text(text.replace(patch.old, new, 1), encoding="utf-8", newline="")
+        path.write_text(text.replace(patch.old, new, 1), encoding="utf-8", newline=newline)
         changed.append(patch.relpath)
     return changed
 

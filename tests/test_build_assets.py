@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -68,3 +70,90 @@ def test_applying_twice_raises_instead_of_double_patching(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.0.1", username="stefan")
     with pytest.raises(PatchNotFound):
         apply_patches(assets, server_ip="10.0.0.1", username="stefan")
+
+
+@pytest.mark.parametrize("eol", ["\r\n", "\n"])
+def test_apply_patches_keeps_each_file_line_ending(tmp_path: Path, eol: str) -> None:
+    """A CRLF file stays CRLF, an LF file stays LF: only the patched lines differ."""
+    root = tmp_path / "assets"
+    for rel in TOUCHED:
+        src = STOCK_SCRIPTS / rel[len("scripts/") :]
+        text = src.read_text(encoding="utf-8")  # universal newlines -> "\n"
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(text.replace("\n", eol).encode("utf-8"))
+
+    apply_patches(root, server_ip="10.0.0.1", username="stefan")
+
+    for rel in TOUCHED:
+        raw = (root / rel).read_bytes()
+        assert raw.count(b"\n") > 0, rel
+        if eol == "\r\n":
+            assert raw.count(b"\r\n") == raw.count(b"\n"), rel + " lost CRLF"
+        else:
+            assert b"\r" not in raw, rel + " gained CR"
+
+    scene = (root / "scripts/app/game/view/scenes/GameLoginScene.lua").read_bytes()
+    assert b'socket_domain = "10.0.0.1"' in scene
+    main_lua = (root / "scripts/main.lua").read_bytes()
+    assert b"CONFIG_DEVELOP = 1;" in main_lua
+
+
+def test_documented_entry_point_builds_a_miniature_tree(tmp_path: Path) -> None:
+    """`py -3.14 -m client.build_assets` is the documented invocation; drive it."""
+    stock = tmp_path / "stock"
+    (stock / "assets/res").mkdir(parents=True)
+    (stock / "assets/fonts").mkdir(parents=True)
+    (stock / "assets/res/marker.txt").write_text("res", encoding="utf-8")
+    (stock / "assets/fonts/marker.txt").write_text("font", encoding="utf-8")
+    (stock / "assets/debug.txt").write_text("debug", encoding="utf-8")
+    for rel in TOUCHED:
+        src = STOCK_SCRIPTS / rel[len("scripts/") :]
+        dst = stock / "assets" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+    (stock / "lib/armeabi").mkdir(parents=True)
+    (stock / "lib/armeabi/libgame.so").write_bytes(b"\x7fELF fake")
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        "[paths]\n"
+        f'stock_dir = "{stock.as_posix()}"\n'
+        'db_path = "data/player.db"\n'
+        "[net]\n"
+        'host = "10.0.0.7"\n'
+        "port = 8112\n"
+        "[account]\n"
+        'username = "stefan"\n'
+        "[player]\n"
+        "guide_id = 0\n",
+        encoding="utf-8",
+    )
+    dest_assets = tmp_path / "out/assets"
+    dest_jnilibs = tmp_path / "out/jniLibs"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "client.build_assets",
+            "--settings", str(settings),
+            "--assets", str(dest_assets),
+            "--jnilibs", str(dest_jnilibs),
+        ],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.count("patched ") == len(PATCHES)
+    assert "copied libgame.so" in proc.stdout
+
+    scene = (dest_assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(
+        encoding="utf-8"
+    )
+    assert 'socket_domain = "10.0.0.7"' in scene
+    assert (dest_assets / "res/marker.txt").exists()
+    assert (dest_assets / "fonts/marker.txt").exists()
+    assert (dest_assets / "debug.txt").exists()
+    assert (dest_jnilibs / "armeabi-v7a/libgame.so").read_bytes() == b"\x7fELF fake"
