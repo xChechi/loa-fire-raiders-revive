@@ -23,6 +23,7 @@ THE SOFTWARE.
  ****************************************************************************/
 package org.cocos2dx.lib;
 
+import java.io.File;
 import java.io.UnsupportedEncodingException;
 import java.util.Locale;
 
@@ -55,6 +56,10 @@ public class Cocos2dxHelper {
 	private static String sFileDirectory;
 	private static Context sContext = null;
 	private static Cocos2dxHelperListener sCocos2dxHelperListener;
+	// quick-cocos2d-x additions, recovered from the stock dex with jadx 1.5.6 on
+	// 21-10-2026: libgame.so looks up getCocos2dxVersionName/getVersionNo by name.
+	private static String sVersionName;
+	private static int sVersionNo;
 
 	// ===========================================================
 	// Constructors
@@ -109,6 +114,22 @@ public class Cocos2dxHelper {
 	public static String getDeviceModel(){
 		return Build.MODEL;
     }
+
+	public static void setVersionName(String version) {
+		Cocos2dxHelper.sVersionName = version;
+	}
+
+	public static String getCocos2dxVersionName() {
+		return Cocos2dxHelper.sVersionName;
+	}
+
+	public static void setVersionNo(int vNo) {
+		Cocos2dxHelper.sVersionNo = vNo;
+	}
+
+	public static int getVersionNo() {
+		return Cocos2dxHelper.sVersionNo;
+	}
 
 	public static AssetManager getAssetManager() {
 		return Cocos2dxHelper.sAssetManager;
@@ -271,7 +292,12 @@ public class Cocos2dxHelper {
 		}
 		return -1;
     }
-    
+
+	public static boolean inDirectoryExists(String path) {
+		File f = new File(path);
+		return f.isDirectory();
+	}
+
     // ===========================================================
  	// Functions for CCUserDefault
  	// ===========================================================
