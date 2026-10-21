@@ -103,6 +103,16 @@ PATCHES: tuple[Patch, ...] = (
           "\tg_sdkManager:onInitLogin();\n",
           "\tg_sdkManager:onInitLogin();\n"
           "\tg_sdkManager:checkVersion();\n"),
+    # 10. MyApp:updateDB copies the split .db files into files/upgrade/ and
+    #     never checks the io.open handle. That directory is created by
+    #     MMUpdater:setVersion inside the hot-update path, which patch 2 skips,
+    #     so the copy died with "attempt to index local 'pfp' (a nil value)".
+    #     SqlManager:openDB reads the same directory, so make it, don't move
+    #     the files elsewhere.
+    Patch("scripts/app/MyApp.lua",
+          "        local dbList = g_SqlManager.dbList;\n",
+          "        local dbList = g_SqlManager.dbList;\n"
+          '        lfs.mkdir(wrireUrl .. "/upgrade");\n'),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

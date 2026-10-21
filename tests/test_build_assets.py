@@ -58,6 +58,8 @@ def test_apply_patches_rewrites_every_touched_file(assets: Path) -> None:
     app = (assets / "scripts/app/MyApp.lua").read_text(encoding="utf-8")
     assert "scheduler.performWithDelayGlobal(function() self:initLogin(); end, 0.1);" in app
 
+    assert '        lfs.mkdir(wrireUrl .. "/upgrade");\n' in app
+
     upgrade = (assets / "scripts/upgrade/upgrade.lua").read_text(encoding="utf-8")
     assert "\tg_sdkManager:checkVersion();\n" in upgrade
 
@@ -84,6 +86,21 @@ def test_upgrade_calls_checkversion_after_the_listener_is_registered(
     sdk = (assets / "scripts/sdk/LuaSuperSDKManager.lua").read_text(encoding="utf-8")
     assert 'luaj.callStaticMethod(self.javaSDKClass, "checkVersion", {}, "()V");' not in sdk
     assert 'dispatchEvent("comSdk_checkVersionCallback_event"' in sdk
+
+
+def test_the_db_copy_creates_its_target_directory(assets: Path) -> None:
+    """files/upgrade/ is made by MMUpdater:setVersion, which patch 2 skips.
+
+    MyApp:updateDB io.opens files/upgrade/<name>.db for writing and never
+    checks the handle, so a missing directory is a nil-index Lua error that
+    kills the boot one frame before the login scene. Make the directory.
+    """
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan")
+    app = (assets / "scripts/app/MyApp.lua").read_text(encoding="utf-8")
+
+    mkdir = app.index('lfs.mkdir(wrireUrl .. "/upgrade")')
+    write = app.index('pfp = io.open(wrireUrl  .."/upgrade/" .. key ..".db", "wb")')
+    assert mkdir < write
 
 
 def test_no_placeholder_survives(assets: Path) -> None:
