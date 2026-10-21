@@ -13,11 +13,21 @@ header "usually" looks like. Where the capture did not settle a field it says so
 | Device | AVD `LOA_API30` (`emulator-5554`), Android 11, our `bg.stefan.loa` build |
 | Client address | `10.0.2.2:8112`, the emulator's alias for this PC |
 | Listener | `tools/capture_server.py --host 0.0.0.0 --port 8112`, then the Task 10 probe |
-| Logs | `.superpowers/sdd/2026-10-20-plan-a-boot-to-main-city/capture-9c.log`, `probe-*.log` (gitignored) |
+| Logs | `captures/capture.log`, `.superpowers/sdd/2026-10-20-plan-a-boot-to-main-city/probe-*.log` (both gitignored) |
+
+**Provenance.** The request bytes below were captured on 21-10-2026 during **Task 9c**,
+by `tools/capture_server.py --host 0.0.0.0 --port 8112`, while that task was driving the
+client to the login scene; they were written to
+`.superpowers/sdd/2026-10-20-plan-a-boot-to-main-city/capture-9c.log` and are reused
+here, copied verbatim to `captures/capture.log` for the record. Step 1 of the Task 10
+brief — start the capture listener and tap Start-game — was **not re-run**, because that
+capture already existed and the probe below re-observed the same 27 bytes six more times.
+`--host 0.0.0.0` is deliberate in both tools: the `settings.toml` `[net] host`
+`10.0.2.2` is a client-side alias that this PC cannot bind.
 
 **Frame 1 — the client's first packet, `194_2001 QuerySrvInfoReq{server_id="1"}`.** 27
-bytes, captured three times identically by `capture_server.py` and six more times by the
-probe, byte for byte the same every time:
+bytes, captured three times identically by `capture_server.py` in Task 9c and six more
+times by the Task 10 probe, byte for byte the same every time:
 
 ```
 00000000  03 00 00 00 00 00 01 00  c2 00 d1 07 00 00 00 00  |................|
@@ -137,8 +147,13 @@ out which bytes the client actually reads — results in the table above and und
 | status@12 | `11000000 0000 0100 c200 d207 02000500 00×8` | accepted, identical behaviour |
 | status@16 | `11000000 0000 0100 c200 d207 00000000 02000500 00000000` | accepted, identical behaviour |
 | status@20 | `11000000 0000 0100 c200 d207 00×8 02000500` | accepted, identical behaviour |
-| district@4 | `11000000 0100 0100 c200 d207 00×12` | accepted, identical behaviour; the client still took its district from the **body**, sending `01 00` at offset 4 afterwards because the body said `district = 1` |
+| district@4 | `11000000 0100 0100 c200 d207 00×12` | accepted, identical behaviour. Proves nothing about where the client takes its district from — the body said `1` here too — only that a non-zero inbound offset 4 is not rejected |
 | body district=7 | `11000000 0000 0100 c200 d207 00×12`, body `{district: 7, addr: ...}` | accepted; every later client frame carried `07 00` at offset 4 |
+
+The run that proves the district comes from the **body** is `mirror`: its header carried
+`00 00` at offset 4 while its body said `district = 1`, and the client's later frames
+carried `01 00`. `body district=7` repeats that with a second value. The `district@4` run
+only shows that the inbound offset-4 value is not validated.
 
 ## The second connection
 
@@ -176,6 +191,20 @@ When the server sends a response it writes, in this order:
 
 Then the serialized body, immediately after byte 23, with no padding and no terminator.
 
+## Contract for `server/net/framing.py`
+
+Controller ruling for Task 11, reconciling the plan's API with the header this capture
+found. Verbatim:
+
+> The header has no status slot; Task 11 keeps the planned API for interface stability
+> with Tasks 12-15: `Frame(service, cmd, status, body)` where decode sets `status = 0`
+> always and additionally exposes `district` (the u16 at offset 4) as a Frame field;
+> `encode(service, cmd, status, body, district=0)` ignores `status` on the wire, writes
+> the 24-byte header as documented (length = body length only, LE u32; offset 4 =
+> district; offset 6 = constant 1; offsets 8/10 = service/cmd LE u16; 12 zero bytes).
+> Status semantics live in the protobuf body (`*Res.status`), which Task 13 sets.
+> HEADER_SIZE = 24.
+
 ## Open questions
 
 1. **Where `status` comes from — the important one.** Every message the client dispatches
@@ -189,6 +218,10 @@ Then the serialized body, immediately after byte 23, with no padding and no term
    **unknown**. Harmless for every success path. It becomes a blocker the first time the
    server needs to *signal an error* to the client, `327682` included — that is the
    moment to disassemble `libgame.so`'s `MMMsgProcessHandler` rather than probe further.
+   How the server code lives with this is settled above in
+   [Contract for `server/net/framing.py`](#contract-for-servernetframingpy): `status`
+   stays in the API, never reaches the wire, and the error semantics the handlers need
+   go in the protobuf body's own `status` field.
 2. **The constant `1` at offset 6.** Present in every frame in both directions and
    accepted by the client in every response, but never sent as anything other than `1`,
    so what it means — protocol version, compression flag, connection kind — is unknown.
