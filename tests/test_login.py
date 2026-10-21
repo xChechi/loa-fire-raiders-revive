@@ -123,6 +123,35 @@ def test_first_login_creates_the_player_and_answers_ok(reg, settings) -> None:
     asyncio.run(scenario())
 
 
+def test_login_uses_the_settings_account_not_the_name_the_client_sent(
+    reg, settings
+) -> None:
+    """One player, one account. Seen live on 21-10-2026: a client reconnecting
+    after the server restarted sent LoginReq with an empty username, and the
+    server created a second, nameless character for it."""
+    conn = connect(settings.db_path)
+
+    async def scenario() -> None:
+        server = Server(
+            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+        )
+        task, port = await _run_server(server)
+        c = await Client.connect(port)
+
+        await c.send(3, 2001, _login_body(reg, "LoginReq", username=""))
+        assert (await c.recv()).cmd == 2002
+        await c.send(3, 2001, _login_body(reg, "LoginReq", username="someone-else"))
+        assert (await c.recv()).cmd == 2002
+
+        rows = conn.execute("SELECT username FROM players").fetchall()
+        assert [r["username"] for r in rows] == ["stefan"]
+
+        await c.close()
+        await _stop(task)
+
+    asyncio.run(scenario())
+
+
 def test_gameplay_req_is_still_answered_if_a_client_sends_it(reg, settings) -> None:
     """3_2003 stays supported: it is the stock create-character message."""
     conn = connect(settings.db_path)

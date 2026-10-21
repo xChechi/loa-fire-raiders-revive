@@ -62,7 +62,14 @@ def handlers(
             timestamp=int(time.time()),
         )
 
-    def _player_id(username: str) -> int:
+    def _player_id(sent_username: str) -> int:
+        # One player, one account: the name is settings.toml's, never the
+        # client's. A client reconnecting after a server restart sends an empty
+        # username, and with the name taken from the request that minted a
+        # second, nameless character (seen live 21-10-2026).
+        username = settings.username
+        if sent_username != username:
+            log.info("login as %r, serving the %r account", sent_username, username)
         row = db.find_player(conn, username)
         if row is not None:
             return int(row["id"])
