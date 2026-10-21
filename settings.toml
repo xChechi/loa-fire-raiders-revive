@@ -4,7 +4,7 @@ db_path = "data/player.db"
 apk = "C:/Users/Stefan.Nasev/Downloads/LOA Fire Raiders 277sy.apk"
 
 [net]
-host = "192.168.1.50"
+host = "10.0.2.2"
 port = 8112
 
 [account]

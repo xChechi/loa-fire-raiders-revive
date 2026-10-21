@@ -12,12 +12,13 @@ TOUCHED = (
     "scripts/app/MyApp.lua",
     "scripts/app/game/view/scenes/GameLoginScene.lua",
     "scripts/sdk/LuaSuperSDKManager.lua",
+    "scripts/upgrade/upgrade.lua",
 )
 
 
 @pytest.fixture
 def assets(tmp_path: Path) -> Path:
-    """A fixture copy of only the four Lua files the patches touch."""
+    """A fixture copy of only the Lua files the patches touch."""
     root = tmp_path / "assets"
     for rel in TOUCHED:
         src = STOCK_SCRIPTS / rel[len("scripts/") :]
@@ -33,7 +34,7 @@ def test_every_old_string_occurs_exactly_once_in_the_stock_file(assets: Path) ->
         assert text.count(patch.old) == 1, patch.relpath + " :: " + patch.old[:60]
 
 
-def test_apply_patches_rewrites_all_four_files(assets: Path) -> None:
+def test_apply_patches_rewrites_every_touched_file(assets: Path) -> None:
     changed = apply_patches(assets, server_ip="192.168.1.50", username="stefan")
     assert sorted(set(changed)) == sorted(TOUCHED)
 
@@ -56,6 +57,33 @@ def test_apply_patches_rewrites_all_four_files(assets: Path) -> None:
 
     app = (assets / "scripts/app/MyApp.lua").read_text(encoding="utf-8")
     assert "scheduler.performWithDelayGlobal(function() self:initLogin(); end, 0.1);" in app
+
+    upgrade = (assets / "scripts/upgrade/upgrade.lua").read_text(encoding="utf-8")
+    assert "\tg_sdkManager:checkVersion();\n" in upgrade
+
+
+def test_upgrade_calls_checkversion_after_the_listener_is_registered(
+    assets: Path,
+) -> None:
+    """Nothing in the stock Lua ever calls checkVersion on Android.
+
+    The channel SDK's Java side fires the init/version callbacks through the
+    handler registered by lua_setCallBack; our stub never does. upgrade:init
+    therefore has to kick checkVersion itself, and the kick has to come after
+    its own comSdk_checkVersionCallback_event listener exists, or the event
+    patch 7 dispatches has nobody to deliver to.
+    """
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan")
+    upgrade = (assets / "scripts/upgrade/upgrade.lua").read_text(encoding="utf-8")
+
+    listener = upgrade.index('addEventListener("comSdk_checkVersionCallback_event"')
+    kick = upgrade.index("g_sdkManager:checkVersion();")
+    assert listener < kick
+
+    # And the event that kick produces is the local dispatch, not a Java call.
+    sdk = (assets / "scripts/sdk/LuaSuperSDKManager.lua").read_text(encoding="utf-8")
+    assert 'luaj.callStaticMethod(self.javaSDKClass, "checkVersion", {}, "()V");' not in sdk
+    assert 'dispatchEvent("comSdk_checkVersionCallback_event"' in sdk
 
 
 def test_no_placeholder_survives(assets: Path) -> None:

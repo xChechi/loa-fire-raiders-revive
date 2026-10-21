@@ -92,6 +92,17 @@ PATCHES: tuple[Patch, ...] = (
           '\t\tluaj.callStaticMethod(self.javaSDKClass, "login", {}, "()V");\n',
           '\t\tuf_eventManager:dispatchEvent("comSdk_loginCallback_event",nil,false,self,'
           ' {{userinfo = {uid = "__LOA_USERNAME__"}, accessToken = "local"}} )\n'),
+    # 9. upgrade:init: on Android nothing in the stock Lua ever calls
+    #    checkVersion. The channel SDK's Java side fires the init / version
+    #    callbacks through the handler lua_setCallBack registers, and our stub
+    #    never calls back, so the boot stops right after lua_setCallBack. Kick
+    #    checkVersion here, i.e. after the comSdk_checkVersionCallback_event
+    #    listener three lines above exists, and patch 7 turns it into that
+    #    event, which replaces the scene with UpgradeScene.
+    Patch("scripts/upgrade/upgrade.lua",
+          "\tg_sdkManager:onInitLogin();\n",
+          "\tg_sdkManager:onInitLogin();\n"
+          "\tg_sdkManager:checkVersion();\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
