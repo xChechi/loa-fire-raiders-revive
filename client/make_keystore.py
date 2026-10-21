@@ -36,6 +36,16 @@ def ensure(dir_: Path = KEYSTORE_DIR) -> tuple[Path, str]:
     pw_file = dir_ / "password.txt"
     if keystore.exists() and pw_file.exists():
         return keystore, pw_file.read_text(encoding="utf-8").strip()
+    if keystore.exists():
+        # Generating here would overwrite password.txt and lose the only copy of
+        # the password that opens this keystore.
+        raise RuntimeError(
+            f"keystore present without its password file: {keystore} exists but "
+            f"{pw_file} is missing; restore password.txt or move the keystore "
+            "aside deliberately"
+        )
+    if pw_file.exists():
+        print(f"{keystore} is missing: generating a new keystore and replacing {pw_file}")
 
     password = secrets.token_urlsafe(24)
     pw_file.write_text(password + "\n", encoding="utf-8")
