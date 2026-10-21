@@ -1,8 +1,11 @@
 from pathlib import Path
 
-from client.gen_luaj_stubs import java_decl, render, scan
+import pytest
+
+from client.gen_luaj_stubs import WANTED, java_decl, main, render, scan
 
 STOCK_SCRIPTS = Path(".stock/assets/scripts")
+COMMITTED = Path("client/android/app/src/main/java")
 
 
 def test_java_decl_parses_a_jni_signature() -> None:
@@ -73,6 +76,17 @@ def test_render_returns_the_default_for_config_lookups() -> None:
         },
     )
     assert "return arg1;" in src
+
+
+def test_committed_stubs_are_what_the_generator_produces(tmp_path: Path) -> None:
+    """The three checked-in stubs must regenerate byte-for-byte from the stock Lua."""
+    if not STOCK_SCRIPTS.is_dir():
+        pytest.skip(f"{STOCK_SCRIPTS} absent: run client/extract_stock.py first")
+    assert main(["--scripts", str(STOCK_SCRIPTS), "--dest", str(tmp_path)]) == 0
+    for cls in WANTED:
+        regenerated = (tmp_path / f"{cls}.java").read_bytes()
+        committed = (COMMITTED / f"{cls}.java").read_bytes()
+        assert regenerated == committed, f"{cls}.java is stale: re-run gen_luaj_stubs.py"
 
 
 def test_render_skips_a_malformed_signature_with_a_comment() -> None:
