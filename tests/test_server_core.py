@@ -309,6 +309,45 @@ def test_malformed_body_without_a_paired_res_sends_nothing(reg, settings) -> Non
     asyncio.run(scenario())
 
 
+def test_an_oversized_length_closes_only_that_connection(reg, settings, caplog) -> None:
+    """framing.decode raises ValueError above MAX_BODY: a protocol violation.
+
+    Unlike a corrupt body, the byte stream cannot be resynchronised, so this one
+    connection goes away - and nothing else does.
+    """
+    oversized = (
+        (framing.MAX_BODY + 1).to_bytes(4, "little")
+        + b"\x00\x00" + b"\x01\x00"
+        + (151).to_bytes(2, "little") + (2041).to_bytes(2, "little")
+        + b"\x00" * 12
+    )
+
+    async def scenario() -> None:
+        server = Server(reg, settings, {}, bind_host=BIND)
+        task, port = await _run_server(server)
+        victim = await Client.connect(port)
+        bystander = await Client.connect(port)
+        victim.writer.write(oversized)
+        await victim.writer.drain()
+        with pytest.raises(AssertionError, match="server closed the connection"):
+            await victim.recv()
+        # the other connection never noticed
+        await bystander.send(151, 2041)
+        assert (await bystander.recv()).cmd == 2042
+        await victim.close()
+        await bystander.close()
+        await _stop(task)
+
+    with caplog.at_level(logging.DEBUG, logger="loa.net"):
+        asyncio.run(scenario())
+
+    hits = [
+        r for r in caplog.records
+        if r.name == "loa.net" and "exceeds" in r.getMessage()
+    ]
+    assert hits, [r.getMessage() for r in caplog.records]
+
+
 def test_two_frames_in_one_write_are_both_handled(reg, settings) -> None:
     async def scenario() -> None:
         server = Server(reg, settings, {}, bind_host=BIND)

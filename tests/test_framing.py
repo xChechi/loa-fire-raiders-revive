@@ -1,6 +1,6 @@
 import pytest
 
-from server.net.framing import HEADER_SIZE, Frame, decode, encode
+from server.net.framing import HEADER_SIZE, MAX_BODY, Frame, decode, encode
 
 # From docs/protocol.md, section "Capture". The frame the client sends first:
 # 194_2001 QuerySrvInfoReq{server_id="1"}, body 0a0131.
@@ -98,6 +98,39 @@ def test_decode_empty_body() -> None:
     assert frame.body == b""
     assert rest == b""
     assert len(raw) == HEADER_SIZE
+
+
+def _header_with_length(length: int) -> bytes:
+    """A 3_2015 header claiming ``length`` body bytes, with no body behind it."""
+    return (
+        length.to_bytes(4, "little")
+        + (0).to_bytes(2, "little")   # district
+        + (1).to_bytes(2, "little")   # the constant at offset 6
+        + (3).to_bytes(2, "little")   # service
+        + (2015).to_bytes(2, "little")  # cmd
+        + b"\x00" * 12
+    )
+
+
+def test_decode_rejects_a_body_longer_than_max_body() -> None:
+    """A length field is 4 bytes; a bogus one must not make the server buffer 4 GiB.
+
+    The largest real frame in the capture is 169 bytes, so 1 MiB is a decade of
+    headroom and anything above it is a protocol violation.
+    """
+    with pytest.raises(ValueError):
+        decode(_header_with_length(MAX_BODY + 1))
+    with pytest.raises(ValueError):
+        decode(_header_with_length(0xFFFFFFFF))
+
+
+def test_decode_accepts_a_body_length_of_exactly_max_body() -> None:
+    # at the limit it is a short read, not an error: None means "need more bytes"
+    assert MAX_BODY == 1 << 20
+    assert decode(_header_with_length(MAX_BODY)) is None
+    frame, rest = decode(_header_with_length(MAX_BODY) + b"\x00" * MAX_BODY)
+    assert rest == b""
+    assert len(frame.body) == MAX_BODY
 
 
 @pytest.mark.parametrize("service,cmd", [(0, 0), (255, 65535), (194, 2001)])

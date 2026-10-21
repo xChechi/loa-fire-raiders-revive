@@ -18,6 +18,11 @@ HEADER_SIZE = _HEADER.size
 _LENGTH_INCLUDES_HEADER = False
 # Offset 6 is an unknown field, constant 1 in every frame in either direction.
 _CONSTANT = 1
+# The length field is four bytes wide, so a corrupt or hostile header can ask the
+# server to buffer up to 4 GiB. The largest real frame in the capture is 169
+# bytes; 1 MiB is far beyond anything this protocol carries, and a length above
+# it is a protocol violation rather than a short read.
+MAX_BODY = 1 << 20
 # --------------------------------------------------------------------------
 
 
@@ -48,6 +53,8 @@ def decode(buf: bytes) -> tuple[Frame, bytes] | None:
     body_len = length - HEADER_SIZE if _LENGTH_INCLUDES_HEADER else length
     if body_len < 0:
         raise ValueError(f"negative body length {body_len} in frame header")
+    if body_len > MAX_BODY:
+        raise ValueError(f"body length {body_len} in frame header exceeds {MAX_BODY}")
     end = HEADER_SIZE + body_len
     if len(buf) < end:
         return None

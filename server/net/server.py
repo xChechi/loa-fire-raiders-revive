@@ -142,6 +142,11 @@ class Server:
                     await self._on_frame(session, frame)
         except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
+        except ValueError as exc:
+            # framing.decode rejected the header itself (negative or oversized
+            # body length). The stream cannot be resynchronised, so this one
+            # connection goes; every other session is untouched.
+            log.warning("protocol violation from %s, closing it: %s", peer, exc)
         finally:
             log.info("connection closed %s", peer)
             writer.close()
