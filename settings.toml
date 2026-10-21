@@ -4,6 +4,9 @@ db_path = "data/player.db"
 apk = "C:/Users/Stefan.Nasev/Downloads/LOA Fire Raiders 277sy.apk"
 
 [net]
+# Client-side address, baked into the APK's server list by client.build_assets.
+# 10.0.2.2 is the Android emulator's alias for this PC; the server binds 0.0.0.0
+# regardless. A build for the phone needs the home Wi-Fi LAN address here instead.
 host = "10.0.2.2"
 port = 8112
 
