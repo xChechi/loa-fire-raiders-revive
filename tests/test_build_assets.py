@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from client.build_assets import PATCHES, PatchNotFound, apply_patches
+from client.build_assets import PATCHES, PatchNotFound, apply_patches, main
 
 STOCK_SCRIPTS = Path(".stock/assets/scripts")
 TOUCHED = (
@@ -35,7 +35,7 @@ def test_every_old_string_occurs_exactly_once_in_the_stock_file(assets: Path) ->
 
 
 def test_apply_patches_rewrites_every_touched_file(assets: Path) -> None:
-    changed = apply_patches(assets, server_ip="192.168.1.50", username="stefan")
+    changed = apply_patches(assets, server_ip="192.168.1.50", username="stefan", port=8112)
     assert sorted(set(changed)) == sorted(TOUCHED)
 
     main_lua = (assets / "scripts/main.lua").read_text(encoding="utf-8")
@@ -75,7 +75,7 @@ def test_upgrade_calls_checkversion_after_the_listener_is_registered(
     its own comSdk_checkVersionCallback_event listener exists, or the event
     patch 7 dispatches has nobody to deliver to.
     """
-    apply_patches(assets, server_ip="10.0.2.2", username="stefan")
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     upgrade = (assets / "scripts/upgrade/upgrade.lua").read_text(encoding="utf-8")
 
     listener = upgrade.index('addEventListener("comSdk_checkVersionCallback_event"')
@@ -95,7 +95,7 @@ def test_the_db_copy_creates_its_target_directory(assets: Path) -> None:
     checks the handle, so a missing directory is a nil-index Lua error that
     kills the boot one frame before the login scene. Make the directory.
     """
-    apply_patches(assets, server_ip="10.0.2.2", username="stefan")
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     app = (assets / "scripts/app/MyApp.lua").read_text(encoding="utf-8")
 
     mkdir = app.index('lfs.mkdir(wrireUrl .. "/upgrade")')
@@ -104,17 +104,18 @@ def test_the_db_copy_creates_its_target_directory(assets: Path) -> None:
 
 
 def test_no_placeholder_survives(assets: Path) -> None:
-    apply_patches(assets, server_ip="10.0.0.1", username="stefan")
+    apply_patches(assets, server_ip="10.0.0.1", username="stefan", port=8112)
     for rel in TOUCHED:
         text = (assets / rel).read_text(encoding="utf-8")
         assert "__LOA_SERVER_IP__" not in text
         assert "__LOA_USERNAME__" not in text
+        assert "__LOA_SERVER_PORT__" not in text
 
 
 def test_applying_twice_raises_instead_of_double_patching(assets: Path) -> None:
-    apply_patches(assets, server_ip="10.0.0.1", username="stefan")
+    apply_patches(assets, server_ip="10.0.0.1", username="stefan", port=8112)
     with pytest.raises(PatchNotFound):
-        apply_patches(assets, server_ip="10.0.0.1", username="stefan")
+        apply_patches(assets, server_ip="10.0.0.1", username="stefan", port=8112)
 
 
 @pytest.mark.parametrize("eol", ["\r\n", "\n"])
@@ -128,7 +129,7 @@ def test_apply_patches_keeps_each_file_line_ending(tmp_path: Path, eol: str) -> 
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(text.replace("\n", eol).encode("utf-8"))
 
-    apply_patches(root, server_ip="10.0.0.1", username="stefan")
+    apply_patches(root, server_ip="10.0.0.1", username="stefan", port=8112)
 
     for rel in TOUCHED:
         raw = (root / rel).read_bytes()
@@ -142,6 +143,55 @@ def test_apply_patches_keeps_each_file_line_ending(tmp_path: Path, eol: str) -> 
     assert b'socket_domain = "10.0.0.1"' in scene
     main_lua = (root / "scripts/main.lua").read_bytes()
     assert b"CONFIG_DEVELOP = 1;" in main_lua
+
+
+def test_the_settings_port_lands_in_the_generated_lua(tmp_path: Path) -> None:
+    """The server list's socket_port comes from settings.toml, not from a literal.
+
+    main() prints `{s.host}:{s.port}`, so a port that is only true in the banner
+    and not in the Lua would send the client to the wrong socket.
+    """
+    stock = tmp_path / "stock"
+    for rel in TOUCHED:
+        src = STOCK_SCRIPTS / rel[len("scripts/") :]
+        dst = stock / "assets" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+    (stock / "assets/res").mkdir(parents=True)
+    (stock / "assets/fonts").mkdir(parents=True)
+    (stock / "lib/armeabi").mkdir(parents=True)
+    (stock / "lib/armeabi/libgame.so").write_bytes(b"\x7fELF fake")
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        "[paths]\n"
+        f'stock_dir = "{stock.as_posix()}"\n'
+        'db_path = "data/player.db"\n'
+        "[net]\n"
+        'host = "10.0.0.7"\n'
+        "port = 8113\n"
+        "[account]\n"
+        'username = "stefan"\n'
+        "[player]\n"
+        "guide_id = 0\n",
+        encoding="utf-8",
+    )
+    dest_assets = tmp_path / "out/assets"
+
+    assert main([
+        "--settings", str(settings),
+        "--assets", str(dest_assets),
+        "--jnilibs", str(tmp_path / "out/jniLibs"),
+    ]) == 0
+
+    scene = (dest_assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(
+        encoding="utf-8"
+    )
+    assert "socket_port   = 8113," in scene
+    # the patched block's own spacing; the stock sample list writes
+    # "socket_port =   8112," and those four entries are untouched
+    assert "socket_port   = 8112," not in scene
+    assert 'socket_domain = "10.0.0.7"' in scene
 
 
 def test_documented_entry_point_builds_a_miniature_tree(tmp_path: Path) -> None:

@@ -43,7 +43,7 @@ _HOME_SERVER_LIST = (
     '            name          = "Home",\n'
     "            status        = 1,\n"
     '            server_id     = "1",\n'
-    "            socket_port   = 8112,\n"
+    "            socket_port   = __LOA_SERVER_PORT__,\n"
     '            socket_domain = "__LOA_SERVER_IP__"\n'
     "        }\n"
     "    });\n"
@@ -119,7 +119,9 @@ COPY_DIRS = ("res", "scripts", "fonts")
 COPY_FILES = ("debug.txt",)
 
 
-def apply_patches(assets_root: Path, server_ip: str, username: str) -> list[str]:
+def apply_patches(
+    assets_root: Path, server_ip: str, username: str, port: int
+) -> list[str]:
     changed: list[str] = []
     for patch in PATCHES:
         path = assets_root / patch.relpath
@@ -135,6 +137,7 @@ def apply_patches(assets_root: Path, server_ip: str, username: str) -> list[str]
             raise PatchNotFound(patch.relpath, patch.old, count)
         new = patch.new.replace("__LOA_SERVER_IP__", server_ip)
         new = new.replace("__LOA_USERNAME__", username)
+        new = new.replace("__LOA_SERVER_PORT__", str(port))
         path.write_text(text.replace(patch.old, new, 1), encoding="utf-8", newline=newline)
         changed.append(patch.relpath)
     return changed
@@ -146,6 +149,7 @@ def build(
     dest_jnilibs: Path,
     server_ip: str,
     username: str,
+    port: int,
 ) -> None:
     src_assets = stock / "assets"
     if dest_assets.exists():
@@ -159,7 +163,7 @@ def build(
         if src.exists():
             shutil.copy2(src, dest_assets / name)
 
-    changed = apply_patches(dest_assets, server_ip, username)
+    changed = apply_patches(dest_assets, server_ip, username, port)
     for rel in changed:
         print(f"patched {rel}")
 
@@ -187,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     s = load_settings(args.settings)
-    build(s.stock_dir, args.assets, args.jnilibs, s.host, s.username)
+    build(s.stock_dir, args.assets, args.jnilibs, s.host, s.username, s.port)
     print(f"assets ready, server list points at {s.host}:{s.port}")
     return 0
 
