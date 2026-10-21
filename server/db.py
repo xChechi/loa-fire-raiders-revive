@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS players (
     gold       INTEGER NOT NULL DEFAULT 0,
     diamond    INTEGER NOT NULL DEFAULT 0,
     vip        INTEGER NOT NULL DEFAULT 0,
+    -- 60 is the client's own level-1 value: table `xp_for_level` in
+    -- .stock/assets/res/data/split/xp_for_level.db, row `lvl` = 1, column
+    -- `max_energy` = 60 (105 rows, lvl 1..105, max_energy grows by 2 per
+    -- level; verified 21-10-2026). Level 1 only, which is all Plan A creates;
+    -- Plan B reads the per-level value from config instead of defaulting it.
     energy     INTEGER NOT NULL DEFAULT 60,
     max_energy INTEGER NOT NULL DEFAULT 60,
     avatar     INTEGER NOT NULL DEFAULT 0,
