@@ -7,13 +7,17 @@ import logging
 import sys
 from pathlib import Path
 
+from server import db
+from server.modules import login
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import load
 
 
 def build_handlers(registry: Registry, settings) -> dict:
+    conn = db.connect(settings.db_path)
     handlers: dict = {}
+    handlers.update(login.handlers(registry, settings, conn))
     return handlers
 
 
