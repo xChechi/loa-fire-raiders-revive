@@ -31,6 +31,17 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val dir = File(System.getProperty("user.home"), ".loa-keystore")
+            val pw = File(dir, "password.txt")
+            storeFile = File(dir, "loa.jks")
+            storePassword = if (pw.exists()) pw.readText().trim() else ""
+            keyAlias = "loa"
+            keyPassword = storePassword
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             isMinifyEnabled = false
@@ -39,6 +50,7 @@ android {
         getByName("release") {
             isMinifyEnabled = false
             isDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
