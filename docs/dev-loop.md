@@ -1,77 +1,116 @@
 # Dev loop — where a build gets tested
 
-Bounded emulator check, Task 9 of plan *Plan A: boot to main city*.
-One install attempt, one launch attempt, 90 seconds of logcat. Not debugged further.
+Bounded emulator check, Task 9 of plan *Plan A: boot to main city*, plus the Task 9b
+follow-up that got a 32-bit-capable AVD. One install attempt and 90 seconds of logcat
+per AVD. Neither emulator was debugged beyond reading its output.
 
-## 1. What was tested
+## Verdict
+
+**Outcome A — the APK runs on an emulator, so the dev loop is the AVD on this PC.**
+
+Not the AVD the plan assumed. The pre-existing `Medium_Phone_API_36.1` cannot host the
+APK at all; a newly created `LOA_API30` can, and the game boots on it.
+
+| AVD | API | `abilist32` | install | result |
+|---|---|---|---|---|
+| `Medium_Phone_API_36.1` | 36 | *(empty)* | `INSTALL_FAILED_NO_MATCHING_ABIS` | unusable |
+| **`LOA_API30`** | **30** | **`x86,armeabi-v7a,armeabi`** | **`Success`** | **game boots** |
+
+## 1. `LOA_API30` — the working AVD (21-10-2026)
 
 | | |
 |---|---|
-| Date | 21-10-2026 |
-| AVD | `Medium_Phone_API_36.1` |
+| AVD name | `LOA_API30` |
+| System image | `system-images;android-30;google_apis;x86_64` (rev 16) |
+| Device profile | `pixel_4` |
+| Guest | `sdk_gphone_x86_64`, Android 11, SDK 30 |
+| `ro.dalvik.vm.isa.arm` | `x86` |
+| `ro.product.cpu.abilist` | `x86_64,x86,arm64-v8a,armeabi-v7a,armeabi` |
+| `ro.product.cpu.abilist32` | `x86,armeabi-v7a,armeabi` |
+| `ro.zygote` | `zygote64_32` |
+| APK | `LOA-private-release.apk`, 340,862,699 bytes, signed, `bg.stefan.loa` / `.GameActivity` |
+| Install | `Success`, 24 seconds |
+
+### What happened on launch
+
+The process started and was **still alive at +10 s, +60 s and +90 s** (pid 4766).
+`GameActivity` is the resumed activity, state `S (sleeping)`, no ANR.
+
+```
+10-21 10:16:09.818 I ndk_translation: Initialized NDK translation (armv7l), version 0.2.2
+10-21 10:16:11.117 D Cocos2dxActivity: model=sdk_gphone_x86_64
+10-21 10:16:13.926 D cocos2d-x debug info: FTGlypFactory initing, read font ttf
+10-21 10:16:13.932 D cocos2d-x debug info: FTGlypFactory init res/font/msyh.ttf
+10-21 10:16:14.527 D cocos2d-x debug info: [0.9724] DEFAULT_OPID:  1
+10-21 10:16:14.770 D cocos2d-x debug info: [1.2163] [INFO] # device.platform  = android
+10-21 10:16:14.785 D cocos2d-x debug info: [1.2317] [INFO] # device.writablePath = /data/user/0/bg.stefan.loa/files/
+10-21 10:16:14.828 D cocos2d-x debug info: [1.2748] [INFO] # CONFIG_SCREEN_WIDTH  = 2400.00
+10-21 10:16:14.913 D cocos2d-x debug info: [1.3590] g_sdkManager: LuaSuperSDKManager  3  3
+10-21 10:16:14.913 D luajc  : CCLuaJavaBridge::callJavaStaticMethod(lua_State *L)
+10-21 10:16:14.914 I LOAStub: JavaSuperSDKManager.getPlatformConfigByName
+10-21 10:16:14.914 D cocos2d-x debug info: [1.3611] opid >>  1
+10-21 10:16:15.620 D cocos2d-x debug info: [2.0664] 开始初始化 sdk.....
+10-21 10:16:15.620 D cocos2d-x debug info: [2.0665] 当前的sdk为 >>>   LuaSuperSDKManager
+10-21 10:16:15.620 D cocos2d-x debug info: [2.0668] 开始 android   sdk init  .....
+10-21 10:16:15.620 D luajc  : CCLuaJavaBridge::callJavaStaticMethod(lua_State *L)
+10-21 10:16:15.620 I LOAStub: JavaSuperSDKManager.lua_setCallBack
+10-21 10:16:15.621 D luajc  : CCLuaJavaBridge::callJavaStaticMethod(... "lua_setCallBack", args, "(I)V") SUCCESS
+```
+
+Everything the brief predicted on success is there: `DEFAULT_OPID: 1`,
+`g_sdkManager: LuaSuperSDKManager`, the `LOAStub` lines from the generated stubs.
+`libgame.so` loads and runs under `ndk_translation` **armv7l 0.2.2** — 32-bit ARM
+translation works. Zero `UnsatisfiedLinkError`, zero `FATAL EXCEPTION`, zero
+`AndroidRuntime`, zero `dlopen failed` in the whole 90 s.
+
+### Where it stops — the next thing to fix
+
+`lua_setCallBack ... SUCCESS` at **10:16:15.621** is the last line the app ever logs.
+For the remaining 86 seconds it is alive, foregrounded and completely silent. The
+screenshot at +60 s is a plain black 2280x1080 landscape frame — correct orientation,
+no login scene, no error dialog.
+
+It never reaches the login scene, and it never tries to reach `192.168.1.50:8112` — no
+socket or connect attempt appears in the log. So **the placeholder server address was
+not what stopped it.** The Lua SDK-init chain registers its callback through the
+generated `JavaSuperSDKManager` stub and then waits. The stub returns `SUCCESS` for the
+registration but nothing ever fires the callback back into Lua, so
+`开始 android sdk init .....` never completes and the boot sequence stalls there.
+
+That is a client-stub problem, ahead of anything server-side, and it is the first thing
+to deal with before a capture can get useful traffic.
+
+## 2. `Medium_Phone_API_36.1` — why it is unusable
+
+Kept for the record; do not retry this AVD.
+
+| | |
+|---|---|
 | System image | `system-images/android-36.1/google_apis_playstore/x86_64` |
-| Emulator | 36.4.10.0 (build_id 15004761), `-no-snapshot-load` |
 | Guest | `sdk_gphone64_x86_64`, Android 16, SDK 36 |
 | `ro.dalvik.vm.isa.arm` | `x86` |
 | `ro.product.cpu.abilist` | `x86_64,arm64-v8a` |
 | `ro.product.cpu.abilist32` | *(empty)* |
 | `ro.zygote` | `zygote64` |
-| APK | `C:\Users\Stefan.Nasev\Downloads\LOA-private-release.apk`, 340,862,699 bytes, signed, `bg.stefan.loa` / `.GameActivity`, `abiFilters = armeabi-v7a` only |
-
-## 2. Outcome
-
-**Outcome B — the APK does not run on this AVD, so the dev loop is the phone.**
-
-The install never got as far as the launch: `android-36.1` is a 64-bit-only image
-(`abilist32` empty, `ro.zygote=zygote64`, no `/system/lib/arm`), so its ARM translation
-covers `arm64-v8a` only. `ro.dalvik.vm.isa.arm=x86` is present, but the 32-bit ARM
-runtime it refers to is not shipped in this image, and `armeabi-v7a` is absent from
-`ro.product.cpu.abilist`. The APK is `armeabi-v7a`-only, so there is no matching ABI.
-
-Nothing about `libgame.so`, the engine or the game was learned: the process never
-started. `cocos2d`, `LuaJIT`, `UnsatisfiedLinkError`, `FATAL EXCEPTION`,
-`AndroidRuntime` and `LOAStub` appear **0 times** in the 90-second capture.
-
-## 3. Evidence
-
-`adb` console, the one install attempt and the one launch attempt:
+| `/system/lib/arm` | does not exist |
 
 ```
 $ adb install -r /c/Users/Stefan.Nasev/Downloads/LOA-private-release.apk
-Performing Streamed Install
-adb.exe: failed to install C:/Users/Stefan.Nasev/Downloads/LOA-private-release.apk:
-  Failure [INSTALL_FAILED_NO_MATCHING_ABIS: INSTALL_FAILED_NO_MATCHING_ABIS:
-  Failed to extract native libraries, res=-113]
-
-$ adb shell pm path bg.stefan.loa          # (rc=1, no output)
+Failure [INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]
 
 $ adb shell am start -n bg.stefan.loa/.GameActivity
-Starting: Intent { cmp=bg.stefan.loa/.GameActivity }
-Error type 3
 Error: Activity class {bg.stefan.loa/bg.stefan.loa.GameActivity} does not exist.
 
-$ adb shell pidof bg.stefan.loa            # (rc=1, no output)
+10-21 10:02:30.203 I ActivityTaskManager: START u0 {cmp=bg.stefan.loa/.GameActivity}
+    ... result code=-92          # START_CLASS_NOT_FOUND
 ```
 
-Logcat, 10:02:29 to 10:04:01, 13,614 lines. Exactly one line mentions the package —
-the rest is Play Store background traffic:
+`android-36.1` is a 64-bit-only image. `ro.dalvik.vm.isa.arm=x86` is set and
+`libndk_translation` is present, but only in `/system/lib64` — it translates
+`arm64-v8a`, not `armeabi-v7a`. The APK is `armeabi-v7a`-only, so no ABI matches. The
+property alone is not the test; `abilist32` is.
 
-```
-10-21 10:02:30.203 812 1304 I ActivityTaskManager: START u0 {flg=0x10000000 xflg=0x4
-    cmp=bg.stefan.loa/.GameActivity} with LAUNCH_MULTIPLE from uid 2000
-    (com.android.shell) result code=-92
-```
-
-`result code=-92` is `START_CLASS_NOT_FOUND`. The `dlopen failed` lines in the capture
-are the guest's own Widevine `liboemcrypto.so` and have nothing to do with this APK.
-The screenshot taken at the 60-second mark shows the stock Pixel launcher home screen
-(wallpaper, Play Store / Gmail / Photos / YouTube row, Google search bar) — no game,
-no crash dialog.
-
-The install failure itself predates the `logcat -c` that opened the capture, so it is
-recorded above from the `adb` console rather than from the log file.
-
-## 4. Toolchain that actually built the APK
+## 3. Toolchain that actually built the APK
 
 Reuse this pair; it is the first pair tried and the fallback was never needed.
 
@@ -82,34 +121,35 @@ Reuse this pair; it is the first pair tried and the fallback was never needed.
 | JDK | `C:\Program Files\Android\Android Studio\jbr` |
 | compileSdk / targetSdk / minSdk | 36 / 33 / 21 |
 
-## 5. The loop that follows
+SDK command-line tools were missing and were installed for Task 9b:
+`cmdline-tools/latest` rev 23.0 (`commandlinetools-win-16111833_latest.zip`). Its
+`sdkmanager.bat` is now a deprecation shim over the new Android CLI, and that CLI
+**rejects the `system-images;android-30;google_apis;x86_64` semicolon form** — package
+paths must use slashes, `system-images/android-30/google_apis/x86_64`.
 
-The emulator is out. Every build is verified on Stefan's phone:
+## 4. The loop
 
-1. Build and sign here (command in section 6), then hand Stefan
-   `C:\Users\Stefan.Nasev\Downloads\LOA-private-release.apk`.
-2. **Stefan installs it by hand** on the phone — sideload, "install from unknown
-   sources". There is no `adb install -r` in this loop.
-3. The phone joins the same Wi-Fi as the server host, and the Task 10 capture runs
-   **on the LAN host**: the server binds the `settings.toml` host, port 8112, and the
-   client reaches it at that LAN address. `adb reverse` is not available.
-4. **Do not assume `adb` over USB exists.** USB debugging on the phone has not been
-   set up or tested. Anything that needs a device log must either be arranged with
-   Stefan first or be designed to come out of the server side instead.
-5. Consequence for the server: logging and the capture must be good enough to diagnose
-   the client blind, because the client's own logcat is not routinely reachable.
+Iterate on `LOA_API30`, on this PC. Nothing needs Stefan or the phone for a routine check.
 
-The client currently points at the placeholder `192.168.1.50:8112`
-(`settings.toml`, baked into the assets by `client/build_assets.py`). The real home
-LAN address has to replace it, and the assets rebuilt, before a phone test means
-anything.
+1. Rebuild and reinstall with the commands in section 5. `adb install -r` takes about
+   25 seconds for the 340 MB APK.
+2. Run the server on this host. The AVD reaches it either way:
+   - `adb reverse tcp:8112 tcp:8112` and point the client at `127.0.0.1:8112`, or
+   - point the client at this host's LAN address directly.
+   Either needs `settings.toml` changed and `py -3.14 -m client.build_assets` re-run,
+   because the address is baked into the assets.
+3. Device logcat is available: `adb logcat -c`, launch, `adb logcat -d`. Filter on the
+   pid plus `cocos2d`, `LOAStub`, `luajc`.
+4. **The phone stays the acceptance gate.** The AVD is an x86 host running ARM
+   translation on Android 11; it proves the build boots and lets changes be iterated
+   cheaply, it does not prove the build works on Stefan's device. Nothing ships on a
+   green AVD alone.
 
-One thing is still worth re-checking cheaply if the phone loop ever becomes the
-bottleneck: an `android-30`-or-older `x86` AVD does ship 32-bit ARM translation, and
-would take an `armeabi-v7a` APK. That is a new AVD download, which this bounded task
-did not do.
+Standing caveat kept from the API 36 round: `adb` over USB to the **phone** has never
+been set up or tested. Do not assume a device logcat when the loop moves to the phone;
+the server's own logging is the diagnostic channel there.
 
-## 6. Rebuild and hand over — the exact commands
+## 5. Rebuild, reinstall, relaunch — the exact commands
 
 ```bash
 cd "/c/Users/Stefan.Nasev/Downloads/Claude Cowork/Claude Code/Projects/loa-private-server"
@@ -117,6 +157,17 @@ py -3.14 -m client.build_assets                       # only after settings.toml
 export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
 cd client/android && ./gradlew.bat --no-daemon :app:assembleRelease
 cp app/build/outputs/apk/release/app-release.apk /c/Users/Stefan.Nasev/Downloads/LOA-private-release.apk
+
+SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
+"$SDK/platform-tools/adb.exe" install -r /c/Users/Stefan.Nasev/Downloads/LOA-private-release.apk
+"$SDK/platform-tools/adb.exe" shell am start -n bg.stefan.loa/.GameActivity
 ```
 
-Then give Stefan `LOA-private-release.apk` to install on the phone.
+Boot the AVD, if it is not already up:
+
+```bash
+"$SDK/emulator/emulator.exe" -avd LOA_API30 -no-snapshot-load
+```
+
+On Windows, start it detached (`powershell.exe Start-Process`) or it dies with the
+shell that launched it.
