@@ -14,6 +14,29 @@ from server.net.server import Server
 from server.settings import load
 
 
+log = logging.getLogger("loa")
+
+
+async def serve_and_announce(server: Server, settings) -> None:
+    """Start the listener, then say which address the client will be sent to.
+
+    QuerySrvInfoRes hands the client settings.host:settings.port, which is the
+    address the phone or emulator dials - not the bind address. Getting it wrong
+    is the single most common reason the login burst never arrives, so it goes
+    in the log right under the listening line.
+    """
+    ready = asyncio.Event()
+    task = asyncio.create_task(server.serve(ready))
+    await ready.wait()
+    log.info(
+        "advertising game address %s:%d in QuerySrvInfoRes (edit settings.toml "
+        "and restart the server if the phone is on another network)",
+        settings.host,
+        settings.port,
+    )
+    await task
+
+
 def build_handlers(registry: Registry, settings) -> dict:
     conn = db.connect(settings.db_path)
     handlers: dict = {}
@@ -32,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     registry = Registry.load(settings.stock_dir)
     server = Server(registry, settings, build_handlers(registry, settings))
     try:
-        asyncio.run(server.serve())
+        asyncio.run(serve_and_announce(server, settings))
     except KeyboardInterrupt:
         pass
     return 0
