@@ -54,6 +54,26 @@ CREATE TABLE IF NOT EXISTS items (
 -- entry and the client keeps a single ClientStock for it, so grant_item can
 -- upsert on this index.
 CREATE UNIQUE INDEX IF NOT EXISTS items_player_entry ON items(player_id, entry);
+-- One row per stage the player has played. `star` is the best of every clear
+-- (LevelManager:readServerLevelInfo paints the three stars from it) and `count`
+-- counts the plays, which is what the daily-limit check reads.
+CREATE TABLE IF NOT EXISTS levels (
+    player_id         INTEGER NOT NULL REFERENCES players(id),
+    level             INTEGER NOT NULL,
+    star              INTEGER NOT NULL DEFAULT 0,
+    count             INTEGER NOT NULL DEFAULT 0,
+    reset_count       INTEGER NOT NULL DEFAULT 0,
+    clean_elite_count INTEGER NOT NULL DEFAULT 0,
+    deadline          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, level)
+);
+-- Chapter prize boxes: `award` is the state LevelManager:readBoxInfo paints.
+CREATE TABLE IF NOT EXISTS chapters (
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    chapter   INTEGER NOT NULL,
+    award     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, chapter)
+);
 """
 
 # The Plan A schema exactly as it shipped, for the migration test only. Keep it
@@ -255,5 +275,83 @@ def add_energy(conn: sqlite3.Connection, cfg, player_id: int, amount: int) -> No
     conn.execute(
         "UPDATE players SET energy = MIN(?, energy + ?) WHERE id = ?",
         (cap, int(amount), int(player_id)),
+    )
+    conn.commit()
+
+
+def level_progress(
+    conn: sqlite3.Connection, player_id: int, level: int
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM levels WHERE player_id = ? AND level = ?",
+        (int(player_id), int(level)),
+    ).fetchone()
+
+
+def levels_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            "SELECT * FROM levels WHERE player_id = ? ORDER BY level",
+            (int(player_id),),
+        )
+    )
+
+
+def upsert_level(
+    conn: sqlite3.Connection,
+    player_id: int,
+    level: int,
+    star: int | None = None,
+    count_delta: int = 0,
+    reset_count: int | None = None,
+) -> sqlite3.Row | None:
+    """Stars only ever go up; count counts plays."""
+    conn.execute(
+        "INSERT INTO levels (player_id, level) VALUES (?, ?)"
+        " ON CONFLICT(player_id, level) DO NOTHING",
+        (int(player_id), int(level)),
+    )
+    if star is not None:
+        conn.execute(
+            "UPDATE levels SET star = MAX(star, ?) WHERE player_id = ? AND level = ?",
+            (int(star), int(player_id), int(level)),
+        )
+    if count_delta:
+        conn.execute(
+            "UPDATE levels SET count = count + ? WHERE player_id = ? AND level = ?",
+            (int(count_delta), int(player_id), int(level)),
+        )
+    if reset_count is not None:
+        conn.execute(
+            "UPDATE levels SET reset_count = ? WHERE player_id = ? AND level = ?",
+            (int(reset_count), int(player_id), int(level)),
+        )
+    conn.commit()
+    return level_progress(conn, player_id, level)
+
+
+def chapters_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            "SELECT * FROM chapters WHERE player_id = ? ORDER BY chapter",
+            (int(player_id),),
+        )
+    )
+
+
+def set_chapter_award(
+    conn: sqlite3.Connection, player_id: int, chapter: int, award: int
+) -> None:
+    conn.execute(
+        "INSERT INTO chapters (player_id, chapter, award) VALUES (?, ?, ?)"
+        " ON CONFLICT(player_id, chapter) DO UPDATE SET award = ?",
+        (int(player_id), int(chapter), int(award), int(award)),
+    )
+    conn.commit()
+
+
+def set_last_level(conn: sqlite3.Connection, player_id: int, level: int) -> None:
+    conn.execute(
+        "UPDATE players SET last_level = ? WHERE id = ?", (int(level), int(player_id))
     )
     conn.commit()

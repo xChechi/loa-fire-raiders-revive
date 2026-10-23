@@ -198,3 +198,30 @@ def test_grant_item_adds_to_the_same_entry(tmp_path) -> None:
     assert {int(r["entry"]): int(r["amount"]) for r in items_of(conn, pid)} == {
         1100: 5, 10000: 2
     }
+
+
+def test_upsert_level_keeps_the_best_star_and_counts_plays(tmp_path) -> None:
+    from server.db import connect, create_player, level_progress, upsert_level
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    upsert_level(conn, pid, 10000, star=2, count_delta=1)
+    row = level_progress(conn, pid, 10000)
+    assert (int(row["star"]), int(row["count"])) == (2, 1)
+    upsert_level(conn, pid, 10000, star=1, count_delta=1)
+    row = level_progress(conn, pid, 10000)
+    assert (int(row["star"]), int(row["count"])) == (2, 2)   # 1 does not beat 2
+    upsert_level(conn, pid, 10000, star=3, count_delta=0)
+    assert int(level_progress(conn, pid, 10000)["star"]) == 3
+
+
+def test_chapter_award_is_remembered(tmp_path) -> None:
+    from server.db import chapters_of, connect, create_player, set_chapter_award
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_chapter_award(conn, pid, 10000, 1)
+    set_chapter_award(conn, pid, 10000, 1)
+    assert [(int(r["chapter"]), int(r["award"])) for r in chapters_of(conn, pid)] == [
+        (10000, 1)
+    ]

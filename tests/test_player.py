@@ -252,3 +252,35 @@ def test_query_myself_reports_the_regenerated_energy(reg, settings, cfg) -> None
     )
     assert res.player.energy == 60
     assert res.player.max_energy == 60
+
+
+def test_levels_and_last_level_reach_the_client(reg, settings, cfg) -> None:
+    """LevelManager:readLastLevelInfo takes the unlock frontier from
+    player.last_level, and readServerLevelInfo takes the stars from levels."""
+    from server.db import set_last_level, upsert_level
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    upsert_level(conn, pid, 10000, star=3, count_delta=1)
+    set_last_level(conn, pid, 10000)
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert [(l.level, l.star, l.count) for l in res.levels] == [(10000, 3, 1)]
+    assert res.player.last_level == 10000
+    assert res.player.last_elite == 0
+    res.SerializeToString()
+
+
+def test_chapters_only_contains_real_chapter_entries(reg, settings, cfg) -> None:
+    """Review Focus 3: LevelManager:readBoxInfo indexes chapterEntryTable by the
+    entry we send, with no nil check, so an entry chapter_info does not know
+    crashes the client."""
+    from server.db import set_chapter_award
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_chapter_award(conn, pid, 10000, 1)
+    set_chapter_award(conn, pid, 424242, 1)        # not a chapter_info entry
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert [c.chapter for c in res.chapters] == [10000]
+    assert res.chapters[0].award == 1
+    res.SerializeToString()

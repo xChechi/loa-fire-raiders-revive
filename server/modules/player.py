@@ -46,6 +46,13 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     msg.nobility_level = 0
     msg.nobility_exp = 0
     msg.guild_id = 0
+    # LevelManager:readLastLevelInfo: 0 means a fresh account and the client
+    # starts the player at the first stage of chapter 1. Otherwise it is the
+    # stage entry of the last stage cleared and the client computes the unlock
+    # frontier from it.
+    msg.last_level = int(row["last_level"])
+    msg.last_elite = 0
+    msg.last_signet = 0
     # Everything else required gets the proto2 zero.
     fill_required(msg)
     return msg
@@ -53,6 +60,19 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
 
 def build_daily_stats(registry: Registry):
     msg = registry.message_class("ClientDailyStats")(deadline=_end_of_today())
+    fill_required(msg)
+    return msg
+
+
+def build_client_level(registry: Registry, row: sqlite3.Row):
+    msg = registry.message_class("ClientLevel")(
+        level=int(row["level"]),
+        star=int(row["star"]),
+        count=int(row["count"]),
+        deadline=int(row["deadline"]),
+        reset_count=int(row["reset_count"]),
+        clean_elite_count=int(row["clean_elite_count"]),
+    )
     fill_required(msg)
     return msg
 
@@ -70,6 +90,18 @@ def build_query_myself_res(
         msg.heroes.add().CopyFrom(hero.build_client_hero(registry, cfg, hero_row))
     for stock in item.build_inventory(registry, conn, int(row["id"])):
         msg.inventory.add().CopyFrom(stock)
+    player_id = int(row["id"])
+    for level_row in db.levels_of(conn, player_id):
+        msg.levels.add().CopyFrom(build_client_level(registry, level_row))
+    for chapter_row in db.chapters_of(conn, player_id):
+        chapter = int(chapter_row["chapter"])
+        if cfg.chapter(chapter) is None:
+            # LevelManager:readBoxInfo would index a nil chapter and kill the VM.
+            log.warning("chapter %d is not in chapter_info, not sent", chapter)
+            continue
+        entry = msg.chapters.add()
+        entry.chapter = chapter
+        entry.award = int(chapter_row["award"])
     fill_required(msg)
     return msg
 
