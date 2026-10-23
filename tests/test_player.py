@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, find_player
+from server.db import connect, create_player, find_player, grant_hero
 from server.modules import player
 from server.net.registry import Registry
 from server.net.server import Server, fill_required
@@ -46,10 +46,11 @@ def row(settings: Settings):
     return conn, find_player(conn, "stefan")
 
 
-def test_query_myself_res_serializes(reg, row) -> None:
-    """Review Focus 1."""
-    _, r = row
-    res = player.build_query_myself_res(reg, r)
+def test_query_myself_res_serializes(reg, cfg, row) -> None:
+    """Review Focus 1. The fixture is a bare create_player with no starting kit,
+    so this character owns nothing yet; the kit is covered by test_login.py."""
+    conn, r = row
+    res = player.build_query_myself_res(reg, cfg, conn, r)
     raw = res.SerializeToString()
     assert raw  # non-empty
     parsed = reg.message_class("QueryMyselfRes")()
@@ -64,6 +65,20 @@ def test_query_myself_res_serializes(reg, row) -> None:
     assert len(parsed.inventory) == 0
     assert len(parsed.levels) == 0
     assert len(parsed.angels) == 0
+
+
+def test_query_myself_res_carries_a_granted_hero(reg, cfg, row) -> None:
+    """A character that owns a hero sends it inside QueryMyselfRes, and the
+    whole message still serializes with its proto2 required fields set."""
+    conn, r = row
+    grant_hero(conn, int(r["id"]), 100000, 10, star=1, level=1)
+    res = player.build_query_myself_res(reg, cfg, conn, r)
+    parsed = reg.message_class("QueryMyselfRes")()
+    parsed.ParseFromString(res.SerializeToString())
+    assert len(parsed.heroes) == 1
+    assert parsed.heroes[0].entry == 100000
+    assert parsed.heroes[0].prototype == 100000
+    assert parsed.heroes[0].unit.max_hp == 100
 
 
 def test_player_sets_every_field_lua_concatenates(reg, row) -> None:

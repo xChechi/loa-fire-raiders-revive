@@ -97,12 +97,12 @@ def test_a_later_guide_id_overwrites_an_earlier_one(reg, settings) -> None:
     assert int(find_player(conn, "stefan")["guide_id"]) == 10160
 
 
-def test_query_myself_reports_the_saved_guide_id(reg, settings) -> None:
+def test_query_myself_reports_the_saved_guide_id(reg, cfg, settings) -> None:
     """The client seeds NewGuideManager from QueryMyselfRes.player.guide_id."""
     conn = connect(settings.db_path)
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     set_guide_id(conn, pid, 10160)
-    res = player.build_query_myself_res(reg, find_player(conn, "stefan"))
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
     assert res.player.guide_id == 10160
 
 

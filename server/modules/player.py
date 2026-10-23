@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from server import db
 from server.config import Config
+from server.modules import hero
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -56,13 +57,17 @@ def build_daily_stats(registry: Registry):
     return msg
 
 
-def build_query_myself_res(registry: Registry, row: sqlite3.Row):
+def build_query_myself_res(
+    registry: Registry, cfg: Config, conn: sqlite3.Connection, row: sqlite3.Row
+):
     msg = registry.message_class("QueryMyselfRes")(status=0, guild=0, mail_new=0)
     msg.player.CopyFrom(build_client_player(registry, row))
     msg.stats.CopyFrom(build_daily_stats(registry))
     # RoleData:updateData reads d.gold_trails.prize with no nil check, so the
     # sub-message must be present even though both its fields are optional.
     msg.gold_trails.SetInParent()
+    for hero_row in db.heroes_of(conn, int(row["id"])):
+        msg.heroes.add().CopyFrom(hero.build_client_hero(registry, cfg, hero_row))
     fill_required(msg)
     return msg
 
@@ -108,7 +113,7 @@ def handlers(
         # recomputed on the way out instead of on a timer.
         row = db.refresh_energy(conn, cfg, row)
         log.info("sending QueryMyselfRes for player id %d", session.player_id)
-        return build_query_myself_res(registry, row)
+        return build_query_myself_res(registry, cfg, conn, row)
 
     def game_ready(session: Session, req):
         return registry.message_class("GameReadyRes")()
