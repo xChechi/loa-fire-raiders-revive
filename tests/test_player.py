@@ -200,3 +200,23 @@ def test_bt_cards_carries_both_privilege_cards(reg) -> None:
     assert [c.isAward for c in res.btCards] == [False, False]
     res.SerializeToString()
     cfg.close()
+
+
+def test_query_myself_reports_the_regenerated_energy(reg, settings, cfg) -> None:
+    """5_2005 answers with the lazily regenerated energy, not the stored one."""
+    from server.net.server import Session
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute(
+        "UPDATE players SET energy = 10, energy_at = 0 WHERE id = ?", (pid,)
+    )
+    conn.commit()
+    handlers = player.handlers(reg, settings, conn, cfg)
+    # Session(writer=None) is safe: query_myself only returns a message.
+    res = handlers[(5, 2005)](
+        Session(writer=None, peer="t", bound_port=0),
+        reg.message_class("QueryMyselfReq")(),
+    )
+    assert res.player.energy == 60
+    assert res.player.max_energy == 60

@@ -104,6 +104,9 @@ def handlers(
             fill_required(res)
             return res
         session.player_id = int(row["id"])
+        # Energy regenerates lazily, so the cap and the recovered amount are
+        # recomputed on the way out instead of on a timer.
+        row = db.refresh_energy(conn, cfg, row)
         log.info("sending QueryMyselfRes for player id %d", session.player_id)
         return build_query_myself_res(registry, row)
 
