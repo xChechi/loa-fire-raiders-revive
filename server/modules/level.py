@@ -1,4 +1,5 @@
-"""Campaign stages: 5_2201 LevelIntoReq (and, from Task 14, 5_2203 and friends).
+"""Campaign stages: 5_2201 LevelIntoReq, 5_2203 LevelOutReq, the chapter star
+chest 5_2209, and explicit refusals for 5_2205 sweep and 5_2207 reset.
 
 Wire shape per spec section 4: the server validates the unlock, spends the
 energy, rolls 64 randoms and pre-rolls the drops, and the client fights.
@@ -35,6 +36,9 @@ FLAG_MAX_TIMES = 2         # z00225
 STATUS_NOT_ENOUGH_ENERGY = 327939   # language.db 体力不足, cannot be delivered on 5_2202
 STATUS_STAGE_LOCKED = 328193        # language.db 关卡未开启
 STATUS_NOT_ENTERED = 328196         # language.db 没有进入关卡
+STATUS_ALREADY_CLAIMED = 328194     # language.db 关卡不可重复刷
+STATUS_NOT_ENOUGH_STARS = 328197    # language.db 星级不够
+STATUS_RESET_LIMIT = 328202         # language.db 达到关卡重置限制
 
 PENDING_KEY = "level_pending"
 
@@ -58,6 +62,17 @@ def is_unlocked(
     if lvl == frontier(cfg, row):
         return True
     return db.level_progress(conn, int(row["id"]), lvl) is not None
+
+
+def chapter_stars(
+    cfg: Config, conn: sqlite3.Connection, player_id: int, chapter: int
+) -> int:
+    """The stars the player holds across one chapter's stages."""
+    entries = {int(r["entry"]) for r in cfg.stages_in_chapter(chapter)}
+    return sum(
+        int(r["star"]) for r in db.levels_of(conn, player_id)
+        if int(r["level"]) in entries
+    )
 
 
 def _required(stage: sqlite3.Row, column: str, lvl: int) -> int:
@@ -250,4 +265,84 @@ def handlers(
         fill_required(res)
         return res
 
-    return {(5, 2201): level_into, (5, 2203): level_out}
+    def chapter_prize(session: Session, req):
+        chapter = int(req.chapter)
+        row = _player(session)
+        info = cfg.chapter(chapter)
+        if row is None or info is None:
+            res = registry.message_class("LevelChapterPrizeRes")(
+                status=STATUS_STAGE_LOCKED, chapter=chapter
+            )
+            fill_required(res)
+            return res
+        player_id = int(row["id"])
+        claimed = {
+            int(c["chapter"]): int(c["award"]) for c in db.chapters_of(conn, player_id)
+        }
+        if claimed.get(chapter):
+            res = registry.message_class("LevelChapterPrizeRes")(
+                status=STATUS_ALREADY_CLAIMED, chapter=chapter
+            )
+            fill_required(res)
+            return res
+        # The threshold is chapter_info.star_req0, never a literal: chapter 1
+        # has 5 stages, so 15 stars are on offer and the chest asks for 9.
+        need = int(info["star_req0"] or 0)
+        have = chapter_stars(cfg, conn, player_id, chapter)
+        if have < need:
+            log.info(
+                "chapter %d chest needs %d stars, player has %d", chapter, need, have
+            )
+            res = registry.message_class("LevelChapterPrizeRes")(
+                status=STATUS_NOT_ENOUGH_STARS, chapter=chapter
+            )
+            fill_required(res)
+            return res
+
+        # grant_prizes vets the whole list before it writes, so it runs before
+        # the irreversible set_chapter_award (Task 11 lesson): an award that
+        # cannot be paid leaves the chest claimable.
+        rolled = drops.roll(cfg, int(info["award0"] or 0))
+        granted = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
+        db.set_chapter_award(conn, player_id, chapter, 1)
+        notify.items_changed(registry, session, granted["items"])
+        notify.player_changed(registry, session, {
+            "gold": granted["gold"], "diamond": granted["diamond"],
+        })
+        log.info(
+            "chapter %d chest paid to player %d: %s", chapter, player_id,
+            drops.as_triples(rolled),
+        )
+        # The client renders the reward panel itself from chapter_info.award0;
+        # it only needs status 0 and the chapter back (LevelBoxStarPanel.lua:78).
+        res = registry.message_class("LevelChapterPrizeRes")(status=0, chapter=chapter)
+        fill_required(res)
+        return res
+
+    def level_clean(session: Session, req):
+        # Sweep is not in Plan B1. LevelCleanRes field 1 is flag, not status, so
+        # this cannot float an error text; flag 2 is the client's own "max
+        # times". The handler exists so the log is honest about the refusal
+        # instead of the zero stub claiming success.
+        log.info("5_2205 sweep of stage %s is not implemented in Plan B1", req.level)
+        res = registry.message_class("LevelCleanRes")(flag=FLAG_MAX_TIMES, times=0)
+        fill_required(res)
+        return res
+
+    def level_reset(session: Session, req):
+        # Reset is not in Plan B1 either; 328202 floats 达到关卡重置限制 and
+        # DesBuyPanel:onReset ignores the rest.
+        log.info("5_2207 reset of stage %s is not implemented in Plan B1", req.level)
+        res = registry.message_class("LevelResetRes")(
+            status=STATUS_RESET_LIMIT, reset_count=0
+        )
+        fill_required(res)
+        return res
+
+    return {
+        (5, 2201): level_into,
+        (5, 2203): level_out,
+        (5, 2205): level_clean,
+        (5, 2207): level_reset,
+        (5, 2209): chapter_prize,
+    }

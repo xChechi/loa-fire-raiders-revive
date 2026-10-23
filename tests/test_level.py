@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, find_player, set_last_level, upsert_level
+from server.db import (
+    chapters_of,
+    connect,
+    create_player,
+    find_player,
+    set_last_level,
+    upsert_level,
+)
 from server.modules import drops, level
 from server.net.registry import Registry
 from server.net.server import Session
@@ -329,3 +336,115 @@ def test_refighting_an_old_stage_does_not_move_last_level_backwards(
     res = _fight(handlers, session, reg, 10000, star=3)
     assert res.status == 0
     assert int(find_player(conn, "stefan")["last_level"]) == 10012
+
+
+def test_chapter_stars_add_up_across_the_chapter(reg, cfg, world) -> None:
+    conn, pid, _h, _s = world
+    upsert_level(conn, pid, 10000, star=3)
+    upsert_level(conn, pid, 10010, star=2)
+    assert level.chapter_stars(cfg, conn, pid, 10000) == 5
+
+
+def test_the_chest_threshold_comes_from_chapter_info(cfg) -> None:
+    """Risk 7: chapter 1 has 5 stages, so 15 stars are available, and the chest
+    asks for chapter_info.star_req0 of them. The handler must read this row,
+    never a literal."""
+    assert len(cfg.stages_in_chapter(10000)) * 3 == 15
+    assert int(cfg.chapter(10000)["star_req0"]) == 9
+
+
+def test_the_chapter_chest_pays_award0_once(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    for entry in (10000, 10010, 10012):
+        upsert_level(conn, pid, entry, star=3)       # 9 stars, star_req0 of chapter 1
+    before = int(find_player(conn, "stefan")["diamond"])
+    res = handlers[(5, 2209)](
+        session, reg.message_class("LevelChapterPrizeReq")(chapter=10000, prize=0)
+    )
+    assert res.status == 0
+    assert res.chapter == 10000
+    row = find_player(conn, "stefan")
+    assert int(row["diamond"]) == before + 600
+    assert int(row["gold"]) == 1280000 + 60000
+    assert [(int(c["chapter"]), int(c["award"])) for c in chapters_of(conn, pid)] == [
+        (10000, 1)
+    ]
+
+    again = handlers[(5, 2209)](
+        session, reg.message_class("LevelChapterPrizeReq")(chapter=10000, prize=0)
+    )
+    assert again.status == 328194                   # language.db 关卡不可重复刷
+    assert int(find_player(conn, "stefan")["diamond"]) == before + 600
+    assert int(find_player(conn, "stefan")["gold"]) == 1280000 + 60000
+    res.SerializeToString()
+    again.SerializeToString()
+
+
+def test_too_few_stars_is_refused(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    upsert_level(conn, pid, 10000, star=1)
+    res = handlers[(5, 2209)](
+        session, reg.message_class("LevelChapterPrizeReq")(chapter=10000, prize=0)
+    )
+    assert res.status == 328197                     # language.db 星级不够
+    assert res.chapter == 10000
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["diamond"])) == (1280000, 18888)
+    assert chapters_of(conn, pid) == []
+    assert session.outbox == []
+    res.SerializeToString()
+
+
+def test_an_unknown_chapter_is_refused(reg, cfg, world) -> None:
+    _conn, _pid, handlers, session = world
+    res = handlers[(5, 2209)](
+        session, reg.message_class("LevelChapterPrizeReq")(chapter=424242, prize=0)
+    )
+    assert res.status != 0
+
+
+def test_a_poisoned_chapter_award_claims_nothing(
+    reg, cfg, world, monkeypatch
+) -> None:
+    """Task 11 ordering lesson: grant_prizes vets the whole prize list before it
+    writes, so it has to run before the irreversible set_chapter_award. If the
+    award cannot be paid, the chest stays unclaimed and can be retried."""
+    conn, pid, handlers, session = world
+    for entry in (10000, 10010, 10012):
+        upsert_level(conn, pid, entry, star=3)
+    monkeypatch.setattr(
+        drops, "roll", lambda *a, **k: [drops.Drop(category=40, refer=1, amount=1)]
+    )
+    with pytest.raises(ValueError):
+        handlers[(5, 2209)](
+            session, reg.message_class("LevelChapterPrizeReq")(chapter=10000, prize=0)
+        )
+    assert chapters_of(conn, pid) == []
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["diamond"])) == (1280000, 18888)
+
+
+def test_sweep_and_reset_refuse_in_the_client_own_language(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    clean = handlers[(5, 2205)](
+        session, reg.message_class("LevelCleanReq")(level=10000, times=1)
+    )
+    assert clean.flag == 2
+    assert len(clean.drops) == 0 and len(clean.reward) == 0
+    clean.SerializeToString()
+    reset = handlers[(5, 2207)](
+        session, reg.message_class("LevelResetReq")(level=10000)
+    )
+    assert reset.status == 328202                   # language.db 达到关卡重置限制
+    assert reset.reset_count == 0
+    reset.SerializeToString()
+    # Neither refusal writes anything or notifies anyone.
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["diamond"]), int(row["energy"])) == (
+        1280000, 18888, 60
+    )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM levels WHERE player_id = ?", (pid,)
+    ).fetchone()[0] == 0
+    assert chapters_of(conn, pid) == []
+    assert session.outbox == []
