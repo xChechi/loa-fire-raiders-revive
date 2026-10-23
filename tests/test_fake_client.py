@@ -13,7 +13,7 @@ import pytest
 
 from server import db
 from server.config import Config
-from server.modules import gacha, guide, level, login, player
+from server.modules import gacha, guide, level, login, player, team
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import Settings
@@ -145,6 +145,7 @@ def test_replay_stage_fights_chapter_one_stage_one(reg, tmp_path: Path, cfg) -> 
         handlers.update(guide.handlers(reg, settings, conn))
         handlers.update(gacha.handlers(reg, settings, conn, cfg))
         handlers.update(level.handlers(reg, settings, conn, cfg))
+        handlers.update(team.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
         # The first run only creates the character, so the starting kit is the

@@ -107,6 +107,25 @@ async def replay_stage(
     assert len(into.urandom) == 64, len(into.urandom)
     assert all(v < 10000 for v in into.urandom)
 
+    # The real client asks for its own team between LevelIntoRes and openFight
+    # (FunctionType.lua:1133), so the replay does too. units[0] is the angel
+    # slot and units[i] is layout position i.
+    team_req = reg.message_class("QuerySelfTeamReq")(fight_type=0, refer=0)
+    for slot in range(7):
+        team_req.units.append(0)
+    for position, entry in enumerate((heroes or [100000])[:6], start=1):
+        team_req.units[position] = entry
+    frame = await game.call(5, 2327, team_req.SerializeToString(), expect=(5, 2328))
+    self_team = reg.message_class("QuerySelfTeamRes")()
+    self_team.ParseFromString(frame.body)
+    # A nil team_base is the LineTeam.lua:34 crash, so the shape is the point.
+    assert self_team.HasField("team_base"), "5_2328 carried no team_base"
+    assert len(self_team.urandom) == 64, len(self_team.urandom)
+    print(
+        f"own team: {len(self_team.team_base.units)} unit(s) "
+        f"{[(u.position, u.refer) for u in self_team.team_base.units]}"
+    )
+
     out_req = reg.message_class("LevelOutReq")(level=level, star=star, angel=0)
     for entry in heroes or [100000]:
         out_req.heroes.append(entry)
@@ -118,7 +137,7 @@ async def replay_stage(
         f"stage {level}: {out.star} star(s), owner level {out.owner.level} "
         f"xp {out.owner.xp}, {len(out.drop)} prize entries"
     )
-    return {"into": into, "out": out}
+    return {"into": into, "team": self_team, "out": out}
 
 
 async def replay(
