@@ -78,3 +78,10 @@ def create_player(
     )
     conn.commit()
     return int(cur.lastrowid)
+
+
+def set_guide_id(conn: sqlite3.Connection, player_id: int, guide_id: int) -> None:
+    conn.execute(
+        "UPDATE players SET guide_id = ? WHERE id = ?", (int(guide_id), int(player_id))
+    )
+    conn.commit()

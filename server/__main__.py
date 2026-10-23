@@ -9,7 +9,7 @@ from pathlib import Path
 
 from server import db
 from server.config import Config
-from server.modules import login, player
+from server.modules import guide, login, player
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import load
@@ -44,6 +44,7 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers: dict = {}
     handlers.update(login.handlers(registry, settings, conn))
     handlers.update(player.handlers(registry, settings, conn, cfg))
+    handlers.update(guide.handlers(registry, settings, conn))
     return handlers
 
 
