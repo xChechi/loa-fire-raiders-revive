@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 from server import db
+from server.config import Config
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -66,8 +67,25 @@ def build_query_myself_res(registry: Registry, row: sqlite3.Row):
     return msg
 
 
+def build_bt_cards(registry: Registry, cfg: Config):
+    """variables.BT_CARD_AWARD is 100000|950816,100100|950811: entry|drop_id per
+    privilege card. RechangeCardPanel:_init builds its reward boxes from exactly
+    that key, and RoleData:updateRechangeCardsList measures the repeated field
+    with #, so both entries are always sent, owned by nobody yet."""
+    res = registry.message_class("QueryBtCardRecordRes")()
+    raw = cfg.variable("BT_CARD_AWARD") or ""
+    for part in (p for p in raw.split(",") if p):
+        entry = int(part.split("|")[0])
+        card = res.btCards.add()
+        card.entry = entry
+        card.isActivation = False
+        card.isAward = False
+    fill_required(res)
+    return res
+
+
 def handlers(
-    registry: Registry, settings: Settings, conn: sqlite3.Connection
+    registry: Registry, settings: Settings, conn: sqlite3.Connection, cfg: Config
 ) -> dict[tuple[int, int], Handler]:
     def _row(session: Session):
         if session.player_id is not None:
@@ -96,7 +114,7 @@ def handlers(
         return registry.message_class("QueryMyPushMessageRes")()
 
     def bt_cards(session: Session, req):
-        return registry.message_class("QueryBtCardRecordRes")()
+        return build_bt_cards(registry, cfg)
 
     def magic_state(session: Session, req):
         return registry.message_class("MagicStateRes")(

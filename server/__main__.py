@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from server import db
+from server.config import Config
 from server.modules import login, player
 from server.net.registry import Registry
 from server.net.server import Server
@@ -39,9 +40,10 @@ async def serve_and_announce(server: Server, settings) -> None:
 
 def build_handlers(registry: Registry, settings) -> dict:
     conn = db.connect(settings.db_path)
+    cfg = Config.load(settings.stock_dir)
     handlers: dict = {}
     handlers.update(login.handlers(registry, settings, conn))
-    handlers.update(player.handlers(registry, settings, conn))
+    handlers.update(player.handlers(registry, settings, conn, cfg))
     return handlers
 
 

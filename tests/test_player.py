@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from server.config import Config
 from server.db import connect, create_player, find_player
 from server.modules import player
 from server.net.registry import Registry
@@ -23,6 +24,13 @@ BIND = "127.0.0.1"
 @pytest.fixture(scope="module")
 def reg() -> Registry:
     return Registry.load(STOCK)
+
+
+@pytest.fixture(scope="module")
+def cfg():
+    conf = Config.load(STOCK)
+    yield conf
+    conf.close()
 
 
 @pytest.fixture
@@ -93,10 +101,10 @@ def test_guide_id_comes_from_the_stored_row(reg, settings) -> None:
     assert p.guide_id == 14302
 
 
-def test_the_five_main_city_stubs_serialize(reg, settings) -> None:
+def test_the_five_main_city_stubs_serialize(reg, settings, cfg) -> None:
     """Every explicit main-city Res must survive proto2 required-field encoding."""
     conn = connect(settings.db_path)
-    handlers = player.handlers(reg, settings, conn)
+    handlers = player.handlers(reg, settings, conn, cfg)
     expected = {
         (5, 2317): "GameReadyRes",
         (5, 2801): "QueryMyPushMessageRes",
@@ -112,12 +120,12 @@ def test_the_five_main_city_stubs_serialize(reg, settings) -> None:
     assert handlers[(153, 2001)](None, None).match_state == 99
 
 
-def test_query_myself_over_a_socket(reg, settings, row) -> None:
+def test_query_myself_over_a_socket(reg, settings, row, cfg) -> None:
     conn, _ = row
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, player.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, player.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -133,13 +141,13 @@ def test_query_myself_over_a_socket(reg, settings, row) -> None:
     asyncio.run(scenario())
 
 
-def test_query_myself_without_any_character_answers_status_one(reg, settings) -> None:
+def test_query_myself_without_any_character_answers_status_one(reg, settings, cfg) -> None:
     """No login and no row: a status 1 stub, never a crash."""
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, player.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, player.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -156,14 +164,14 @@ def test_query_myself_without_any_character_answers_status_one(reg, settings) ->
     asyncio.run(scenario())
 
 
-def test_the_five_main_city_messages_are_answered(reg, settings, row) -> None:
+def test_the_five_main_city_messages_are_answered(reg, settings, row, cfg) -> None:
     conn, _ = row
     expected = {(5, 2317): 2318, (5, 2801): 2802, (5, 2943): 2944,
                 (153, 2001): 2002, (151, 2041): 2042}
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, player.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, player.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -176,3 +184,19 @@ def test_the_five_main_city_messages_are_answered(reg, settings, row) -> None:
         await _stop(task)
 
     asyncio.run(scenario())
+
+
+def test_bt_cards_carries_both_privilege_cards(reg) -> None:
+    """Review Focus 5: RoleData:updateRechangeCardsList does for i = 1,#data
+    over btCards, and RechangeCardPanel builds its boxes from the same
+    variables.db key, so the entries must be 100000 and 100100 in that order."""
+    from server.config import Config
+    from server.modules.player import build_bt_cards
+
+    cfg = Config.load(STOCK)
+    res = build_bt_cards(reg, cfg)
+    assert [c.entry for c in res.btCards] == [100000, 100100]
+    assert [c.isActivation for c in res.btCards] == [False, False]
+    assert [c.isAward for c in res.btCards] == [False, False]
+    res.SerializeToString()
+    cfg.close()

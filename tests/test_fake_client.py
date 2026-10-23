@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from server import db
+from server.config import Config
 from server.modules import login, player
 from server.net.registry import Registry
 from server.net.server import Server
@@ -28,19 +29,26 @@ def reg() -> Registry:
     return Registry.load(STOCK)
 
 
+@pytest.fixture(scope="module")
+def cfg():
+    conf = Config.load(STOCK)
+    yield conf
+    conf.close()
+
+
 def _settings(tmp_path: Path) -> Settings:
     return Settings(STOCK, tmp_path / "player.db", BIND, bind=BIND,
                     port=0, username="stefan", guide_id=0)
 
 
-def test_full_login_burst_against_a_live_server(reg, tmp_path: Path) -> None:
+def test_full_login_burst_against_a_live_server(reg, tmp_path: Path, cfg) -> None:
     settings = _settings(tmp_path)
     conn = db.connect(settings.db_path)
 
     async def scenario() -> list[tuple[int, int]]:
         handlers = {}
         handlers.update(login.handlers(reg, settings, conn))
-        handlers.update(player.handlers(reg, settings, conn))
+        handlers.update(player.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
         got = await replay(BIND, port, "stefan", reg)
@@ -67,14 +75,14 @@ def test_full_login_burst_against_a_live_server(reg, tmp_path: Path) -> None:
     assert db.find_player(conn, "stefan") is not None
 
 
-def test_second_run_reuses_the_character(reg, tmp_path: Path) -> None:
+def test_second_run_reuses_the_character(reg, tmp_path: Path, cfg) -> None:
     settings = _settings(tmp_path)
     conn = db.connect(settings.db_path)
 
     async def scenario() -> list[tuple[int, int]]:
         handlers = {}
         handlers.update(login.handlers(reg, settings, conn))
-        handlers.update(player.handlers(reg, settings, conn))
+        handlers.update(player.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
         await replay(BIND, port, "stefan", reg)
@@ -89,7 +97,9 @@ def test_second_run_reuses_the_character(reg, tmp_path: Path) -> None:
     assert conn.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 1
 
 
-def test_replay_echoes_the_district_from_query_srv_info_res(reg, tmp_path: Path) -> None:
+def test_replay_echoes_the_district_from_query_srv_info_res(
+    reg, tmp_path: Path, cfg
+) -> None:
     """The real client puts the district it was given at header offset 4."""
     settings = _settings(tmp_path)
     conn = db.connect(settings.db_path)
@@ -98,7 +108,7 @@ def test_replay_echoes_the_district_from_query_srv_info_res(reg, tmp_path: Path)
     async def scenario() -> None:
         handlers = {}
         handlers.update(login.handlers(reg, settings, conn))
-        handlers.update(player.handlers(reg, settings, conn))
+        handlers.update(player.handlers(reg, settings, conn, cfg))
 
         def on_protocol(session, req):
             seen.append(session.district)
