@@ -149,3 +149,144 @@ def test_a_refusal_writes_nothing_at_all(reg, cfg, world) -> None:
     assert int(find_player(conn, "stefan")["energy"]) == 2
     assert session.data.get(level.PENDING_KEY, {}) == {}
     assert session.outbox == []
+
+
+def _fight(handlers, session, reg, lvl, star, heroes=(100000,)):
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=lvl))
+    req = reg.message_class("LevelOutReq")(level=lvl, star=star, angel=0)
+    for entry in heroes:
+        req.heroes.append(entry)
+    return handlers[(5, 2203)](session, req)
+
+
+def test_a_cleared_stage_pays_xp_gold_drops_and_unlocks_the_next(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    from server.db import grant_hero, items_of
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+
+    res = _fight(handlers, session, reg, 10000, star=3)
+    assert res.status == 0
+    assert res.star == 3
+    row = find_player(conn, "stefan")
+    # stage 10000: player_xp 6, gold 516, energy 6 spent
+    assert int(row["gold"]) == 1280000 + 516
+    assert int(row["last_level"]) == 10000
+    assert int(row["energy"]) == 54
+    prog = conn.execute(
+        "SELECT * FROM levels WHERE player_id = ? AND level = 10000", (pid,)
+    ).fetchone()
+    assert (int(prog["star"]), int(prog["count"])) == (3, 1)
+    assert {int(i["entry"]) for i in items_of(conn, pid)} >= {10000}
+    assert res.owner.level >= 1
+    assert [h.refer for h in res.heroes] == [100000]
+    res.SerializeToString()
+
+
+def test_level_out_twice_grants_once(reg, cfg, world) -> None:
+    """Review Focus 1: requestServerInfo retries the same 5_2203 after 6 s."""
+    conn, pid, handlers, session = world
+    from server.db import grant_hero, items_of
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+
+    first = _fight(handlers, session, reg, 10000, star=3)
+    after_first = find_player(conn, "stefan")
+    gold_after_first = int(after_first["gold"])
+    items_after_first = {int(i["entry"]): int(i["amount"]) for i in items_of(conn, pid)}
+    xp_after_first = (int(after_first["level"]), int(after_first["xp"]))
+    hero_after_first = conn.execute(
+        "SELECT level, xp FROM heroes WHERE player_id = ? AND entry = 100000"
+        " ORDER BY id", (pid,)
+    ).fetchone()
+    again = reg.message_class("LevelOutReq")(level=10000, star=3, angel=0)
+    again.heroes.append(100000)
+    second = handlers[(5, 2203)](session, again)
+    assert first.status == 0
+    assert second.status == 328196                  # language.db 没有进入关卡
+    after_second = find_player(conn, "stefan")
+    assert int(after_second["gold"]) == gold_after_first
+    assert {int(i["entry"]): int(i["amount"]) for i in items_of(conn, pid)} == (
+        items_after_first
+    )
+    assert (int(after_second["level"]), int(after_second["xp"])) == xp_after_first
+    hero_after_second = conn.execute(
+        "SELECT level, xp FROM heroes WHERE player_id = ? AND entry = 100000"
+        " ORDER BY id", (pid,)
+    ).fetchone()
+    assert (int(hero_after_second["level"]), int(hero_after_second["xp"])) == (
+        int(hero_after_first["level"]), int(hero_after_first["xp"])
+    )
+    assert list(second.drop) == []
+
+
+def test_a_loss_keeps_the_stage_locked_and_pays_nothing(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    res = _fight(handlers, session, reg, 10000, star=0)
+    assert res.status == 0
+    row = find_player(conn, "stefan")
+    assert int(row["last_level"]) == 0
+    assert int(row["gold"]) == 1280000
+    prog = conn.execute(
+        "SELECT * FROM levels WHERE player_id = ? AND level = 10000", (pid,)
+    ).fetchone()
+    assert int(prog["star"]) == 0
+    assert int(prog["count"]) == 1
+
+
+def test_player_xp_levels_up_and_notifies(reg, cfg, world) -> None:
+    """xp_for_level lvl 1 needs 12 player xp; stage 10000 pays 6 per clear."""
+    conn, pid, handlers, session = world
+    _fight(handlers, session, reg, 10000, star=3)
+    session.outbox.clear()
+    _fight(handlers, session, reg, 10000, star=3)
+    row = find_player(conn, "stefan")
+    assert int(row["level"]) == 2
+    assert int(row["max_energy"]) == 62
+    assert (5, 2036) in [(s, c) for (s, c, _m) in session.outbox]
+
+
+def test_a_level_out_for_the_wrong_stage_is_refused(reg, cfg, world) -> None:
+    _conn, _pid, handlers, session = world
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    req = reg.message_class("LevelOutReq")(level=10012, star=3, angel=0)
+    assert handlers[(5, 2203)](session, req).status == 328196
+
+
+def test_a_poisoned_drop_rolls_everything_back_and_keeps_the_pending_entry(
+    reg, cfg, world
+) -> None:
+    """Task 11 ordering lesson: grant_prizes validates the whole prize list
+    before it writes, so a bad prize must leave the handler's own writes
+    undone and the pending entry re-usable."""
+    conn, pid, handlers, session = world
+    from server.modules.drops import Drop
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.data[level.PENDING_KEY][10000] = [Drop(category=40, refer=1, amount=1)]
+    req = reg.message_class("LevelOutReq")(level=10000, star=3, angel=0)
+
+    with pytest.raises(ValueError):
+        handlers[(5, 2203)](session, req)
+
+    row = find_player(conn, "stefan")
+    assert int(row["gold"]) == 1280000          # grant never applied
+    assert int(row["level"]) == 1
+    assert int(row["xp"]) == 0
+    assert int(row["last_level"]) == 0
+    assert conn.execute(
+        "SELECT * FROM levels WHERE player_id = ? AND level = 10000", (pid,)
+    ).fetchone() is None
+    assert session.data[level.PENDING_KEY][10000]
+
+
+def test_refighting_an_old_stage_does_not_move_last_level_backwards(
+    reg, cfg, world
+) -> None:
+    conn, pid, handlers, session = world
+    for lvl in (10000, 10010, 10012):
+        upsert_level(conn, pid, lvl, star=3, count_delta=1)
+    set_last_level(conn, pid, 10012)
+    conn.execute("UPDATE players SET energy = 60 WHERE id = ?", (pid,))
+    conn.commit()
+
+    res = _fight(handlers, session, reg, 10000, star=3)
+    assert res.status == 0
+    assert int(find_player(conn, "stefan")["last_level"]) == 10012

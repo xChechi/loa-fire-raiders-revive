@@ -355,3 +355,71 @@ def set_last_level(conn: sqlite3.Connection, player_id: int, level: int) -> None
         "UPDATE players SET last_level = ? WHERE id = ?", (int(level), int(player_id))
     )
     conn.commit()
+
+
+def add_player_xp(conn: sqlite3.Connection, cfg, player_id: int, amount: int) -> dict:
+    """xp_for_level.player_xp_for_next_level is the cost of the next level, and
+    levelup_recovery_energy is the energy a level-up hands out (it is not the
+    regeneration rate: that is variables.PLAYER_ENERGY_RECOVER)."""
+    row = conn.execute("SELECT * FROM players WHERE id = ?", (int(player_id),)).fetchone()
+    before = (int(row["level"]), int(row["xp"]), int(row["energy"]), int(row["max_energy"]))
+    level, xp, energy, max_energy = before
+    while True:
+        need_row = cfg.xp_for_level(level)
+        if need_row is None:
+            break
+        need = int(need_row["player_xp_for_next_level"] or 0)
+        if need <= 0 or xp + amount < need:
+            break
+        amount -= need - xp
+        xp = 0
+        level += 1
+        new_row = cfg.xp_for_level(level)
+        if new_row is None:
+            # The top of xp_for_level (lvl 105): there is no next level to go to.
+            level -= 1
+            break
+        max_energy = int(new_row["max_energy"])
+        energy = min(max_energy, energy + int(new_row["levelup_recovery_energy"] or 0))
+    xp += amount
+    conn.execute(
+        "UPDATE players SET level = ?, xp = ?, energy = ?, max_energy = ? WHERE id = ?",
+        (level, xp, energy, max_energy, int(player_id)),
+    )
+    conn.commit()
+    after = (level, xp, energy, max_energy)
+    return {"before": before, "after": after, "levelled": after[0] != before[0]}
+
+
+def add_hero_xp(
+    conn: sqlite3.Connection, cfg, player_id: int, entries, amount: int
+) -> list[tuple[int, int, int]]:
+    """One xp grant per hero entry that fought. A hero cannot pass
+    xp_for_level(player level).hero_max_level."""
+    player = conn.execute(
+        "SELECT * FROM players WHERE id = ?", (int(player_id),)
+    ).fetchone()
+    caps = cfg.xp_for_level(int(player["level"]))
+    cap = int(caps["hero_max_level"]) if caps else 1
+    out: list[tuple[int, int, int]] = []
+    for entry in {int(e) for e in entries if int(e)}:
+        row = conn.execute(
+            "SELECT * FROM heroes WHERE player_id = ? AND entry = ? ORDER BY id",
+            (int(player_id), entry),
+        ).fetchone()
+        if row is None:
+            continue
+        level, xp = int(row["level"]), int(row["xp"]) + int(amount)
+        while level < cap:
+            need_row = cfg.xp_for_level(level)
+            need = int(need_row["hero_xp_for_next_level"] or 0) if need_row else 0
+            if need <= 0 or xp < need:
+                break
+            xp -= need
+            level += 1
+        conn.execute(
+            "UPDATE heroes SET level = ?, xp = ? WHERE id = ?", (level, xp, int(row["id"]))
+        )
+        out.append((entry, level, xp))
+    conn.commit()
+    return out

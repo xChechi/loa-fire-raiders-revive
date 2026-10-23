@@ -16,7 +16,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import drops, notify
+from server.modules import drops, item, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -148,4 +148,98 @@ def handlers(
         fill_required(res)
         return res
 
-    return {(5, 2201): level_into}
+    def level_out(session: Session, req):
+        lvl = int(req.level)
+        row = _player(session)
+        stage = cfg.stage(lvl)
+        pending = session.data.get(PENDING_KEY, {})
+        if row is None or stage is None:
+            res = registry.message_class("LevelOutRes")(status=STATUS_STAGE_LOCKED)
+            fill_required(res)
+            return res
+        if lvl not in pending:
+            log.warning(
+                "5_2203 for stage %d with no matching 5_2201 on this session, "
+                "answering %d", lvl, STATUS_NOT_ENTERED,
+            )
+            res = registry.message_class("LevelOutRes")(status=STATUS_NOT_ENTERED)
+            fill_required(res)
+            return res
+
+        # Popped before anything is granted: the client retries 5_2203 twice
+        # more after a 6 s timeout (BattleFactoryBase.lua:871-930).
+        rolled = pending.pop(lvl)
+        player_id = int(row["id"])
+        star = max(0, min(3, int(req.star)))
+        won = star > 0
+
+        granted = {"gold": int(row["gold"]), "diamond": int(row["diamond"]), "items": []}
+        hero_xp: list[tuple[int, int, int]] = []
+        xp_change = {"before": None, "after": None, "levelled": False}
+        if won:
+            prizes = drops.as_triples(rolled)
+            prizes.append((item.CATEGORY_GOLD, 0, int(stage["gold"] or 0)))
+            # grant_prizes vets the whole list before it writes anything, so it
+            # runs before this handler's own irreversible writes (Task 11). If
+            # it raises, the pending entry goes back and the retry can replay.
+            try:
+                granted = item.grant_prizes(conn, cfg, player_id, prizes)
+            except Exception:
+                pending[lvl] = rolled
+                raise
+
+        db.upsert_level(conn, player_id, lvl, star=star, count_delta=1)
+        res = registry.message_class("LevelOutRes")(status=0, star=star)
+
+        if won:
+            xp_change = db.add_player_xp(conn, cfg, player_id, int(stage["player_xp"] or 0))
+            hero_xp = db.add_hero_xp(
+                conn, cfg, player_id, list(req.heroes), int(stage["unit_xp"] or 0)
+            )
+            if lvl == frontier(cfg, row):
+                db.set_last_level(conn, player_id, lvl)
+            for entry in drops.to_prize_entries(registry, rolled):
+                res.drop.add().CopyFrom(entry)
+            gold_entry = res.drop.add()
+            gold_entry.category = item.CATEGORY_GOLD
+            gold_entry.refer = 0
+            gold_entry.amount = int(stage["gold"] or 0)
+
+        fresh = conn.execute(
+            "SELECT * FROM players WHERE id = ?", (player_id,)
+        ).fetchone()
+        # BattleEndLayer reads owner.xp and owner.level; refer is unused there.
+        res.owner.refer = player_id
+        res.owner.level = int(fresh["level"])
+        res.owner.xp = int(fresh["xp"])
+        for entry, hlevel, hxp in hero_xp:
+            # refer is the hero entry: toExpInfo keys heroes by v.refer and
+            # BattleEndLayer looks them up by the unit entry.
+            client_xp = res.heroes.add()
+            client_xp.refer = entry
+            client_xp.level = hlevel
+            client_xp.xp = hxp
+
+        if won:
+            notify.items_changed(registry, session, granted["items"])
+            notify.player_changed(registry, session, {
+                "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
+                "xp": int(fresh["xp"]), "level": int(fresh["level"]),
+                "energy": int(fresh["energy"]), "max_energy": int(fresh["max_energy"]),
+                "last_level": int(fresh["last_level"]),
+            })
+            if xp_change["levelled"]:
+                before = xp_change["before"]
+                after = xp_change["after"]
+                notify.level_up(
+                    registry, session,
+                    (before[0], before[2], before[3]), (after[0], after[2], after[3]),
+                )
+        log.info(
+            "stage %d finished by player %d with %d star(s), won=%s", lvl, player_id,
+            star, won,
+        )
+        fill_required(res)
+        return res
+
+    return {(5, 2201): level_into, (5, 2203): level_out}
