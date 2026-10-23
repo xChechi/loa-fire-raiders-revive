@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import hero
+from server.modules import hero, item
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -68,6 +68,8 @@ def build_query_myself_res(
     msg.gold_trails.SetInParent()
     for hero_row in db.heroes_of(conn, int(row["id"])):
         msg.heroes.add().CopyFrom(hero.build_client_hero(registry, cfg, hero_row))
+    for stock in item.build_inventory(registry, conn, int(row["id"])):
+        msg.inventory.add().CopyFrom(stock)
     fill_required(msg)
     return msg
 

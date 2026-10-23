@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, find_player, grant_hero
+from server.db import connect, create_player, find_player, grant_hero, grant_item
 from server.modules import player
 from server.net.registry import Registry
 from server.net.server import Server, fill_required
@@ -79,6 +79,23 @@ def test_query_myself_res_carries_a_granted_hero(reg, cfg, row) -> None:
     assert parsed.heroes[0].entry == 100000
     assert parsed.heroes[0].prototype == 100000
     assert parsed.heroes[0].unit.max_hp == 100
+
+
+def test_query_myself_res_carries_the_bag_merged_per_entry(reg, cfg, row) -> None:
+    """The bag travels in QueryMyselfRes.inventory as one ClientStock per item
+    entry: a repeat grant of an entry the player already owns raises its amount
+    instead of adding a second stock, and the whole message still encodes with
+    its proto2 required fields filled."""
+    conn, r = row
+    grant_item(conn, int(r["id"]), 10000, 3)
+    grant_item(conn, int(r["id"]), 1100, 2)
+    grant_item(conn, int(r["id"]), 10000, 1)
+    res = player.build_query_myself_res(reg, cfg, conn, r)
+    fill_required(res)
+    parsed = reg.message_class("QueryMyselfRes")()
+    parsed.ParseFromString(res.SerializeToString())
+    assert [(s.entry, s.amount) for s in parsed.inventory] == [(10000, 4), (1100, 2)]
+    assert [s.index for s in parsed.inventory] == [0, 1]
 
 
 def test_player_sets_every_field_lua_concatenates(reg, row) -> None:
