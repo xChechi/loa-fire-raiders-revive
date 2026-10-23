@@ -42,7 +42,7 @@ def build_handlers(registry: Registry, settings) -> dict:
     conn = db.connect(settings.db_path)
     cfg = Config.load(settings.stock_dir)
     handlers: dict = {}
-    handlers.update(login.handlers(registry, settings, conn))
+    handlers.update(login.handlers(registry, settings, conn, cfg))
     handlers.update(player.handlers(registry, settings, conn, cfg))
     handlers.update(guide.handlers(registry, settings, conn))
     return handlers

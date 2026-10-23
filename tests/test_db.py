@@ -185,3 +185,16 @@ def test_add_energy_stops_at_the_level_cap(tmp_path: Path) -> None:
     add_energy(conn, cfg, pid, 100)
     assert int(find_player(conn, "stefan")["energy"]) == 60
     cfg.close()
+
+
+def test_grant_item_adds_to_the_same_entry(tmp_path) -> None:
+    from server.db import connect, create_player, grant_item, items_of
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    assert grant_item(conn, pid, 1100, 3) == 3
+    assert grant_item(conn, pid, 1100, 2) == 5
+    assert grant_item(conn, pid, 10000, 2) == 2
+    assert {int(r["entry"]): int(r["amount"]) for r in items_of(conn, pid)} == {
+        1100: 5, 10000: 2
+    }

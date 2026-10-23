@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 
 from server import db
+from server.config import Config
 from server.net.registry import Registry
 from server.net.server import Handler, Session
 from server.settings import Settings
@@ -30,8 +31,50 @@ def _tz_offset_seconds() -> int:
     return 0 if offset is None else int(offset.total_seconds())
 
 
+def _variable(cfg: Config, key: str) -> str:
+    """A variables.db value, or a failure that names the key.
+
+    A silently empty kit is worse than a crash at creation time: the character
+    would exist with no gold and no hero, and LineFrame:startFight refuses to
+    start a stage with no hero on the field.
+    """
+    raw = cfg.variable(key)
+    if raw is None or raw == "":
+        raise KeyError(f"variables.{key} is missing from the client config")
+    return raw
+
+
+def _variable_int(cfg: Config, key: str) -> int:
+    _variable(cfg, key)  # presence first, so a missing key names itself
+    return cfg.variable_int(key, 0)
+
+
+def starting_kit(cfg: Config) -> dict:
+    """Everything a fresh character owns, from variables.db."""
+    items: list[tuple[int, int]] = []
+    for part in (p for p in _variable(cfg, "PLAYER_ITEMS_INIT").split(",") if p):
+        entry, _, amount = part.partition("|")
+        items.append((int(entry), int(amount or 1)))
+    hero_entry = _variable_int(cfg, "HERO_FIRST_ENTRY")
+    # The lowest hero_quality row, not hero_info.quality: hero 100000 reads
+    # quality 0 there, and a quality with no hero_quality row crashes
+    # ClientHero:getNpcProperty on the client.
+    qualities = cfg.hero_qualities(hero_entry)
+    if not qualities:
+        raise KeyError(f"hero_quality has no row for hero {hero_entry}")
+    return {
+        "gold": _variable_int(cfg, "HERO_GOLD_INIT"),
+        "diamond": _variable_int(cfg, "HERO_DIAMOND_INIT"),
+        "energy": _variable_int(cfg, "ENERGY_INIT"),
+        "max_energy": _variable_int(cfg, "ENERGY_MAX_INIT"),
+        "hero_entry": hero_entry,
+        "hero_quality": int(qualities[0]["quality"]),
+        "items": items,
+    }
+
+
 def handlers(
-    registry: Registry, settings: Settings, conn: sqlite3.Connection
+    registry: Registry, settings: Settings, conn: sqlite3.Connection, cfg: Config
 ) -> dict[tuple[int, int], Handler]:
     def srv_info(session: Session, req):
         log.info("server info asked for server_id=%r", req.server_id)
@@ -73,8 +116,21 @@ def handlers(
         row = db.find_player(conn, username)
         if row is not None:
             return int(row["id"])
-        player_id = db.create_player(conn, username, username, settings.guide_id)
-        log.info("created character %r as player id %d", username, player_id)
+        kit = starting_kit(cfg)
+        player_id = db.create_player(
+            conn, username, username, settings.guide_id,
+            gold=kit["gold"], diamond=kit["diamond"],
+            energy=kit["energy"], max_energy=kit["max_energy"],
+        )
+        db.grant_hero(
+            conn, player_id, kit["hero_entry"], kit["hero_quality"], star=1, level=1
+        )
+        for entry, amount in kit["items"]:
+            db.grant_item(conn, player_id, entry, amount)
+        log.info(
+            "created character %r as player id %d with hero %d, %d gold, %d diamonds",
+            username, player_id, kit["hero_entry"], kit["gold"], kit["diamond"],
+        )
         return player_id
 
     def login(session: Session, req):

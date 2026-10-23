@@ -47,7 +47,7 @@ def test_full_login_burst_against_a_live_server(reg, tmp_path: Path, cfg) -> Non
 
     async def scenario() -> list[tuple[int, int]]:
         handlers = {}
-        handlers.update(login.handlers(reg, settings, conn))
+        handlers.update(login.handlers(reg, settings, conn, cfg))
         handlers.update(player.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
@@ -81,7 +81,7 @@ def test_second_run_reuses_the_character(reg, tmp_path: Path, cfg) -> None:
 
     async def scenario() -> list[tuple[int, int]]:
         handlers = {}
-        handlers.update(login.handlers(reg, settings, conn))
+        handlers.update(login.handlers(reg, settings, conn, cfg))
         handlers.update(player.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
@@ -107,7 +107,7 @@ def test_replay_echoes_the_district_from_query_srv_info_res(
 
     async def scenario() -> None:
         handlers = {}
-        handlers.update(login.handlers(reg, settings, conn))
+        handlers.update(login.handlers(reg, settings, conn, cfg))
         handlers.update(player.handlers(reg, settings, conn, cfg))
 
         def on_protocol(session, req):

@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from server.config import Config
 from server.db import connect, find_player
 from server.modules import login
 from server.net.registry import Registry
-from server.net.server import Server
+from server.net.server import Server, Session
 from server.settings import Settings
 from tests.test_server_core import Client, _run_server, _stop
 
@@ -23,6 +24,13 @@ BIND = "127.0.0.1"
 @pytest.fixture(scope="module")
 def reg() -> Registry:
     return Registry.load(STOCK)
+
+
+@pytest.fixture(scope="module")
+def cfg():
+    conf = Config.load(STOCK)
+    yield conf
+    conf.close()
 
 
 @pytest.fixture
@@ -38,12 +46,12 @@ def _login_body(reg: Registry, name: str, username: str = "stefan") -> bytes:
     ).SerializeToString()
 
 
-def test_srvinfo_answers_host_and_port(reg, settings) -> None:
+def test_srvinfo_answers_host_and_port(reg, settings, cfg) -> None:
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -59,12 +67,12 @@ def test_srvinfo_answers_host_and_port(reg, settings) -> None:
     asyncio.run(scenario())
 
 
-def test_protocol_res_carries_a_colon(reg, settings) -> None:
+def test_protocol_res_carries_a_colon(reg, settings, cfg) -> None:
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -80,7 +88,7 @@ def test_protocol_res_carries_a_colon(reg, settings) -> None:
     asyncio.run(scenario())
 
 
-def test_first_login_creates_the_player_and_answers_ok(reg, settings) -> None:
+def test_first_login_creates_the_player_and_answers_ok(reg, settings, cfg) -> None:
     """The client never acts on 327682, so the server creates the character.
 
     Verified on the emulator on 21-10-2026: the server answered
@@ -95,7 +103,7 @@ def test_first_login_creates_the_player_and_answers_ok(reg, settings) -> None:
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -125,7 +133,7 @@ def test_first_login_creates_the_player_and_answers_ok(reg, settings) -> None:
 
 
 def test_login_uses_the_settings_account_not_the_name_the_client_sent(
-    reg, settings
+    reg, settings, cfg
 ) -> None:
     """One player, one account. Seen live on 21-10-2026: a client reconnecting
     after the server restarted sent LoginReq with an empty username, and the
@@ -134,7 +142,7 @@ def test_login_uses_the_settings_account_not_the_name_the_client_sent(
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -153,13 +161,15 @@ def test_login_uses_the_settings_account_not_the_name_the_client_sent(
     asyncio.run(scenario())
 
 
-def test_gameplay_req_is_still_answered_if_a_client_sends_it(reg, settings) -> None:
+def test_gameplay_req_is_still_answered_if_a_client_sends_it(
+    reg, settings, cfg
+) -> None:
     """3_2003 stays supported: it is the stock create-character message."""
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -185,13 +195,13 @@ def test_gameplay_req_is_still_answered_if_a_client_sends_it(reg, settings) -> N
     asyncio.run(scenario())
 
 
-def test_srvinfo_on_first_socket_then_login_on_second(reg, settings) -> None:
+def test_srvinfo_on_first_socket_then_login_on_second(reg, settings, cfg) -> None:
     """Review Focus 3, with the real handlers: the client uses two sockets."""
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
 
@@ -218,12 +228,12 @@ def test_srvinfo_on_first_socket_then_login_on_second(reg, settings) -> None:
     asyncio.run(scenario())
 
 
-def test_heartbeat_echoes_a_time(reg, settings) -> None:
+def test_heartbeat_echoes_a_time(reg, settings, cfg) -> None:
     conn = connect(settings.db_path)
 
     async def scenario() -> None:
         server = Server(
-            reg, settings, login.handlers(reg, settings, conn), bind_host=BIND
+            reg, settings, login.handlers(reg, settings, conn, cfg), bind_host=BIND
         )
         task, port = await _run_server(server)
         c = await Client.connect(port)
@@ -239,3 +249,73 @@ def test_heartbeat_echoes_a_time(reg, settings) -> None:
         await _stop(task)
 
     asyncio.run(scenario())
+
+
+def test_a_fresh_character_gets_the_config_starting_kit(reg, settings) -> None:
+    """variables.db, not invented numbers: HERO_GOLD_INIT 1280000,
+    HERO_DIAMOND_INIT 18888, PLAYER_ITEMS_INIT 1100|3,1200|2,
+    HERO_FIRST_ENTRY 100000 at its lowest hero_quality (10), ENERGY_INIT 60.
+    LineFrame:startFight refuses to start a stage with no hero on the field,
+    which is why the first hero is granted here and not by the gacha."""
+    from server.config import Config
+    from server.db import connect, find_player, heroes_of, items_of
+    from server.modules import login
+
+    cfg = Config.load(STOCK)
+    conn = connect(settings.db_path)
+    handlers = login.handlers(reg, settings, conn, cfg)
+    body = reg.message_class("LoginReq")(
+        username="stefan", token="local", datetime=1, args=["1"]
+    )
+    handlers[(3, 2001)](Session(writer=None, peer="t", bound_port=0), body)
+
+    row = find_player(conn, "stefan")
+    assert int(row["gold"]) == 1280000
+    assert int(row["diamond"]) == 18888
+    assert int(row["energy"]) == 60
+    assert int(row["max_energy"]) == 60
+    heroes = heroes_of(conn, int(row["id"]))
+    assert [int(h["entry"]) for h in heroes] == [100000]
+    assert int(heroes[0]["quality"]) == 10
+    assert int(heroes[0]["star"]) == 1
+    assert int(heroes[0]["level"]) == 1
+    assert {int(i["entry"]): int(i["amount"]) for i in items_of(conn, int(row["id"]))} == {
+        1100: 3, 1200: 2
+    }
+    cfg.close()
+
+
+def test_logging_in_again_does_not_grant_the_kit_twice(reg, settings) -> None:
+    from server.config import Config
+    from server.db import connect, find_player, heroes_of, items_of
+    from server.modules import login
+
+    cfg = Config.load(STOCK)
+    conn = connect(settings.db_path)
+    handlers = login.handlers(reg, settings, conn, cfg)
+    body = reg.message_class("LoginReq")(
+        username="stefan", token="local", datetime=1, args=["1"]
+    )
+    session = Session(writer=None, peer="t", bound_port=0)
+    handlers[(3, 2001)](session, body)
+    handlers[(3, 2001)](session, body)
+
+    row = find_player(conn, "stefan")
+    assert int(row["gold"]) == 1280000
+    assert len(heroes_of(conn, int(row["id"]))) == 1
+    assert len(items_of(conn, int(row["id"]))) == 2
+    cfg.close()
+
+
+def test_a_starting_kit_variable_the_config_lacks_fails_loudly(reg, settings) -> None:
+    """A missing key must name itself, not grant nothing in silence: a
+    character created with no gold and no hero looks like a working login and
+    then cannot start a stage."""
+    class WithoutGold(Config):
+        def variable(self, key: str):
+            return None if key == "HERO_GOLD_INIT" else super().variable(key)
+
+    cfg = WithoutGold.load(STOCK)
+    with pytest.raises(KeyError, match="HERO_GOLD_INIT"):
+        login.starting_kit(cfg)
+    cfg.close()

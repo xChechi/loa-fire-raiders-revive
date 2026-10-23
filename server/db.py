@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS items (
     entry     INTEGER NOT NULL,
     amount    INTEGER NOT NULL DEFAULT 0
 );
+-- One row per (player, item entry): RoleData:updateItemNum looks an item up by
+-- entry and the client keeps a single ClientStock for it, so grant_item can
+-- upsert on this index.
+CREATE UNIQUE INDEX IF NOT EXISTS items_player_entry ON items(player_id, entry);
 """
 
 # The Plan A schema exactly as it shipped, for the migration test only. Keep it
@@ -78,6 +82,7 @@ CREATE TABLE IF NOT EXISTS players (
 ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "energy_at", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "last_level", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "quality", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -107,15 +112,82 @@ def find_player(conn: sqlite3.Connection, username: str) -> sqlite3.Row | None:
 
 
 def create_player(
-    conn: sqlite3.Connection, username: str, nickname: str, guide_id: int
+    conn: sqlite3.Connection,
+    username: str,
+    nickname: str,
+    guide_id: int,
+    gold: int = 0,
+    diamond: int = 0,
+    energy: int = 60,
+    max_energy: int = 60,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO players (username, nickname, guide_id, created_at)"
-        " VALUES (?, ?, ?, ?)",
-        (username, nickname, guide_id, datetime.now(UTC).isoformat(timespec="seconds")),
+        "INSERT INTO players (username, nickname, guide_id, gold, diamond,"
+        " energy, max_energy, energy_at, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            username, nickname, guide_id, int(gold), int(diamond),
+            int(energy), int(max_energy), int(time.time()),
+            datetime.now(UTC).isoformat(timespec="seconds"),
+        ),
     )
     conn.commit()
     return int(cur.lastrowid)
+
+
+def grant_hero(
+    conn: sqlite3.Connection,
+    player_id: int,
+    entry: int,
+    quality: int,
+    star: int = 1,
+    level: int = 1,
+    xp: int = 0,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO heroes (player_id, entry, quality, star, level, xp)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (int(player_id), int(entry), int(quality), int(star), int(level), int(xp)),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def grant_item(
+    conn: sqlite3.Connection, player_id: int, entry: int, amount: int
+) -> int:
+    """Upsert on (player_id, entry) and return the new absolute amount.
+
+    The client keeps one ClientStock per item entry (RoleData:updateItemNum
+    looks items up by entry), so the server does too.
+    """
+    conn.execute(
+        "INSERT INTO items (player_id, entry, amount) VALUES (?, ?, ?)"
+        " ON CONFLICT(player_id, entry) DO UPDATE SET amount = amount + ?",
+        (int(player_id), int(entry), int(amount), int(amount)),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+        (int(player_id), int(entry)),
+    ).fetchone()
+    return int(row["amount"])
+
+
+def heroes_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            "SELECT * FROM heroes WHERE player_id = ? ORDER BY id", (int(player_id),)
+        )
+    )
+
+
+def items_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            "SELECT * FROM items WHERE player_id = ? ORDER BY id", (int(player_id),)
+        )
+    )
 
 
 def set_guide_id(conn: sqlite3.Connection, player_id: int, guide_id: int) -> None:
