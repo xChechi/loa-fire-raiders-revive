@@ -90,6 +90,12 @@ class Session:
     district: int = 0
     player_id: int | None = None
     data: dict[str, object] = field(default_factory=dict)
+    # Extra frames a synchronous handler wants pushed after its reply, in order.
+    # Dispatch drains this; handlers only append through queue().
+    outbox: list[tuple[int, int, object]] = field(default_factory=list)
+
+    def queue(self, service: int, cmd: int, msg) -> None:
+        self.outbox.append((service, cmd, msg))
 
     async def send(self, service: int, cmd: int, msg, status: int = 0) -> None:
         body = msg.SerializeToString()
@@ -199,6 +205,7 @@ class Server:
             if res is not None:
                 self.sent_unknown.add(key)
                 await self._reply(session, key, res)
+            await self._flush(session)
             return
 
         try:
@@ -208,6 +215,15 @@ class Server:
             res = stub_response(self.registry, *key, status=1)
         if res is not None:
             await self._reply(session, key, res)
+        await self._flush(session)
+
+    async def _flush(self, session: Session) -> None:
+        """Send and clear whatever the handler queued. A notify id has no Req,
+        so these go out through Session.send directly, not through res_key."""
+        queued, session.outbox = session.outbox, []
+        for service, cmd, msg in queued:
+            fill_required(msg)
+            await session.send(service, cmd, msg)
 
     async def _reply(self, session: Session, key: tuple[int, int], res) -> None:
         res_key = msgmap.res_key(self.registry.ids, *key)
