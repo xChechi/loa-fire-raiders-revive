@@ -8,12 +8,17 @@ import pytest
 
 from server.config import Config
 from server.db import connect, create_player, find_player, set_last_level, upsert_level
-from server.modules import level
+from server.modules import drops, level
 from server.net.registry import Registry
 from server.net.server import Session
 from server.settings import Settings
 
 STOCK = Path(".stock")
+
+# A seeded rng makes the two rolls of an entry predictable: the handler draws
+# the visible roll first, then the invisible one, then the 64 urandoms, so the
+# same seed replayed in the same order gives the lists it used.
+SEED = 7
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +53,15 @@ def world(settings, cfg, reg):
     return conn, pid, handlers, session
 
 
+def _expected_rolls(cfg, visible_drops: int, invisible_drops: int):
+    """The two lists the handler rolls for a stage, in its own order."""
+    rng = random.Random(SEED)
+    return (
+        drops.roll(cfg, visible_drops, rng=rng),
+        drops.roll(cfg, invisible_drops, rng=rng),
+    )
+
+
 def test_the_frontier_of_a_fresh_player_is_stage_one_one(cfg, world) -> None:
     conn, pid, _h, _s = world
     assert level.frontier(cfg, find_player(conn, "stefan")) == 10000
@@ -72,17 +86,42 @@ def test_urandom_is_64_values_under_10000(world, reg) -> None:
 
 
 def test_entering_stage_one_one_spends_six_energy_and_pre_rolls_the_drops(
-    reg, cfg, world
+    reg, cfg, settings, world
 ) -> None:
-    conn, pid, handlers, session = world
+    conn, pid, _h, session = world
+    handlers = level.handlers(reg, settings, conn, cfg, rng=random.Random(SEED))
     res = handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    visible, invisible = _expected_rolls(cfg, 10000, 10005)
     assert res.flag == 0
     assert int(find_player(conn, "stefan")["energy"]) == 54
     # visible_drops 10000 is certain: 粗布头巾 x2
-    assert (20, 10000, 2) in [(d.category, d.refer, d.amount) for d in res.drop]
-    assert session.data[level.PENDING_KEY][10000]
+    assert (20, 10000, 2) in drops.as_triples(visible)
+    # Only the visible roll goes out on entry: msg.drop becomes FightData.drops,
+    # the items that visibly fall during the fight (FightData.lua:33). The full
+    # list reaches the end screen from LevelOutRes.drop.
+    assert [(d.category, d.refer, d.amount) for d in res.drop] == drops.as_triples(
+        visible
+    )
+    assert drops.as_triples(session.data[level.PENDING_KEY][10000]) == drops.as_triples(
+        visible + invisible
+    )
     assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2008)]
     res.SerializeToString()
+
+
+def test_the_pending_entry_holds_the_visible_and_the_invisible_roll(
+    reg, cfg, settings, world
+) -> None:
+    """The invisible roll is withheld from LevelIntoRes but still owed to the
+    player, so it has to be in the pending entry Task 14's level_out grants."""
+    conn, pid, _h, session = world
+    handlers = level.handlers(reg, settings, conn, cfg, rng=random.Random(SEED))
+    res = handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    visible, invisible = _expected_rolls(cfg, 10000, 10005)
+    assert invisible, "stage 10000 has an invisible roll to withhold at this seed"
+    pending = session.data[level.PENDING_KEY][10000]
+    assert len(pending) == len(visible) + len(invisible)
+    assert len(res.drop) == len(visible)
 
 
 def test_a_locked_stage_is_refused_with_flag_one(reg, cfg, world) -> None:

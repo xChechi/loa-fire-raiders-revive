@@ -128,22 +128,30 @@ def handlers(
         # Past here nothing can refuse, so the writes are safe to make.
         if cost:
             db.spend_energy(conn, int(row["id"]), cost)
-        rolled = drops.roll(cfg, _required(stage, "visible_drops", lvl), rng=rng)
-        rolled += drops.roll(cfg, _required(stage, "invisible_drops", lvl), rng=rng)
+        visible = drops.roll(cfg, _required(stage, "visible_drops", lvl), rng=rng)
+        invisible = drops.roll(cfg, _required(stage, "invisible_drops", lvl), rng=rng)
+        # One flat list for the whole entry: level_out grants it all at once.
+        rolled = visible + invisible
         session.data.setdefault(PENDING_KEY, {})[lvl] = rolled
 
         res = registry.message_class("LevelIntoRes")(flag=FLAG_OK, star=0)
         for value in roll_urandom(rng):
             res.urandom.append(value)
-        for entry in drops.to_prize_entries(registry, rolled):
+        # Only the visible roll goes out on entry: FightData.drops (FightData.lua:33)
+        # are the items that visibly fall during the fight. The full list, visible
+        # plus invisible, reaches the end screen from LevelOutRes.drop
+        # (BattleFactoryLevel:forceResult).
+        for entry in drops.to_prize_entries(registry, visible):
             res.drop.add().CopyFrom(entry)
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (int(row["id"]),)
         ).fetchone()
         notify.player_changed(registry, session, {"energy": int(fresh["energy"])})
         log.info(
-            "stage %d entered by player %d, %d energy spent, drops %s",
-            lvl, int(row["id"]), cost, drops.as_triples(rolled),
+            "stage %d entered by player %d, %d energy spent, visible drops %s,"
+            " invisible %s",
+            lvl, int(row["id"]), cost, drops.as_triples(visible),
+            drops.as_triples(invisible),
         )
         fill_required(res)
         return res
