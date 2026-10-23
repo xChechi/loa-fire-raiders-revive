@@ -13,7 +13,7 @@ import pytest
 
 from server import db
 from server.config import Config
-from server.modules import login, player
+from server.modules import gacha, guide, level, login, player
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import Settings
@@ -123,3 +123,47 @@ def test_replay_echoes_the_district_from_query_srv_info_res(
     asyncio.run(scenario())
     # login.srv_info answers district=1, so the game socket must carry 1.
     assert seen == [1]
+
+
+def _item_total(conn, player_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM items WHERE player_id = ?", (player_id,)
+    ).fetchone()
+    return int(row[0])
+
+
+def test_replay_stage_fights_chapter_one_stage_one(reg, tmp_path: Path, cfg) -> None:
+    """End to end over a socket: login burst, then LevelIntoReq and LevelOutReq
+    on the same connection, with the 5_2008 pushes in between."""
+    settings = _settings(tmp_path)
+    conn = db.connect(settings.db_path)
+
+    async def scenario() -> tuple[list[tuple[int, int]], int, int]:
+        handlers = {}
+        handlers.update(login.handlers(reg, settings, conn, cfg))
+        handlers.update(player.handlers(reg, settings, conn, cfg))
+        handlers.update(guide.handlers(reg, settings, conn))
+        handlers.update(gacha.handlers(reg, settings, conn, cfg))
+        handlers.update(level.handlers(reg, settings, conn, cfg))
+        server = Server(reg, settings, handlers, bind_host=BIND)
+        task, port = await _run_server(server)
+        # The first run only creates the character, so the starting kit is the
+        # baseline the stage drops have to grow.
+        await replay(BIND, port, "stefan", reg)
+        before = _item_total(conn, int(db.find_player(conn, "stefan")["id"]))
+        got = await replay(BIND, port, "stefan", reg, stage=10000, star=3)
+        after = _item_total(conn, int(db.find_player(conn, "stefan")["id"]))
+        await _stop(task)
+        return got, before, after
+
+    answered, before, after = asyncio.run(scenario())
+
+    assert (5, 2202) in answered
+    assert (5, 2204) in answered
+    # The pushes must not be mistaken for a response: the heartbeat still
+    # closes the burst.
+    assert answered[-1] == (3, 2010)
+    row = db.find_player(conn, "stefan")
+    assert int(row["last_level"]) == 10000
+    assert int(row["energy"]) == 54          # ENERGY_INIT 60 - stage_info.energy 6
+    assert after > before
