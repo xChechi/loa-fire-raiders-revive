@@ -157,6 +157,32 @@ def test_a_banner_with_no_pool_is_refused_and_costs_nothing(reg, cfg, world) -> 
     assert int(find_player(conn, "stefan")["diamond"]) == 18888
 
 
+@pytest.mark.parametrize(
+    "poison, raised",
+    [
+        ((40, 1, 1), ValueError),        # category 40 angel: not implemented
+        ((30, 999999, 1), KeyError),     # hero_quality has no row for 999999
+        ((20, 999999, 1), KeyError),     # item_info has no row for 999999
+    ],
+)
+def test_a_prize_the_grant_rejects_costs_the_player_nothing(
+    reg, cfg, world, monkeypatch, poison, raised
+) -> None:
+    """item.grant_prizes validates the whole list before it writes, so the
+    charge may only happen after it. A raise must leave the balances alone."""
+    conn, pid, handlers, session = world
+    from server.modules import drops as drops_mod
+
+    monkeypatch.setattr(
+        drops_mod, "roll", lambda cfg_, drop_id, rng=None: [drops_mod.Drop(*poison)]
+    )
+    with pytest.raises(raised):
+        handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=1200000))
+    row = find_player(conn, "stefan")
+    assert int(row["gold"]) == 1280000
+    assert int(row["diamond"]) == 18888
+
+
 def test_a_drawn_hero_is_persisted_and_pushed(reg, cfg, world, monkeypatch) -> None:
     """A type-30 drop is a hero: it lands in the heroes table and the client is
     told through 5_2012 AddHeroNotify, which RoleData:getHero consumes."""

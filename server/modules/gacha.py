@@ -129,18 +129,27 @@ def handlers(
             )
             return _refused(STATUS_INTERNAL_ERROR)
 
-        column = "gold" if cost_type == COST_GOLD else "diamond"
+        # The grant runs first: it validates the whole prize list before it
+        # writes anything, so a raise in there (unknown category, an item or
+        # hero id with no config row) leaves the player's balances untouched
+        # instead of charging for prizes that never arrive.
+        changed = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
         if cost:
-            # The column name is one of the two literals above, never request
-            # data. The cost is charged before the prizes are granted so that
-            # grant_prizes reports the balance the client should end up with.
+            # The column name is one of the two literals below, never request
+            # data.
+            column = "gold" if cost_type == COST_GOLD else "diamond"
             conn.execute(
                 f"UPDATE players SET {column} = {column} - ? WHERE id = ?",
                 (cost, player_id),
             )
             conn.commit()
-
-        changed = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
+            # grant_prizes read the balances before the charge, so re-read the
+            # absolute values the client has to end up with.
+            charged = conn.execute(
+                "SELECT gold, diamond FROM players WHERE id = ?", (player_id,)
+            ).fetchone()
+            changed["gold"] = int(charged["gold"])
+            changed["diamond"] = int(charged["diamond"])
         res = registry.message_class("GachaRes")(
             status=STATUS_OK, next=0, gold_next=0,
             gold_gacha=0, diamond_gacha=0, diamond_ten_gacha=0,
