@@ -29,7 +29,8 @@ def reg() -> Registry:
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(STOCK, tmp_path / "player.db", BIND, 0, "stefan", 0)
+    return Settings(STOCK, tmp_path / "player.db", BIND, bind=BIND,
+                    port=0, username="stefan", guide_id=0)
 
 
 def test_full_login_burst_against_a_live_server(reg, tmp_path: Path) -> None:

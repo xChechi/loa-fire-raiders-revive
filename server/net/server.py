@@ -184,10 +184,18 @@ class Server:
 
         handler = self.handlers.get(key)
         if handler is None:
+            res = stub_response(self.registry, *key)
             if key not in self._logged_unknown:
                 self._logged_unknown.add(key)
-                log.info("no handler for %d_%d %s, answering a zero stub", *key, name)
-            res = stub_response(self.registry, *key)
+                if res is None:
+                    log.info(
+                        "no handler for %d_%d %s and no paired Res exists, "
+                        "sending nothing", *key, name,
+                    )
+                else:
+                    log.info(
+                        "no handler for %d_%d %s, answering a zero stub", *key, name
+                    )
             if res is not None:
                 self.sent_unknown.add(key)
                 await self._reply(session, key, res)

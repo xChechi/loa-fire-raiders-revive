@@ -53,7 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     settings = load(Path("settings.toml"))
     registry = Registry.load(settings.stock_dir)
-    server = Server(registry, settings, build_handlers(registry, settings))
+    server = Server(
+        registry, settings, build_handlers(registry, settings), bind_host=settings.bind
+    )
     try:
         asyncio.run(serve_and_announce(server, settings))
     except KeyboardInterrupt:

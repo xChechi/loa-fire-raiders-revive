@@ -32,6 +32,7 @@ def settings(tmp_path: Path) -> Settings:
         stock_dir=STOCK,
         db_path=tmp_path / "player.db",
         host="127.0.0.1",
+        bind=BIND,
         port=0,
         username="stefan",
         guide_id=0,
@@ -396,3 +397,36 @@ def test_server_binds_the_bind_host_not_settings_host(reg, settings) -> None:
 
     asyncio.run(scenario())
     assert Server(reg, settings, {}).bind_host == "0.0.0.0"
+
+
+def test_unknown_id_with_a_paired_res_says_it_answers_a_stub(reg, settings, caplog) -> None:
+    async def scenario() -> None:
+        server = Server(reg, settings, {}, bind_host=BIND)
+        task, port = await _run_server(server)
+        client = await Client.connect(port)
+        with caplog.at_level(logging.INFO, logger="loa.net"):
+            await client.send(5, 2223)          # MailReceiveReq, paired with 5_2224
+            frame = await client.recv()
+        assert (frame.service, frame.cmd) == (5, 2224)
+        assert "answering a zero stub" in caplog.text
+        await client.close()
+        await _stop(task)
+
+    asyncio.run(scenario())
+
+
+def test_unknown_id_without_a_res_says_it_sends_nothing(reg, settings, caplog) -> None:
+    """Review Focus 5 of Plan A, reworded: the log must not claim a stub it never sent."""
+    async def scenario() -> None:
+        server = Server(reg, settings, {}, bind_host=BIND)
+        task, port = await _run_server(server)
+        client = await Client.connect(port)
+        with caplog.at_level(logging.INFO, logger="loa.net"):
+            await client.send(5, 2039)          # SyncRedPointReq, no paired Res
+            await asyncio.sleep(0.2)
+        assert "no paired Res exists, sending nothing" in caplog.text
+        assert "answering a zero stub" not in caplog.text
+        await client.close()
+        await _stop(task)
+
+    asyncio.run(scenario())

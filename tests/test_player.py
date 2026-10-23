@@ -27,7 +27,8 @@ def reg() -> Registry:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(STOCK, tmp_path / "player.db", "127.0.0.1", 0, "stefan", 0)
+    return Settings(STOCK, tmp_path / "player.db", "127.0.0.1", bind=BIND,
+                    port=0, username="stefan", guide_id=0)
 
 
 @pytest.fixture
