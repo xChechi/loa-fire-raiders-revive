@@ -365,9 +365,9 @@ tests/test_server_core.py MODIFY tests/test_db.py MODIFY     tests/test_fake_cli
 | wave | tasks | why they are safe together |
 |---|---|---|
 | 1 | **T1** and **T2** | disjoint files: T1 touches settings/server core/gitattributes, T2 only adds `server/config/` |
-| 2 | **T3**, **T4**, **T10** | `guide.py` plus `db.py` plus `__main__.py` / `player.py` only / `drops.py` only |
+| 2 | **T4 -> T3** in order, with **T10** in parallel | pre-flight ruling 23-10-2026: T3 and T4 both edit `server/__main__.py:build_handlers`, and T4 changes `player.handlers` to the four-argument form that T3's combined-server test must then use; T10 touches `drops.py` only |
 | 3 | **T5 -> T6 -> T7 -> T8** strictly in order (all touch `db.py` and `player.py`), with **T9** in parallel (only `net/server.py` and `notify.py`) |
-| 4 | **T11** after T6, T7, T9, T10 |
+| 4 | **T11** after T6, T7, T8, T9, T10 (it consumes `item.grant_prizes` from T8) |
 | 5 | **T12 -> T13 -> T14 -> T15** strictly in order (all touch `level.py`, `db.py`, `player.py`) |
 | 6 | **T16**, then **T17** last |
 
