@@ -1,6 +1,33 @@
 # LOA private server — status and roadmap
 
-Updated 21-10-2026. Paused for the weekly token limit after Plan A.
+Updated 23-10-2026.
+
+## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (branch `plan-b1`, 19 commits `673e300..e5d99bd`, 224 tests)
+
+Built and unit-tested: the config layer over the stock `.db` files, `5_2041` guide persistence, the
+starting kit at character creation, `ClientHero` from `npc_info`/`hero_quality`/`hero_growth`, the
+drop roller, item and hero payouts, the `5_2008` change notification, the tavern gacha, and the
+campaign handlers (`5_2201` enter, `5_2203` finish, `5_2209` chapter chest, `5_2205`/`5_2207`
+refused). `docs/dev-loop.md` section 7 holds the emulator acceptance run of 23-10-2026.
+
+**Ready for your emulator pass, with one half of the milestone open.** The tutorial half passes on
+`LOA_API30`: both summons pay out, the guide saves to 10150, and a relaunch shows the main city with
+the guide resumed, no intro and no guide battle. The campaign half does not run yet: the first fight
+never starts because `5_2327 QuerySelfTeamReq` has no handler and the empty `5_2328` kills
+`LineTeam:initByServerTeamBase` in Lua. Nothing is shipped and nothing is confirmed until you drive
+it yourself.
+
+## Next — in order
+
+- [ ] **Follow-up B1-a: handle `5_2327 QuerySelfTeamReq` / `5_2328 QuerySelfTeamRes`.** The one thing
+      between this build and the campaign half of milestone 2. `team_base` is a `ClientFightTeamBase`
+      (id, source, level, fightAbility, name, avatar, origin, district, avatar_type, repeated `units`
+      of `ClientFightUnit`) built from the `units` the request carries; `urandom` wants 64 values
+      below 10000, as `LevelIntoRes` already does. Evidence and the Lua trace: `docs/dev-loop.md`
+      section 7. After it lands, re-run the acceptance run — assertions 3 and 4 and open questions C
+      and D are all waiting on it.
+- [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
+      Also carries the guide steps past 10160 (equip 10180-10210, angel 10293) that Plan B1 left out.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
 
@@ -25,16 +52,8 @@ py -3.14 -m server                                   # window 1, log to data\ser
 
 Fresh character: stop the server, delete `data\player.db`, start again. Tests: `py -3.14 -m pytest -q --basetemp=C:/tmp/pytest-loa`.
 
-## Next — in order
+## Later — in order
 
-- [ ] **Plan B1: tutorial + hero summon + campaign chapter 1.** Brief committed:
-      `docs/superpowers/plans/BRIEF-plan-b1-tutorial-and-campaign.md`. Resume = planner agent on the brief
-      (writing-plans format → `docs/superpowers/plans/2026-10-21-plan-b1-tutorial-and-campaign.md`), sonnet
-      pre-flight scan, then subagent-driven execution with per-task reviews and an emulator acceptance run.
-      Includes the Plan A parked items: persist `5_2041 SaveGuideIdReq` (tutorial replays every launch until
-      then), real data for `5_2944 QueryBtCardRecordRes`, energy from `xp_for_level` instead of the frozen 60,
-      `[net] bind` key, `.gitattributes` eol=lf, the "zero stub" log wording.
-- [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
 - [ ] **Plan B3: dailies.** Sign-in (`checkin.db`), shop (`merchandise_info.db`), mail with attachments, rewards.
       Arena and guild hidden or against bots.
 - [ ] **Plan C: English UI.** `localise/` pipeline on llm00 `gemma4:e4b` (spec 3.3): 10,788 templates after digit
@@ -55,3 +74,6 @@ Fresh character: stop the server, delete `data\player.db`, start again. Tests: `
 - `files/upgrade/` must exist before the DB copy (patch 10).
 - Header: 24 bytes, length = body only, district at offset 4 echoed by the client, no status on the wire.
 - Non-fatal Lua errors on the main city today: `RoleData:updateRechangeCardsList` (5_2944 empty) and chat 11_2006.
+- `QuerySelfTeamRes` has no `status` field, yet the client branches on `msg.status`: the native layer supplies 0
+  from the header, so an empty zero-stub answer takes the SUCCESS branch and dies in `LineTeam.lua:34` instead of
+  floating `x01025`. Same mechanism as the 327682 LoginRes finding.
