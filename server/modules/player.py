@@ -112,7 +112,9 @@ def build_bt_cards(registry: Registry, cfg: Config):
     that key, and RoleData:updateRechangeCardsList measures the repeated field
     with #, so both entries are always sent, owned by nobody yet."""
     res = registry.message_class("QueryBtCardRecordRes")()
-    raw = cfg.variable("BT_CARD_AWARD") or ""
+    raw = cfg.variable("BT_CARD_AWARD")
+    if raw is None or raw == "":
+        raise KeyError("variables.BT_CARD_AWARD is missing")
     for part in (p for p in raw.split(",") if p):
         entry = int(part.split("|")[0])
         card = res.btCards.add()

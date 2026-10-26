@@ -234,6 +234,20 @@ def test_bt_cards_carries_both_privilege_cards(reg) -> None:
     cfg.close()
 
 
+def test_bt_cards_fails_loud_when_the_award_key_is_missing(reg, monkeypatch) -> None:
+    """An empty btCards is the Plan A crash shape: RoleData:updateRechangeCardsList
+    measures the repeated field with #, so a silently empty list is worse than a
+    refusal. A missing config value raises (Task 6 rule)."""
+    from server.config import Config
+    from server.modules.player import build_bt_cards
+
+    cfg = Config.load(STOCK)
+    monkeypatch.setattr(cfg, "variable", lambda key: None)
+    with pytest.raises(KeyError, match="variables.BT_CARD_AWARD"):
+        build_bt_cards(reg, cfg)
+    cfg.close()
+
+
 def test_query_myself_reports_the_regenerated_energy(reg, settings, cfg) -> None:
     """5_2005 answers with the lazily regenerated energy, not the stored one."""
     from server.net.server import Session
