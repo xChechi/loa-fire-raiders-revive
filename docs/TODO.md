@@ -49,14 +49,16 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
 
 ## Next — in order
 
-- [ ] **Decide how the first campaign fight becomes winnable (Stefan).** The faithful route is the
-      stock support hero: a client patch in `client/patches` that lets `BattleFactoryBase:getAttackers`
-      create a unit for every `5_2328 team_base` unit of type 3 (npc) with no local counterpart, plus a
-      server rule in `team.py` that adds `variables.NEW_FIGHT_HELP_HERO` (1103009) at a free slot for
-      stages idx 1-2 the player has not cleared; needs an APK rebuild (`docs/dev-loop.md` section 6).
-      The cheap route is a server-only power boost (starting hero level or kit), which departs from
-      stock. Then the win-path assertions of run 2: star, drop payout, `last_level`, stage-2 unlock,
-      chapter chest, the guide past the equip chain. Open questions C and D wait on a won fight.
+- [x] **The newbie fights get the stock support hero** (decided 26-10-2026, option A, stock-faithful).
+      Server rule `423a684`: `5_2328` adds `variables.NEW_FIGHT_HELP_HERO` (npc 1103009, level 6,
+      2,098 HP, 222 power) as a type-3 unit at the first free place 1-6 for the first chapter's stages
+      idx 1-2 while the player has not cleared them; `team_base.fightAbility` stays his own heroes.
+      Client patch 11 `92dac3f`: `BattleFactoryBase:getAttackers` now builds a unit for a type-3
+      `team_base` entry with no local counterpart, mirroring the `UNIT_SERVER_FIGHT` branch of
+      `initUnitData`. **APK rebuild and emulator proof pending** — the patch only reaches the device
+      through `py -3.14 -m client.build_assets` plus the gradle rebuild (`docs/dev-loop.md` section 6).
+- [ ] **The win-path assertions of run 2.** Star, drop payout, `last_level`, stage-2 unlock, chapter
+      chest, the guide past the equip chain. Open questions C and D wait on a won fight.
 - [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
       Also carries the guide steps past 10160 (equip 10180-10210, angel 10293) that Plan B1 left out.
 

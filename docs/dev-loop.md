@@ -261,6 +261,11 @@ SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
 If the AVD is not already up, boot it with the detached `Start-Process` line in
 section 4.
 
+A change to the `PATCHES` list of `client/build_assets.py` — patch 11, the support hero
+of the newbie fights, added 26-10-2026 — is a change to the Lua that ships inside the
+APK, so it needs both lines above: `py -3.14 -m client.build_assets` and the gradle
+rebuild, not only a server restart.
+
 ## 7. Milestone 2 acceptance runs (Plan B1), 23-10-2026
 
 Three runs, kept in order. **Run 1 below is history — read "Run 2 and 3" for the current state of
