@@ -221,7 +221,7 @@ def test_a_newbie_fight_gets_the_stock_support_hero(reg, cfg, world, caplog) -> 
     _conn, _pid, _row_id, handlers, session = world
     _entered(session)
     with caplog.at_level("INFO"):
-        res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+        res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     units = {int(u.position): u for u in res.team_base.units}
     assert sorted(units) == [1, 2]
     assert units[1].refer == HERO
@@ -247,7 +247,7 @@ def test_the_second_stage_of_the_first_chapter_is_also_a_newbie_fight(
     _conn, _pid, _row_id, handlers, session = world
     assert int(cfg.stage(10010)["idx"]) == 2
     _entered(session, 10010)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     assert [u.refer for u in res.team_base.units] == [HERO, SUPPORT]
 
 
@@ -256,7 +256,18 @@ def test_a_later_stage_of_the_first_chapter_gets_no_support(reg, cfg, world) -> 
     _conn, _pid, _row_id, handlers, session = world
     assert int(cfg.stage(10020)["idx"]) not in (1, 2)
     _entered(session, 10020)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
+    assert [u.refer for u in res.team_base.units] == [HERO]
+
+
+def test_the_third_stage_of_the_first_chapter_gets_no_support(reg, cfg, world) -> None:
+    """idx 3 is stage 10012, the first stage the memo's "stages 1-2" leaves out."""
+    _conn, _pid, _row_id, handlers, session = world
+    assert int(cfg.stage(10012)["idx"]) == 3
+    _entered(session, 10012)
+    res = handlers[(5, 2327)](
+        session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2)
+    )
     assert [u.refer for u in res.team_base.units] == [HERO]
 
 
@@ -264,7 +275,7 @@ def test_an_already_cleared_newbie_fight_gets_no_support(reg, cfg, world) -> Non
     conn, pid, _row_id, handlers, session = world
     upsert_level(conn, pid, NEWBIE_STAGE, star=1, count_delta=1)
     _entered(session)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     assert [u.refer for u in res.team_base.units] == [HERO]
 
 
@@ -273,7 +284,7 @@ def test_a_lost_newbie_fight_still_gets_the_support(reg, cfg, world) -> None:
     conn, pid, _row_id, handlers, session = world
     upsert_level(conn, pid, NEWBIE_STAGE, star=0, count_delta=1)
     _entered(session)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     assert [u.refer for u in res.team_base.units] == [HERO, SUPPORT]
 
 
@@ -281,7 +292,7 @@ def test_a_team_query_outside_a_stage_gets_no_support(reg, cfg, world) -> None:
     """5_2327 is also sent from the line-up screen, where no 5_2201 has run."""
     _conn, _pid, _row_id, handlers, session = world
     assert session.data.get(level.PENDING_KEY) is None
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     assert [u.refer for u in res.team_base.units] == [HERO]
 
 
@@ -290,7 +301,7 @@ def test_the_support_hero_takes_the_first_free_position(reg, cfg, world) -> None
     grant_hero(conn, pid, 101000, QUALITY, star=1, level=1)
     grant_hero(conn, pid, 102000, QUALITY, star=1, level=1)
     _entered(session)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 101000, 102000, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 101000, 102000, 0, 0, 0], fight_type=2))
     units = {int(u.position): int(u.refer) for u in res.team_base.units}
     assert units == {1: HERO, 2: 101000, 3: 102000, 4: SUPPORT}
 
@@ -304,7 +315,7 @@ def test_a_full_team_leaves_no_room_for_the_support(reg, cfg, world, caplog) -> 
         grant_hero(conn, pid, entry, QUALITY, star=1, level=1)
     _entered(session)
     with caplog.at_level("WARNING"):
-        res = handlers[(5, 2327)](session, _req(reg, [0, HERO] + others))
+        res = handlers[(5, 2327)](session, _req(reg, [0, HERO] + others, fight_type=2))
     assert [int(u.refer) for u in res.team_base.units] == [HERO] + others
     assert [int(u.type) for u in res.team_base.units] == [1] * 6
     assert [r.levelname for r in caplog.records] == ["WARNING"]
@@ -318,7 +329,7 @@ def test_a_missing_support_variable_fails_loud(reg, cfg, world, monkeypatch) -> 
     monkeypatch.setattr(cfg, "variable", lambda key: None)
     _entered(session)
     with pytest.raises(KeyError, match="variables.NEW_FIGHT_HELP_HERO is missing"):
-        handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+        handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
 
 
 def test_the_support_hero_does_not_count_towards_the_fight_ability(
@@ -328,6 +339,24 @@ def test_the_support_hero_does_not_count_towards_the_fight_ability(
     screen; the server's npc is not part of it."""
     _conn, _pid, _row_id, handlers, session = world
     _entered(session)
-    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=2))
     assert len(res.team_base.units) == 2
     assert res.team_base.fightAbility == 1000      # the one owned hero's ability
+
+
+def test_a_fight_outside_the_campaign_gets_no_support(reg, cfg, world, caplog) -> None:
+    """The rule belongs to the campaign alone (FightType.MAIN_LINE_COPY = 2).
+
+    A 5_2201 whose 5_2203 never arrives - the client dropped out of the fight,
+    or the fight was abandoned - leaves its stage on the session, so a later
+    5_2327 for a fight of another kind would otherwise be answered with the
+    support hero of the newbie fights.
+    """
+    _conn, _pid, _row_id, handlers, session = world
+    _entered(session)                              # a stale pending stage 10000
+    with caplog.at_level("DEBUG"):
+        res = handlers[(5, 2327)](
+            session, _req(reg, [0, HERO, 0, 0, 0, 0, 0], fight_type=1)
+        )
+    assert [u.refer for u in res.team_base.units] == [HERO]
+    assert "not the campaign" in caplog.text

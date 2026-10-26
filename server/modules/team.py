@@ -55,6 +55,11 @@ SUPPORT_HERO_KEY = "NEW_FIGHT_HELP_HERO"
 # The idx values of the first chapter the memo calls the newbie fights.
 NEWBIE_IDX = (1, 2)
 
+# FightType.MAIN_LINE_COPY = 2 (.stock/assets/scripts/app/game/type/FightType.lua:15,
+# memo 主线副本 = the campaign). req.fight_type carries it: the run-5 logcat dump of
+# the 5_2327 request for a chapter stage reads "fight_type" = 2.
+FIGHT_TYPE_CAMPAIGN = 2
+
 # Places 1..6 hold heroes; 0 is the angel (ANGEL_SLOT / BattleDefine.ANGEL_PLACE).
 HERO_PLACES = range(1, 7)
 
@@ -100,6 +105,7 @@ def support_hero_for(
     conn: sqlite3.Connection,
     session: Session,
     player_id: int,
+    fight_type: int,
 ) -> int | None:
     """The npc entry of the support hero for this fight, or None.
 
@@ -108,7 +114,17 @@ def support_hero_for(
     heroes (runs 4 and 5 of Task 17), and the real server answered them with an
     npc of its own. It joins only while the stage has not been cleared yet, so
     a replay of a finished stage is fought by the player's own team.
+
+    Only a campaign fight: the pending stage is cleared by 5_2203, so a fight
+    that was entered and never finished leaves one behind, and a later 5_2327
+    for an arena or trial fight must not be answered with the newbie support.
     """
+    if int(fight_type) != FIGHT_TYPE_CAMPAIGN:
+        log.debug(
+            "5_2327 fight_type %d is not the campaign, no support hero",
+            int(fight_type),
+        )
+        return None
     stage = pending_stage(session)
     if stage is None:
         log.debug("5_2327 outside a stage, no support hero")
@@ -183,7 +199,9 @@ def build_self_team_res(
         ability += int(unit.ability)
         res.team_base.units.add().CopyFrom(unit)
 
-    support = support_hero_for(cfg, conn, session, player_id)
+    support = support_hero_for(
+        cfg, conn, session, player_id, int(req.fight_type)
+    )
     if support is not None:
         taken = {int(unit.position) for unit in res.team_base.units}
         free = next((place for place in HERO_PLACES if place not in taken), None)
