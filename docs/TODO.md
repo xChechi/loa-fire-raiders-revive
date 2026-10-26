@@ -28,8 +28,18 @@ first gold and diamond single draws are **scripted**: `variables.FIRST_GOLD_GACH
 100000 + 104000 + 210000, not the one or two heroes a random roll handed us. Commit `bc59fec`
 implements that. Three more facts from the same analysis: hero ultimates are **manual taps only**
 (`BattleHeroItem:onTouchHeroSkill`; the auto path is commented out below player level 3), there is
-**no battle timeout**, and the client fights with our `unit` block verbatim — so the next run has to
-tap and advance the waves, not idle through them.
+**no battle timeout**, and the client fights with our `unit` block verbatim.
+
+Runs 4 and 5 (26-10-2026, after `bc59fec`) closed the remaining client-side questions: the scripted
+draws pay 104000 and 210000 every time, the three-hero team fights, the taps on the hero cards reach
+the client and **the ultimates fire** (seven casts in one fight, logcat-verified), and the fight is
+**still lost**. Our hero `unit` block equals what the client computes itself, so the loss is game
+balance: three level-1 heroes without an angel do not clear the two waves of stage 10000. The stock
+server gave a new character more: `variables.NEW_FIGHT_HELP_HERO` = NPC 1103009 冰雪女皇 (level 6,
+2,098 HP, 222 power), memo "the hero that supports the newbie fights (stages 1-2)". The client has
+no route for a server-only attacker unit in the campaign (`BattleFactoryBase:getAttackers` builds
+only the local lineup; the stage stories create none), so delivering that support hero needs a
+small client Lua patch plus a server rule — a design decision, recorded under "Next".
 
 One finding not patched: after a **lost** first fight the new-player guide **deadlocks**. Its touch
 mask over steps 10180-10280 allows only stage 2, which the server rightly refuses as locked, while
@@ -39,14 +49,14 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
 
 ## Next — in order
 
-- [ ] **Emulator re-run: prove the win path.** Win stage 1-1 with the three scripted tutorial heroes
-      of `bc59fec` — **tap the hero ultimates** (`BattleHeroItem:onTouchHeroSkill`) and advance the
-      waves instead of idling — then assert the star, the drop payout, `last_level`, the stage-2
-      unlock, the chapter chest, and that the guide walks past the equip chain instead of
-      deadlocking. Open questions C (`stage_info.once`) and D (the ultimate firing from
-      `ClientHero.spells`) are still waiting on a won fight. Pre-launch checklist and the full run-2
-      record: `docs/dev-loop.md` section 7.
-- [ ] **Merge `plan-b1` into `master`** once that run passes.
+- [ ] **Decide how the first campaign fight becomes winnable (Stefan).** The faithful route is the
+      stock support hero: a client patch in `client/patches` that lets `BattleFactoryBase:getAttackers`
+      create a unit for every `5_2328 team_base` unit of type 3 (npc) with no local counterpart, plus a
+      server rule in `team.py` that adds `variables.NEW_FIGHT_HELP_HERO` (1103009) at a free slot for
+      stages idx 1-2 the player has not cleared; needs an APK rebuild (`docs/dev-loop.md` section 6).
+      The cheap route is a server-only power boost (starting hero level or kit), which departs from
+      stock. Then the win-path assertions of run 2: star, drop payout, `last_level`, stage-2 unlock,
+      chapter chest, the guide past the equip chain. Open questions C and D wait on a won fight.
 - [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
       Also carries the guide steps past 10160 (equip 10180-10210, angel 10293) that Plan B1 left out.
 

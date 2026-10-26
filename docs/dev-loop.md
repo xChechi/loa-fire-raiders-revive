@@ -440,14 +440,37 @@ Screenshots `r2-*` and `r3-*` and the kept logs (`C:/tmp/loa-b1/server-r2-run1.l
 `logcat-r2.txt`, `logcat-r2b.txt`, `logcat-r3.txt`, `db-r2-before-restart.json`,
 `db-r2-after-restart.json`) are listed in full in the Task 17b report in the SDD workspace.
 
+### Runs 4 and 5 (Tasks 17c and 17d, 26-10-2026): after the scripted draws
+
+Both on fresh worlds (`data/player.db.b1-run3`, `.b1-run4a`, `.b1-run4b` kept beside the live DB).
+Run 4 drove the fight by hand, run 5 with a script tapping the three hero cards every 0.4 s at two
+candidate positions for the whole fight and a screenshot every 4 s.
+
+| Fact | Outcome | Evidence |
+|---|---|---|
+| Scripted first draws | **PASS**, on three characters | `first gold single draw ... drop id 188000` / `... 189000` in the server log; hero hall 100000 + 104000 + 210000, lineup 战力 3000 |
+| Relaunch and server restart keep the world | **PASS** | run 4: DB identical except the 360 s energy regen |
+| Guide mask during the fight | **none** | logcat: `新手引导 > scene 清除成功` at the stage entry, every guide check during the fight `引导接不上`; the toasts on the defeat screen come from step 10160's mask on the Continue button |
+| Hero ultimates | **fire**: 7 casts in run 5 (`spell:1000000` x2, `spell:1040000` x2, `spell:2100000` x3) | logcat-run5.txt; a card glows exactly when its rage is full |
+| Stage 1-1 | **LOST** in every attempt (runs 4 and 5: 89 s, 71 s, 89 s) | `LevelOutRes win = 0`; first `战斗人物退出` 14 s in |
+| Our hero `unit` block | equals the client's own computation, field by field | `BattleUnit:initByPropertyUnit` is the same path for heroes and npcs; every value = `npc_info` |
+
+The stock server's answer to this fight is `variables.NEW_FIGHT_HELP_HERO` = 1103009 冰雪女皇
+(level 6, 2,098 HP, 222 power, memo: the supporting hero of the newbie fights, stages 1-2). No
+client code references it and the campaign factory creates only the local lineup's units, so
+the route is a client patch plus a server rule — see `docs/TODO.md`, "Next". Logs and screenshots:
+`C:/tmp/loa-b1/logcat-run4*.txt`, `logcat-run5.txt`, `r4-*`, `r4b-*`, `r5-*`, and the Task 17c/17d
+reports in the SDD workspace. Ids still unanswered: unchanged (5_2013, 5_2039, 5_2145, 5_2623,
+11_2005, 11_2009).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
    `data/player.db.plan-a-2026-10-21` (Stefan's Plan A character),
    `data/player.db.b1-run1` and `data/player.db.b1-run2`.
-2. **Win stage 1-1.** Tap the hero ultimates (`BattleHeroItem:onTouchHeroSkill`) and advance the
-   waves promptly instead of idling between them — there is no battle timeout to rescue a slow run,
-   and the three scripted tutorial heroes of `bc59fec` are the team the fight was balanced for.
+2. **Win stage 1-1.** Only possible once the support-hero decision in `docs/TODO.md` is implemented:
+   three level-1 heroes lose even with every ultimate fired (runs 4 and 5). Tap the cards when they
+   glow and advance the waves promptly; put the wave-advance point in the tap cycle.
 3. **Then the restart-persistence pass:** force-stop and relaunch the app, then stop and restart the
    server, and diff the DB before and after (only energy may move, by the 360 s regen).
 4. **Both of these must come out zero:** `grep -c Traceback data/server.log` and
