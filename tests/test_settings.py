@@ -35,10 +35,12 @@ def test_load_reads_every_field(tmp_path: Path) -> None:
 
 
 def test_load_reads_the_bind_address(tmp_path: Path) -> None:
+    """Not "0.0.0.0": that is also the default, so the assertion could not tell
+    a value that was read from one that was defaulted."""
     cfg = tmp_path / "settings.toml"
-    cfg.write_text(SAMPLE.replace("port = 8112", "bind = \"0.0.0.0\"\nport = 8112"),
+    cfg.write_text(SAMPLE.replace("port = 8112", "bind = \"127.0.0.1\"\nport = 8112"),
                    encoding="utf-8")
-    assert load(cfg).bind == "0.0.0.0"
+    assert load(cfg).bind == "127.0.0.1"
 
 
 def test_bind_defaults_to_all_interfaces_when_absent(tmp_path: Path) -> None:
