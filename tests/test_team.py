@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, grant_hero
-from server.modules import team
+from server.db import connect, create_player, grant_hero, upsert_level
+from server.modules import level, team
 from server.net.registry import Registry
 from server.net.server import Session
 from server.settings import Settings
@@ -199,3 +199,135 @@ def test_a_hired_unit_is_refused_and_logged(reg, cfg, world, caplog) -> None:
         res = handlers[(5, 2327)](session, req)
     assert [u.refer for u in res.team_base.units] == [HERO]
     assert "renter" in caplog.text.lower() or "hire" in caplog.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# The stock support hero of the newbie fights (variables.NEW_FIGHT_HELP_HERO).
+# npc_info 1103009 冰雪女皇, level 6, and the memo of the variable says
+# "the supporting hero NPC of the newbie fights (stages 1-2)".
+SUPPORT = 1103009
+NEWBIE_STAGE = 10000
+
+
+def _entered(session, stage: int = NEWBIE_STAGE) -> None:
+    """What 5_2201 leaves on the session: the stage with its rolled drops."""
+    session.data[level.PENDING_KEY] = {stage: []}
+
+
+def test_a_newbie_fight_gets_the_stock_support_hero(reg, cfg, world, caplog) -> None:
+    """Stage 1-1 is unwinnable with three level-1 heroes (runs 4 and 5), and the
+    stock server answers it with an npc of its own: a type-3 ClientFightUnit
+    whose refer is an npc_info entry (BattleUnit.lua:3947-3957)."""
+    _conn, _pid, _row_id, handlers, session = world
+    _entered(session)
+    with caplog.at_level("INFO"):
+        res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    units = {int(u.position): u for u in res.team_base.units}
+    assert sorted(units) == [1, 2]
+    assert units[1].refer == HERO
+    support = units[2]
+    assert support.type == 3
+    assert support.refer == SUPPORT
+    # Every value below is the npc_info 1103009 row, never a literal decision.
+    assert (support.level, support.max_level) == (6, 6)
+    assert (support.star, support.quality, support.ability) == (1, 10, 1000)
+    assert support.model == 0
+    assert support.unit.max_hp == 2098
+    assert support.unit.power == 222
+    assert support.unit.initial_energy == 500
+    assert support.unit.max_energy == 1000
+    assert list(support.spells) == [3110001, 10000000]
+    assert "support hero 1103009 joins at position 2" in caplog.text
+    res.SerializeToString()
+
+
+def test_the_second_stage_of_the_first_chapter_is_also_a_newbie_fight(
+    reg, cfg, world
+) -> None:
+    _conn, _pid, _row_id, handlers, session = world
+    assert int(cfg.stage(10010)["idx"]) == 2
+    _entered(session, 10010)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO, SUPPORT]
+
+
+def test_a_later_stage_of_the_first_chapter_gets_no_support(reg, cfg, world) -> None:
+    """The variable's memo names stages 1-2 only, so idx 3 upwards fights alone."""
+    _conn, _pid, _row_id, handlers, session = world
+    assert int(cfg.stage(10020)["idx"]) not in (1, 2)
+    _entered(session, 10020)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO]
+
+
+def test_an_already_cleared_newbie_fight_gets_no_support(reg, cfg, world) -> None:
+    conn, pid, _row_id, handlers, session = world
+    upsert_level(conn, pid, NEWBIE_STAGE, star=1, count_delta=1)
+    _entered(session)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO]
+
+
+def test_a_lost_newbie_fight_still_gets_the_support(reg, cfg, world) -> None:
+    """A levels row with star 0 is the loss Task 17 recorded, not a clear."""
+    conn, pid, _row_id, handlers, session = world
+    upsert_level(conn, pid, NEWBIE_STAGE, star=0, count_delta=1)
+    _entered(session)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO, SUPPORT]
+
+
+def test_a_team_query_outside_a_stage_gets_no_support(reg, cfg, world) -> None:
+    """5_2327 is also sent from the line-up screen, where no 5_2201 has run."""
+    _conn, _pid, _row_id, handlers, session = world
+    assert session.data.get(level.PENDING_KEY) is None
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO]
+
+
+def test_the_support_hero_takes_the_first_free_position(reg, cfg, world) -> None:
+    conn, pid, _row_id, handlers, session = world
+    grant_hero(conn, pid, 101000, QUALITY, star=1, level=1)
+    grant_hero(conn, pid, 102000, QUALITY, star=1, level=1)
+    _entered(session)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 101000, 102000, 0, 0, 0]))
+    units = {int(u.position): int(u.refer) for u in res.team_base.units}
+    assert units == {1: HERO, 2: 101000, 3: 102000, 4: SUPPORT}
+
+
+def test_a_full_team_leaves_no_room_for_the_support(reg, cfg, world, caplog) -> None:
+    """Six heroes fill places 1-6 and place 0 is the angel slot, so there is
+    nowhere to put the npc: the fight runs as the player laid it out."""
+    conn, pid, _row_id, handlers, session = world
+    others = [101000, 102000, 103000, 104000, 105000]
+    for entry in others:
+        grant_hero(conn, pid, entry, QUALITY, star=1, level=1)
+    _entered(session)
+    with caplog.at_level("WARNING"):
+        res = handlers[(5, 2327)](session, _req(reg, [0, HERO] + others))
+    assert [int(u.refer) for u in res.team_base.units] == [HERO] + others
+    assert [int(u.type) for u in res.team_base.units] == [1] * 6
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert str(SUPPORT) in caplog.text
+
+
+def test_a_missing_support_variable_fails_loud(reg, cfg, world, monkeypatch) -> None:
+    """Task 6 rule: a missing config value raises naming the key, it is not
+    guessed and not silently skipped."""
+    _conn, _pid, _row_id, handlers, session = world
+    monkeypatch.setattr(cfg, "variable", lambda key: None)
+    _entered(session)
+    with pytest.raises(KeyError, match="variables.NEW_FIGHT_HELP_HERO is missing"):
+        handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+
+
+def test_the_support_hero_does_not_count_towards_the_fight_ability(
+    reg, cfg, world
+) -> None:
+    """team_base.fightAbility is the player's own power, shown on the end
+    screen; the server's npc is not part of it."""
+    _conn, _pid, _row_id, handlers, session = world
+    _entered(session)
+    res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+    assert len(res.team_base.units) == 2
+    assert res.team_base.fightAbility == 1000      # the one owned hero's ability

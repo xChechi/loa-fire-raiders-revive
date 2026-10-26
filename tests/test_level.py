@@ -485,3 +485,27 @@ def test_sweep_and_reset_refuse_in_the_client_own_language(reg, cfg, world) -> N
     ).fetchone()[0] == 0
     assert chapters_of(conn, pid) == []
     assert session.outbox == []
+
+
+def test_a_fight_with_the_support_hero_pays_xp_to_the_owned_heroes_only(
+    reg, cfg, world
+) -> None:
+    """req.heroes may now carry 1103009.
+
+    The newbie fights get the stock support hero in the attacker team
+    (variables.NEW_FIGHT_HELP_HERO, Task 19), and BattleEndLayer reports every
+    unit that fought. db.add_hero_xp skips an entry the player does not own, so
+    the npc costs nothing and raises nothing.
+    """
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+
+    res = _fight(handlers, session, reg, 10000, star=3, heroes=(100000, 1103009))
+
+    assert res.status == 0
+    assert [h.refer for h in res.heroes] == [100000]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM heroes WHERE player_id = ? AND entry = 1103009", (pid,)
+    ).fetchone()[0] == 0
+    res.SerializeToString()

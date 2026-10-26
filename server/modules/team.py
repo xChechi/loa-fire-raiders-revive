@@ -48,6 +48,16 @@ UNIT_TYPE_HERO = 1
 # req.units[0] carries the angel entry, not a hero (FunctionType.lua:1117).
 ANGEL_SLOT = 0
 
+# variables.NEW_FIGHT_HELP_HERO, memo 新手战斗中（关卡1-2）支援的英雄的NPC Id:
+# the npc the stock server puts in the attacker team of the newbie fights.
+SUPPORT_HERO_KEY = "NEW_FIGHT_HELP_HERO"
+
+# The idx values of the first chapter the memo calls the newbie fights.
+NEWBIE_IDX = (1, 2)
+
+# Places 1..6 hold heroes; 0 is the angel (ANGEL_SLOT / BattleDefine.ANGEL_PLACE).
+HERO_PLACES = range(1, 7)
+
 
 def build_fight_unit(
     registry: Registry, cfg: Config, hero_row: sqlite3.Row, position: int
@@ -71,11 +81,65 @@ def build_fight_unit(
     return unit
 
 
+def pending_stage(session: Session) -> int | None:
+    """The stage this fight is for, or None outside a stage.
+
+    5_2201 leaves the entered stage on the session (level.PENDING_KEY) until
+    5_2203 pops it, and 5_2327 arrives between the two. The line-up screen
+    sends 5_2327 as well, with nothing pending.
+    """
+    pending = session.data.get(level.PENDING_KEY, {})
+    if not pending:
+        return None
+    # One entry in practice; a client retry can leave the newest one last.
+    return int(list(pending)[-1])
+
+
+def support_hero_for(
+    cfg: Config,
+    conn: sqlite3.Connection,
+    session: Session,
+    player_id: int,
+) -> int | None:
+    """The npc entry of the support hero for this fight, or None.
+
+    The stock server carries variables.NEW_FIGHT_HELP_HERO for exactly this:
+    the first two stages of the first chapter are unwinnable with the starting
+    heroes (runs 4 and 5 of Task 17), and the real server answered them with an
+    npc of its own. It joins only while the stage has not been cleared yet, so
+    a replay of a finished stage is fought by the player's own team.
+    """
+    stage = pending_stage(session)
+    if stage is None:
+        log.debug("5_2327 outside a stage, no support hero")
+        return None
+    info = cfg.stage(stage)
+    if info is None:
+        return None
+    first = cfg.stage(cfg.first_stage())
+    # The first chapter is read from the config, never written as 10000 here.
+    if int(info["chapter"]) != int(first["chapter"]):
+        return None
+    if int(info["idx"]) not in NEWBIE_IDX:
+        return None
+    cleared = any(
+        int(r["level"]) == stage and int(r["star"]) > 0
+        for r in db.levels_of(conn, player_id)
+    )
+    if cleared:
+        return None
+    raw = cfg.variable(SUPPORT_HERO_KEY)
+    if raw is None or raw == "":
+        raise KeyError(f"variables.{SUPPORT_HERO_KEY} is missing")
+    return int(float(raw))
+
+
 def build_self_team_res(
     registry: Registry,
     cfg: Config,
     conn: sqlite3.Connection,
     row: sqlite3.Row | None,
+    session: Session,
     req,
     rng: random.Random | None = None,
 ):
@@ -119,6 +183,24 @@ def build_self_team_res(
         ability += int(unit.ability)
         res.team_base.units.add().CopyFrom(unit)
 
+    support = support_hero_for(cfg, conn, session, player_id)
+    if support is not None:
+        taken = {int(unit.position) for unit in res.team_base.units}
+        free = next((place for place in HERO_PLACES if place not in taken), None)
+        if free is None:
+            log.warning(
+                "stage %s is a newbie fight but places 1-6 are all taken, so "
+                "support hero %d is left out", pending_stage(session), support,
+            )
+        else:
+            res.team_base.units.add().CopyFrom(
+                hero.build_npc_fight_unit(registry, cfg, support, free)
+            )
+            log.info(
+                "stage %d is a newbie fight, support hero %d joins at position %d",
+                pending_stage(session), support, free,
+            )
+
     if any(int(value) for value in req.renter_units) or int(req.renter):
         log.warning(
             "5_2327 asks for hired units (renter %d, renter_units %s); hiring is "
@@ -129,6 +211,9 @@ def build_self_team_res(
     base.id = player_id
     base.source = 0
     base.level = int(row["level"])
+    # The sum over the player's own heroes only: the support hero of a newbie
+    # fight is the server's npc, not the player's power, and this number is what
+    # the end screen shows as his.
     base.fightAbility = ability
     base.name = row["nickname"]
     base.avatar = int(row["avatar"])
@@ -162,9 +247,11 @@ def handlers(
                 "5_2327 before any character exists, answering an empty team "
                 "(a missing team_base would kill the client)"
             )
-            return build_self_team_res(registry, cfg, conn, None, req, rng=rng)
+            return build_self_team_res(
+                registry, cfg, conn, None, session, req, rng=rng
+            )
         session.player_id = int(row["id"])
-        res = build_self_team_res(registry, cfg, conn, row, req, rng=rng)
+        res = build_self_team_res(registry, cfg, conn, row, session, req, rng=rng)
         log.info(
             "5_2327 fight_type %d for player %d: team of %d unit(s) %s",
             int(req.fight_type), int(row["id"]), len(res.team_base.units),

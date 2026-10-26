@@ -39,6 +39,11 @@ GROWTH_FIELDS = (
 # normal attack from the prototype row (open question D in the plan).
 SPELL_FIELDS = ("skill0", "skill1", "skill2", "skill3", "skill4")
 
+# ClientFightUnit.type 3: an npc, refer is the npc_info entry itself
+# (BattleUnit:initByServerFightHero, BattleUnit.lua:3947-3957). Type 1, the
+# player hero, lives in server/modules/team.py where the hero units are built.
+UNIT_TYPE_NPC = 3
+
 
 def quality_row_for(cfg: Config, entry: int, quality: int) -> sqlite3.Row:
     """The hero_quality row the client will look up for this hero.
@@ -127,3 +132,40 @@ def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
     msg.max_level = level
     fill_required(msg)
     return msg
+
+
+def build_npc_fight_unit(
+    registry: Registry, cfg: Config, npc_entry: int, position: int
+):
+    """One ClientFightUnit of type 3 for an npc_info row, at position.
+
+    Type 3 is "an npc, refer is the npc_info entry": initByServerFightHero
+    looks npc_info up by refer directly, with no hero_quality hop
+    (BattleUnit.lua:3947-3957), and takes the normal attack from that row.
+    An npc has no hero_growth table, its row is already the final one, so the
+    stats block is built with no growth steps while the unit's own level field
+    carries the row's level.
+    """
+    npc_entry = int(npc_entry)
+    npc_row = cfg.npc(npc_entry)
+    if npc_row is None:
+        raise KeyError(f"npc_info {npc_entry} is missing")
+    npc_level = int(npc_row["level"] or 1)
+    unit = registry.message_class("ClientFightUnit")(
+        type=UNIT_TYPE_NPC,
+        refer=npc_entry,
+        position=int(position),
+        star=int(npc_row["star"] or 0),
+        quality=int(npc_row["quality"] or 0),
+        level=npc_level,
+        max_level=npc_level,
+        ability=int(npc_row["ability"] or 0),
+        model=0,
+    )
+    for key in SPELL_FIELDS:
+        spell = int(npc_row[key] or 0)
+        if spell:
+            unit.spells.append(spell)
+    unit.unit.CopyFrom(build_client_hero_unit(registry, cfg, npc_row, None, 1))
+    fill_required(unit)
+    return unit
