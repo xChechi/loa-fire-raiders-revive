@@ -2,6 +2,7 @@
 10000, 10010, 10012, 10020, 10022, each costing 6 energy."""
 
 import random
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -321,6 +322,37 @@ def test_a_poisoned_drop_rolls_everything_back_and_keeps_the_pending_entry(
         "SELECT * FROM levels WHERE player_id = ? AND level = 10000", (pid,)
     ).fetchone() is None
     assert session.data[level.PENDING_KEY][10000]
+
+
+def test_a_write_that_fails_after_the_payout_is_logged_with_the_facts_and_reraised(
+    reg, cfg, world, caplog, monkeypatch
+) -> None:
+    """The pending entry is popped before grant_prizes runs, so a DB error in
+    the bookkeeping that follows leaves the stage paid and unrecorded, and the
+    retry refused with 328196. Restoring the pending entry would re-pay the
+    drops and a transaction is Plan B2, so the only honest answer is an ERROR
+    naming the facts and the exception going up."""
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("boom")
+
+    monkeypatch.setattr("server.modules.level.db.upsert_level", boom)
+    with caplog.at_level("ERROR"):
+        with pytest.raises(sqlite3.OperationalError):
+            _fight(handlers, session, reg, 10000, star=3)
+
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert errors, "the lost write must be logged"
+    text = errors[0].getMessage()
+    assert "10000" in text and str(pid) in text          # the stage and the player
+    assert errors[0].exc_info is not None                # the traceback is kept
+    # The payout did happen: stage 10000 pays 516 gold on top of the start.
+    assert int(find_player(conn, "stefan")["gold"]) == 1280000 + 516
+    # ... and the pending entry is gone, so the client's retry is refused.
+    assert 10000 not in session.data.get(level.PENDING_KEY, {})
 
 
 def test_refighting_an_old_stage_does_not_move_last_level_backwards(

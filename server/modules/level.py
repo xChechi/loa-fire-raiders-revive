@@ -199,6 +199,7 @@ def handlers(
         granted = {"gold": int(row["gold"]), "diamond": int(row["diamond"]), "items": []}
         hero_xp: list[tuple[int, int, int]] = []
         xp_change = {"before": None, "after": None, "levelled": False}
+        prizes: list[tuple[int, int, int]] = []
         if won:
             prizes = drops.as_triples(rolled)
             prizes.append((item.CATEGORY_GOLD, 0, int(stage["gold"] or 0)))
@@ -211,16 +212,33 @@ def handlers(
                 pending[lvl] = rolled
                 raise
 
-        db.upsert_level(conn, player_id, lvl, star=star, count_delta=1)
+        # Past this line the drops are paid and the pending entry is already
+        # popped. Putting it back would re-pay them on the client's retry, and a
+        # transaction across these four writes is Plan B2, so the only honest
+        # answer to a failure here is an ERROR carrying every fact needed to
+        # repair the row by hand, and the exception going up.
+        try:
+            db.upsert_level(conn, player_id, lvl, star=star, count_delta=1)
+            if won:
+                xp_change = db.add_player_xp(
+                    conn, cfg, player_id, int(stage["player_xp"] or 0)
+                )
+                hero_xp = db.add_hero_xp(
+                    conn, cfg, player_id, list(req.heroes), int(stage["unit_xp"] or 0)
+                )
+                if lvl == frontier(cfg, row):
+                    db.set_last_level(conn, player_id, lvl)
+        except Exception:
+            log.error(
+                "stage %d: payout granted to player %d (star %d, prizes %s) but a"
+                " later write failed; the stage is paid and NOT recorded",
+                lvl, player_id, star, prizes, exc_info=True,
+            )
+            raise
+
         res = registry.message_class("LevelOutRes")(status=0, star=star)
 
         if won:
-            xp_change = db.add_player_xp(conn, cfg, player_id, int(stage["player_xp"] or 0))
-            hero_xp = db.add_hero_xp(
-                conn, cfg, player_id, list(req.heroes), int(stage["unit_xp"] or 0)
-            )
-            if lvl == frontier(cfg, row):
-                db.set_last_level(conn, player_id, lvl)
             for entry in drops.to_prize_entries(registry, rolled):
                 res.drop.add().CopyFrom(entry)
             gold_entry = res.drop.add()
