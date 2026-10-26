@@ -103,6 +103,14 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "energy_at", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "last_level", "INTEGER NOT NULL DEFAULT 0"),
     ("heroes", "quality", "INTEGER NOT NULL DEFAULT 0"),
+    # Single-draw counters, not flags: the stock interval rules
+    # (GOLD_SINGLE_GACHA_NORMAL_INTERVAL and friends) are expressed in draw
+    # counts, so Plan B2 reads the same two columns. A migrated Plan A/B1 row
+    # starts at 0 and therefore gets the scripted tutorial draw once more on
+    # its next single draw; that is accepted (the emulator re-run starts from a
+    # fresh data/player.db per the Task 17 ruling).
+    ("players", "gold_single_draws", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "diamond_single_draws", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

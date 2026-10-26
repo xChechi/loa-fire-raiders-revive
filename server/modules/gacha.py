@@ -6,7 +6,8 @@ the cost and the drop id, and the drop id rolls through drop_group / drop_base
 exactly like a stage drop.
 
 Every number comes out of gacha_info: cost, cost_type, drop_id, free_times.
-Nothing about a banner is hardcoded here.
+Nothing about a banner is hardcoded here, except which two entries are the
+single draws (see SINGLE_DRAW_BANNERS).
 """
 
 from __future__ import annotations
@@ -33,6 +34,17 @@ STATUS_INTERNAL_ERROR = 327681
 
 COST_GOLD = 1
 COST_DIAMOND = 9
+
+# The two single-draw banners. The client sends only the banner id
+# (TavernFace.lua:248/252), and the ten-pulls are their own entries
+# (1300000, 2500000; TavernFg.lua:157-161), so "single" is a property of
+# the banner. gacha_info has no column for it.
+SINGLE_DRAW_BANNERS = {1200000: COST_GOLD, 2400000: COST_DIAMOND}
+# The original server scripts the first single draw of each currency through
+# variables.db: 188000 is hero 104000, 189000 is hero 210000, which is the
+# tutorial team stage 10000 is tuned for.
+FIRST_DRAW_VARIABLE = {COST_GOLD: "FIRST_GOLD_GACHA", COST_DIAMOND: "FIRST_DIAMOND_GACHA"}
+DRAW_COUNT_COLUMN = {COST_GOLD: "gold_single_draws", COST_DIAMOND: "diamond_single_draws"}
 
 
 def build_gacha_info(registry: Registry, cfg: Config):
@@ -106,6 +118,21 @@ def handlers(
 
         player_id = int(row["id"])
         drop_id = _required(banner, "drop_id", gacha_id)
+        single_draw_column = None
+        if gacha_id in SINGLE_DRAW_BANNERS:
+            single_draw_column = DRAW_COUNT_COLUMN[cost_type]
+            if int(row[single_draw_column]) == 0:
+                key = FIRST_DRAW_VARIABLE[cost_type]
+                scripted = cfg.variable(key)
+                if scripted is None or scripted == "":
+                    raise KeyError(f"variables.{key} is missing")
+                drop_id = int(scripted)
+                log.info(
+                    "first %s single draw for player %d: drop id %s from"
+                    " variables.%s",
+                    "gold" if cost_type == COST_GOLD else "diamond",
+                    player_id, drop_id, key,
+                )
         rolled = drops.roll(cfg, drop_id, rng=rng)
         if not rolled:
             # TavernUI hands items to g_tools:randomTable, so never answer
@@ -134,13 +161,21 @@ def handlers(
         # hero id with no config row) leaves the player's balances untouched
         # instead of charging for prizes that never arrive.
         changed = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
-        if cost:
-            # The column name is one of the two literals below, never request
-            # data.
-            column = "gold" if cost_type == COST_GOLD else "diamond"
+        if cost or single_draw_column:
+            # Every column name below is a literal from this module, never
+            # request data.
+            sets, params = [], []
+            if cost:
+                column = "gold" if cost_type == COST_GOLD else "diamond"
+                sets.append(f"{column} = {column} - ?")
+                params.append(cost)
+            if single_draw_column:
+                # Scripted or rolled, a single draw counts; a refusal or a
+                # raised grant never gets here.
+                sets.append(f"{single_draw_column} = {single_draw_column} + 1")
             conn.execute(
-                f"UPDATE players SET {column} = {column} - ? WHERE id = ?",
-                (cost, player_id),
+                f"UPDATE players SET {', '.join(sets)} WHERE id = ?",
+                (*params, player_id),
             )
             conn.commit()
             # grant_prizes read the balances before the charge, so re-read the

@@ -79,6 +79,8 @@ def test_energy_at_column_is_added_to_an_old_database(tmp_path: Path) -> None:
     # The columns added after Plan A carry their defaults.
     assert int(row["energy_at"]) == 0
     assert int(row["last_level"]) == 0
+    assert int(row["gold_single_draws"]) == 0
+    assert int(row["diamond_single_draws"]) == 0
 
 
 def test_refresh_energy_regenerates_one_per_360_seconds(tmp_path: Path) -> None:
