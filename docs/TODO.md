@@ -1,31 +1,52 @@
 # LOA private server — status and roadmap
 
-Updated 23-10-2026.
+Updated 26-10-2026.
 
-## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (branch `plan-b1`, 19 commits `673e300..e5d99bd`, 224 tests)
+## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (branch `plan-b1`, 27 commits `673e300..HEAD`, 243 tests)
 
 Built and unit-tested: the config layer over the stock `.db` files, `5_2041` guide persistence, the
 starting kit at character creation, `ClientHero` from `npc_info`/`hero_quality`/`hero_growth`, the
 drop roller, item and hero payouts, the `5_2008` change notification, the tavern gacha, and the
 campaign handlers (`5_2201` enter, `5_2203` finish, `5_2209` chapter chest, `5_2205`/`5_2207`
-refused). `docs/dev-loop.md` section 7 holds the emulator acceptance run of 23-10-2026.
+refused), the fight team `5_2327`, and the scripted first draws of the tutorial.
+`docs/dev-loop.md` section 7 holds the emulator acceptance runs of 23-10-2026.
 
-**Ready for your emulator pass, with one half of the milestone open.** The tutorial half passes on
-`LOA_API30`: both summons pay out, the guide saves to 10150, and a relaunch shows the main city with
-the guide resumed, no intro and no guide battle. The campaign half does not run yet: the first fight
-never starts because `5_2327 QuerySelfTeamReq` has no handler and the empty `5_2328` kills
-`LineTeam:initByServerTeamBase` in Lua. Nothing is shipped and nothing is confirmed until you drive
-it yourself.
+**Ready for your emulator pass: the tutorial half of milestone 2 is MET, the campaign half is
+unproven.**
+
+The tutorial half, on `LOA_API30`: both summons pay out, the guide reaches and persists **10160**
+(twice, on two independent characters), a relaunch shows the main city with the guide resumed — no
+intro, no guide battle — and a server restart keeps the database. `5_2327 QuerySelfTeamReq` is
+handled (`server/modules/team.py`, commit `c3e6923`), so the campaign fight now opens, with a team
+of 2 units and **zero `LUA ERROR` in the whole run**.
+
+The campaign half: **every stage 1-1 fight was lost** — three fights across two characters, all
+`win = 0` — so the win path (star, drop payout, `last_level`, the stage-2 unlock, the chapter chest)
+is unit-tested but never exercised on the emulator. The reason is not the server. The tutorial's
+first gold and diamond single draws are **scripted**: `variables.FIRST_GOLD_GACHA` 188000 pays hero
+104000 and `variables.FIRST_DIAMOND_GACHA` 189000 pays hero 210000, so the original tutorial team is
+100000 + 104000 + 210000, not the one or two heroes a random roll handed us. Commit `bc59fec`
+implements that. Three more facts from the same analysis: hero ultimates are **manual taps only**
+(`BattleHeroItem:onTouchHeroSkill`; the auto path is commented out below player level 3), there is
+**no battle timeout**, and the client fights with our `unit` block verbatim — so the next run has to
+tap and advance the waves, not idle through them.
+
+One finding not patched: after a **lost** first fight the new-player guide **deadlocks**. Its touch
+mask over steps 10180-10280 allows only stage 2, which the server rightly refuses as locked, while
+the equip step wants item 10000 — which drops only from stage 1-1. Winning 1-1 removes it.
+
+Nothing is shipped and nothing is confirmed until you drive it yourself.
 
 ## Next — in order
 
-- [ ] **Follow-up B1-a: handle `5_2327 QuerySelfTeamReq` / `5_2328 QuerySelfTeamRes`.** The one thing
-      between this build and the campaign half of milestone 2. `team_base` is a `ClientFightTeamBase`
-      (id, source, level, fightAbility, name, avatar, origin, district, avatar_type, repeated `units`
-      of `ClientFightUnit`) built from the `units` the request carries; `urandom` wants 64 values
-      below 10000, as `LevelIntoRes` already does. Evidence and the Lua trace: `docs/dev-loop.md`
-      section 7. After it lands, re-run the acceptance run — assertions 3 and 4 and open questions C
-      and D are all waiting on it.
+- [ ] **Emulator re-run: prove the win path.** Win stage 1-1 with the three scripted tutorial heroes
+      of `bc59fec` — **tap the hero ultimates** (`BattleHeroItem:onTouchHeroSkill`) and advance the
+      waves instead of idling — then assert the star, the drop payout, `last_level`, the stage-2
+      unlock, the chapter chest, and that the guide walks past the equip chain instead of
+      deadlocking. Open questions C (`stage_info.once`) and D (the ultimate firing from
+      `ClientHero.spells`) are still waiting on a won fight. Pre-launch checklist and the full run-2
+      record: `docs/dev-loop.md` section 7.
+- [ ] **Merge `plan-b1` into `master`** once that run passes.
 - [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
       Also carries the guide steps past 10160 (equip 10180-10210, angel 10293) that Plan B1 left out.
 
@@ -50,7 +71,10 @@ py -3.14 -m server                                   # window 1, log to data\ser
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r "$env:USERPROFILE\Downloads\LOA-private-release.apk"
 ```
 
-Fresh character: stop the server, delete `data\player.db`, start again. Tests: `py -3.14 -m pytest -q --basetemp=C:/tmp/pytest-loa`.
+Fresh character: stop the server, **move** `data\player.db` aside, start again. Never delete it — the
+Plan A and Plan B1 worlds are kept beside it as `data/player.db.*` backups
+(`data/player.db.plan-a-2026-10-21` is Stefan's Plan A character). Tests:
+`py -3.14 -m pytest -q --basetemp=C:/tmp/pytest-loa`.
 
 ## Later — in order
 

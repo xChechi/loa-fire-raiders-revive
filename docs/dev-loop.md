@@ -261,20 +261,28 @@ SDK="/c/Users/Stefan.Nasev/AppData/Local/Android/Sdk"
 If the AVD is not already up, boot it with the detached `Start-Process` line in
 section 4.
 
-## 7. Milestone 2 acceptance run (Plan B1), 23-10-2026
+## 7. Milestone 2 acceptance runs (Plan B1), 23-10-2026
+
+Three runs, kept in order. **Run 1 below is history — read "Run 2 and 3" for the current state of
+the branch.** The `5_2328` blocker run 1 found was fixed in `c3e6923` and runs 2 and 3 were made
+against the fix.
+
+### Run 1, 23-10-2026 — HISTORY (before the `5_2327` handler existed)
 
 Run on `LOA_API30`, cold boot (`-no-snapshot-load`), the APK installed on 21-10-2026 (nothing
 under `client/` changed in Plan B1, so no rebuild). Fresh world: `data/player.db` moved aside to
 `data/player.db.plan-a-2026-10-21` and a new one created by the run. Server
 `py -3.14 -m server`, log `data/server.log`, banner `listening on 0.0.0.0:8112`.
 
-**Outcome: the first half of the milestone passes, the campaign half is blocked by one missing
-handler.** The tutorial runs, both summons pay out, guide progress persists and a relaunch shows
-the main city with the guide resumed instead of replayed. The first campaign fight never starts:
-the client asks `5_2327 QuerySelfTeamReq` after `LevelIntoRes` and our zero stub answers an empty
-`5_2328`, which kills `LineTeam:initByServerTeamBase` in Lua. See "The 5_2328 blocker" below.
+**Outcome as it stood on 23-10-2026 before `c3e6923`: the first half of the milestone passed, the
+campaign half was blocked by one missing handler.** The tutorial ran, both summons paid out, guide
+progress persisted and a relaunch showed the main city with the guide resumed instead of replayed.
+The first campaign fight never started: the client asks `5_2327 QuerySelfTeamReq` after
+`LevelIntoRes` and the zero stub of the day answered an empty `5_2328`, which killed
+`LineTeam:initByServerTeamBase` in Lua. **That blocker is closed** — see "The 5_2328 blocker"
+below and then "Run 2 and 3".
 
-### The six screenshots
+#### The six screenshots
 
 Saved in `C:/tmp/loa-b1/` and in the SDD workspace.
 
@@ -292,17 +300,20 @@ Supporting frames in the same folder: `shot-07-stage1-noenergy.png` (stage panel
 `shot-08-challenge-noenergy.png` (the client refuses the fight locally at 0 energy with its own
 购买体力 dialog; no `5_2201` leaves the device), `shot-11-after-server-restart.png`.
 
-### The five assertions
+#### The five assertions (run 1; rows 3 and 4 are superseded by run 2)
 
 | # | Assertion | Outcome | Evidence |
 |---|---|---|---|
 | 1 | Intro + guide battle play once, `grep -c "saved for player"` at least 1 | **PASS** | 5 saves: guide_id 10037, 10041, 10061, 10081, 10150 (`data/server.log`, 15:58:04 to 15:59:11). |
 | 2 | force-stop, relaunch: main city, no intro, no guide battle | **PASS** | `b1-03-city-after-tutorial.png`; server log `login ok, player id 1` with no `created character`. The decisive half of the milestone. |
-| 3 | Energy drops by 6 on entering stage 1-1, no relog | **PASS for one entry, FAIL in aggregate** | Each `5_2201` costs exactly 6 and the client sees it live: `energy->changed :>> 54`, then 48, 42, 36. But the client re-sent `5_2201` ten times (the 5_2328 blocker below), so 60 energy went in ten 6-point steps with no fight. |
-| 4 | Stage 2 战斧要塞1 unlocked, stars on 1-1 match the fight | **FAIL (not reached)** | No fight ran, so no `5_2203`; `levels` and `chapters` are empty, `last_level` 0, and the map shows stage 1 alone (`b1-04`). |
+| 3 | Energy drops by 6 on entering stage 1-1, no relog | **SUPERSEDED — run 2 PASSES.** Then: PASS for one entry, FAIL in aggregate | Each `5_2201` cost exactly 6 and the client saw it live: `energy->changed :>> 54`, then 48, 42, 36. But the client re-sent `5_2201` ten times (the 5_2328 blocker below), so 60 energy went in ten 6-point steps with no fight. **Run 2: one `5_2201` per attempt, no retry storm, 0 energy for a refused entry.** |
+| 4 | Stage 2 战斧要塞1 unlocked, stars on 1-1 match the fight | **SUPERSEDED — still not reached in run 2, for a different reason.** Then: FAIL (no fight ran) | No fight ran, so no `5_2203`; `levels` and `chapters` were empty, `last_level` 0, and the map showed stage 1 alone (`b1-04`). **Run 2: the fight runs and `5_2203` arrives, but every fight was lost, so the unlock was never earned.** |
 | 5 | Server restart keeps stars, energy, bag, unlocks | **PASS** | DB diffed before and after the restart: identical except `energy` 0 → 1, which is the 360-second regen cycle, not a loss. `shot-11-after-server-restart.png` shows the same city, same balances, guide at the same point. |
 
-### The 5_2328 blocker (found by this run, fix is a follow-up task)
+#### The 5_2328 blocker — FIXED in `c3e6923`, kept for the Lua trace
+
+**Not current.** `server/modules/team.py` has answered `5_2327` since `c3e6923` and runs 2 and 3
+saw zero `LUA ERROR`. What follows is the diagnosis as run 1 recorded it.
 
 `LevelIntoRes` arrives fine. The client then sends `5_2327 QuerySelfTeamReq`
 (`FunctionType.lua:1133`) and waits for `5_2328 QuerySelfTeamRes`, which the server does not
@@ -333,7 +344,7 @@ and wants 64 values there, so the campaign fight needs its random stream from `5
 from `LevelIntoRes`. That handler is the single thing standing between this build and the campaign
 half of milestone 2.
 
-### Ids the server still does not answer
+#### Ids the server did not answer in run 1
 
 Verbatim from `grep -E "no handler for|answering a zero stub|sending nothing|Traceback"`, sorted
 and de-duplicated. Zero tracebacks, zero `FATAL EXCEPTION`, zero `AndroidRuntime` crashes.
@@ -352,7 +363,7 @@ Lua errors seen in the whole run, both harmless apart from the first:
 - `LineTeam.lua:34` x4 — the blocker above.
 - `ChatRoom...:1163` x1 — the known Plan A chat stub, chat is out of scope.
 
-### Open questions
+#### Open questions, as run 1 left them (C, D and E all moved on in run 2)
 
 | | Question | Answer from this run |
 |---|---|---|
@@ -360,4 +371,84 @@ Lua errors seen in the whole run, both harmless apart from the first:
 | **B** | `drop_group.frequency` | **Unchanged, no evidence against ignoring it.** The stage panel's 可能掉落 preview (item 10000 x2) matched the visible roll every time. No payout ran, so "drops too little" could not be judged. |
 | **C** | `stage_info.once` and the second entry into a cleared stage | **NOT REACHED.** Nothing was ever cleared, so stage 10010 could not be re-entered. The flag-1 branch was not exercised from the server either: at 0 energy the client refuses locally with its own 购买体力 dialog and never sends `5_2201` (`shot-08-challenge-noenergy.png`). Still open for the re-run after 5_2328. |
 | **D** | `ClientHero.spells` | **NOT REACHED.** No campaign battle started, so no hero fired an ultimate from `ClientHero`. The guide battle that did run is entirely client-side with hard-coded units and proves nothing about this. |
-| **E** | How far the guide can run | **It stops at 10150, one step short of the 10160 the plan calls "tutorial completed"** — and for the blocker's reason, not the guide's: 10160 is registered on the battle-result return button, and there is no battle result. Plan Risk 1 (the equip pointer wedging the screen after 10160) **did not happen**: the pointer never got that far, and when the guide ran out of reachable steps it self-terminated and left the city fully usable. |
+| **E** | How far the guide can run | **SUPERSEDED: run 2 reaches and persists 10160, twice.** As run 1 left it: **it stopped at 10150, one step short of the 10160 the plan calls "tutorial completed"** — and for the blocker's reason, not the guide's: 10160 is registered on the battle-result return button, and there is no battle result. Plan Risk 1 (the equip pointer wedging the screen after 10160) **did not happen**: the pointer never got that far, and when the guide ran out of reachable steps it self-terminated and left the city fully usable. |
+### Run 2 and 3 (Task 17b, 23-10-2026): after the 5_2327 handler
+
+Same AVD `LOA_API30`, same installed APK, HEAD `c3e6923` (Task 18's `server/modules/team.py`).
+No code was changed by these runs. Run-1 energy was below the 6 a stage costs, so `data/player.db`
+was **moved** aside to `data/player.db.b1-run1` and a fresh world created; a second fresh world
+(`data/player.db.b1-run2`) was started to retry the fight, and a third is the DB in place today.
+Server banner `23-10-2026 17:01:24 INFO loa.net listening on 0.0.0.0:8112`.
+
+**Outcome: the blocker is gone. The campaign fight runs end to end with zero Lua errors, one
+`5_2201` per attempt, a real `5_2203`/`5_2204` round trip and a result screen. What is still not
+proven is a WON stage: three fights across two characters all ended `win = 0`, so the star, the
+drop payout, `last_level` and the stage-2 unlock were never exercised. The tutorial half of
+milestone 2 is MET; the campaign half is unproven.**
+
+| Assertion | Result | Evidence |
+|---|---|---|
+| The campaign fight starts at all | **PASS** | `17:06:23 loa.team 5_2327 fight_type 2 for player 1: team of 2 unit(s) [(2, 100000), (5, 108000)]`, then the battlefield renders. **Zero `LUA ERROR` in the whole run** — `LineTeam.lua:34` is gone. |
+| Energy decreases by 6 per entry | **PASS** | One `5_2201` per attempt, not ten: 60 → 54, then 54 → 48. A **refused** entry costs nothing (54 → 54, 56 → 56 across two locked refusals), so the unlock is checked before the energy is spent. |
+| `levels` has (10000, star > 0) | **FAIL (star 0)** | `levels = (10000, star 0, count 1)`: the loss path. The fight was genuinely lost (`win = 0`). |
+| `last_level` = 10000 | **FAIL (still 0)** | Correct for a loss — `last_level` only advances on a win. |
+| `items` grew | **FAIL (unchanged)** | `award = {}` in `LevelOutRes`; a loss pays nothing. |
+| Stage-2 unlock shows in the campaign UI | **NOT REACHED** | Stage 2 is drawn and its panel opens, but entering is refused: `WARNING loa.level 5_2201 stage 10010 is locked (328193)`, right while `last_level` is 0. |
+| Stage 2 fought, then re-entered (`once`) | **NOT REACHED** | Nothing was cleared. The **locked** arm of `flag = 1` was exercised instead and behaved as predicted: `incCurLevel`, `closeAllUI`, campaign UI reopened, no wedge. |
+| Force-stop + relaunch after the fight shows the city | **PASS** | Main city, no intro, no guide battle, `login ok, player id 1` with no `created character`. |
+| Server restart keeps the state | **PASS** | DB diffed before/after: identical except energy 56 → 57, the 360 s regen. |
+| Guide reaches and persists 10160 | **PASS (new vs run 1)** | `16:44:38 INFO loa.guide guide_id 10160 saved for player 1`, and again on the second character at 17:07. The plan's definition of "tutorial completed", reached because the result screen now exists. |
+
+**Why the fight was lost, three times** — not a server fault, and the root cause is worth keeping:
+
+- The tutorial's first gold and diamond single draws are **scripted** by `variables.FIRST_GOLD_GACHA`
+  (188000, one row: hero 104000) and `variables.FIRST_DIAMOND_GACHA` (189000, one row: hero 210000).
+  The original tutorial team is therefore **100000 + 104000 + 210000** (500 HP / 29 atk), where our
+  random rolls gave two heroes (300 / 22) or one (100 / 15). `bc59fec` implements the scripted draws.
+- **Ultimates are manual taps only** (`BattleHeroItem:onTouchHeroSkill`; the auto path is commented
+  out at `BattleHeroItem.lua:403-406` and auto defaults on only from player level 3). The ultimate
+  ids the server sends are right, but `spell:1000000` / `spell:1080000` never fired: rage never
+  filled in fights that lasted 5 to 17 seconds.
+- **There is no battle timeout** (`timeoutStopBattle` has no callers), and the client fights with our
+  `unit` block **verbatim** (`BattleUnit:initByPropertyUnit:4145-4171`, no recompute). Attempt 1 was
+  left idle for 2 min 28 s between waves while screenshots were taken; attempt 2 had one level-1
+  hero. Both are run-technique, not server, problems.
+
+**New finding — the guide deadlocks after a lost first fight** (reproduced on two independent
+characters, not patched). Guide 10160 saves on the result-screen return button, then the guide
+advances into the equip chain 10180 → 10190 → 10210 → 10280. Its full-screen touch mask allows only
+its own target, which on the chapter map is **stage 2** — refused as locked, and a refusal does not
+advance the guide (10280 saved twice with no progress). Stage 1-1 cannot be tapped, nor 抽卡 in the
+city after a relaunch. The equip step cannot complete either: the slot wants item **10000**, which
+drops only from stage 1-1 (`拥有 0 件`). Circular. It gates, it does not freeze — every panel still
+renders. **Winning 1-1 removes it.**
+
+**Ids the server still does not answer** (runs 2 and 3, verbatim; `5_2327` is gone from this list,
+`5_2013` is new and caused no visible problem). Zero `Traceback`, zero `LUA ERROR`, zero
+`FATAL EXCEPTION` across both runs:
+
+```
+no handler for 11_2005 QueryTalkDataReq, answering a zero stub
+no handler for 11_2009 QueryHistoryTalkReq, answering a zero stub
+no handler for 5_2013 SyncEnergyReq, answering a zero stub
+no handler for 5_2039 SyncRedPointReq and no paired Res exists, sending nothing
+no handler for 5_2145 QueryBuyEnergyReq, answering a zero stub
+no handler for 5_2623 LevelReporterQueryReq, answering a zero stub
+```
+
+Screenshots `r2-*` and `r3-*` and the kept logs (`C:/tmp/loa-b1/server-r2-run1.log`, `server-r3.log`,
+`logcat-r2.txt`, `logcat-r2b.txt`, `logcat-r3.txt`, `db-r2-before-restart.json`,
+`db-r2-after-restart.json`) are listed in full in the Task 17b report in the SDD workspace.
+
+### Pre-launch checklist for the next run
+
+1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
+   `data/player.db.plan-a-2026-10-21` (Stefan's Plan A character),
+   `data/player.db.b1-run1` and `data/player.db.b1-run2`.
+2. **Win stage 1-1.** Tap the hero ultimates (`BattleHeroItem:onTouchHeroSkill`) and advance the
+   waves promptly instead of idling between them — there is no battle timeout to rescue a slow run,
+   and the three scripted tutorial heroes of `bc59fec` are the team the fight was balanced for.
+3. **Then the restart-persistence pass:** force-stop and relaunch the app, then stop and restart the
+   server, and diff the DB before and after (only energy may move, by the 360 s regen).
+4. **Both of these must come out zero:** `grep -c Traceback data/server.log` and
+   `adb logcat | grep "LUA ERROR"`.
