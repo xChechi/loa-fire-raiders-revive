@@ -17,6 +17,7 @@ from server.settings import load as load_settings
 
 SCENE = "scripts/app/game/view/scenes/GameLoginScene.lua"
 SDK = "scripts/sdk/LuaSuperSDKManager.lua"
+BATTLE_FACTORY = "scripts/app/game/view/scenes/battleScene/type/BattleFactoryBase.lua"
 
 
 class PatchNotFound(RuntimeError):
@@ -47,6 +48,48 @@ _HOME_SERVER_LIST = (
     '            socket_domain = "__LOA_SERVER_IP__"\n'
     "        }\n"
     "    });\n"
+)
+
+# The two halves of the stock tail of BattleFactoryBase:getAttackers: the end
+# of the loop that builds one unit per entry of the local line-up, and the
+# line that publishes the finished team.
+_ATTACKER_LOOP_END = (
+    '            attackers.units[roleData:getIntValue(BattleDefine.place)]=roleData;\n'
+    '            self.fullAttackers.units[roleData:getIntValue(BattleDefine.place)]=roleData;\n'
+    '        end\n'
+)
+
+_ATTACKER_TEAM_PUBLISH = (
+    '        -- end\n'
+    '        self.attackers=attackers;\n'
+)
+
+_SUPPORT_UNIT_BLOCK = (
+    '        -- LOA private server (patch 11): a team_base unit of type 3 (npc) with\n'
+    "        -- no local counterpart is the server's support hero for the newbie\n"
+    '        -- fights (variables.NEW_FIGHT_HELP_HERO). Stock creates units only for\n'
+    '        -- the local lineup, so it is built here, mirroring the\n'
+    '        -- UNIT_SERVER_FIGHT branch of initUnitData. initUnitData itself is not\n'
+    '        -- used: it would call info:refreshFightData on the raw server table.\n'
+    '        if self.attackerTeamInfo and self.attackerTeamInfo.units then\n'
+    '            for _,serverInfo in pairs(self.attackerTeamInfo.units) do\n'
+    '                local place=toint(serverInfo.position);\n'
+    '                if toint(serverInfo.type)==3 and attackers.units[place]==nil then\n'
+    '                    local roleData=BattleUnit.new(self.scene.battleEngine,nil)\n'
+    '                    roleData:lock();\n'
+    '                    roleData:setValue(BattleDefine.serverType,3)\n'
+    '                    roleData:initByServerFightHero(serverInfo,false)\n'
+    '                    roleData:setValue(BattleDefine.Type,BattleDefine.FIGHT_UNIT_TYPE_HERO)\n'
+    '                    roleData:setValue(BattleDefine.place,place)\n'
+    '                    self:setInitialEnergy(roleData,nil)\n'
+    '                    roleData:setValue(BattleDefine.side,BattleDefine.SideAttacker);\n'
+    '                    roleData:unlock();\n'
+    '                    attackers.units[place]=roleData;\n'
+    '                    self.fullAttackers.units[place]=roleData;\n'
+    '                    trace("support unit from server at place",place,serverInfo.refer)\n'
+    '                end\n'
+    '            end\n'
+    '        end\n'
 )
 
 PATCHES: tuple[Patch, ...] = (
@@ -113,6 +156,17 @@ PATCHES: tuple[Patch, ...] = (
           "        local dbList = g_SqlManager.dbList;\n",
           "        local dbList = g_SqlManager.dbList;\n"
           '        lfs.mkdir(wrireUrl .. "/upgrade");\n'),
+    # 11. BattleFactoryBase:getAttackers creates a unit for each entry of the
+    #     local line-up (self.data.attacker) and nothing else, and initUnitData
+    #     only refreshes such a unit from the matching team_base entry. The
+    #     support hero of the newbie fights (variables.NEW_FIGHT_HELP_HERO) is a
+    #     server-side unit with no local counterpart, so without this block it
+    #     never reaches the field. BattleUnit and BattleDefine are already
+    #     required at the top of the file (lines 14 and 20) and getAttackers
+    #     itself uses both.
+    Patch(BATTLE_FACTORY,
+          _ATTACKER_LOOP_END + _ATTACKER_TEAM_PUBLISH,
+          _ATTACKER_LOOP_END + _SUPPORT_UNIT_BLOCK + _ATTACKER_TEAM_PUBLISH),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

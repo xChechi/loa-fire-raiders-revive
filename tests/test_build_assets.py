@@ -7,12 +7,14 @@ import pytest
 from client.build_assets import PATCHES, PatchNotFound, apply_patches, main
 
 STOCK_SCRIPTS = Path(".stock/assets/scripts")
+BATTLE_FACTORY = "scripts/app/game/view/scenes/battleScene/type/BattleFactoryBase.lua"
 TOUCHED = (
     "scripts/main.lua",
     "scripts/app/MyApp.lua",
     "scripts/app/game/view/scenes/GameLoginScene.lua",
     "scripts/sdk/LuaSuperSDKManager.lua",
     "scripts/upgrade/upgrade.lua",
+    BATTLE_FACTORY,
 )
 
 
@@ -252,3 +254,27 @@ def test_documented_entry_point_builds_a_miniature_tree(tmp_path: Path) -> None:
     assert (dest_assets / "fonts/marker.txt").exists()
     assert (dest_assets / "debug.txt").exists()
     assert (dest_jnilibs / "armeabi-v7a/libgame.so").read_bytes() == b"\x7fELF fake"
+
+
+def test_patch_11_builds_the_servers_support_unit_in_the_attacker_team(
+    assets: Path,
+) -> None:
+    """getAttackers creates a unit per entry of the local line-up only.
+
+    The support hero of the newbie fights (variables.NEW_FIGHT_HELP_HERO, Task
+    19) exists in team_base.units and nowhere on the client, so without this
+    patch it is never built and never fights. The inserted block mirrors the
+    UNIT_SERVER_FIGHT branch of initUnitData for info.type 3 and has to run
+    before the stock line that freezes the team into self.attackers.
+    """
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    lua = (assets / BATTLE_FACTORY).read_text(encoding="utf-8")
+
+    assert lua.count("roleData:initByServerFightHero(serverInfo,false)") == 1
+    built = lua.index("roleData:initByServerFightHero(serverInfo,false)")
+    # The stock loop over self.data.attacker still runs first, and the stock
+    # line that publishes the team still runs last.
+    assert lua.index("for k,v in pairs(self.data.attacker) do") < built
+    assert built < lua.index("        self.attackers=attackers;")
+    # Only a server unit with no local counterpart is added.
+    assert "attackers.units[place]==nil" in lua
