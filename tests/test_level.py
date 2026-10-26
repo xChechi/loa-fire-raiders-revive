@@ -288,6 +288,11 @@ def test_player_xp_levels_up_and_notifies(reg, cfg, world) -> None:
     row = find_player(conn, "stefan")
     assert int(row["level"]) == 2
     assert int(row["max_energy"]) == 62
+    # The level-up hands out xp_for_level(2).levelup_recovery_energy, read here
+    # rather than hardcoded. Two 6-energy entries took 60 -> 54 -> 48, and the
+    # payout is capped at the new max_energy.
+    recovery = int(cfg.xp_for_level(2)["levelup_recovery_energy"])
+    assert int(row["energy"]) == min(62, 48 + recovery)
     assert (5, 2036) in [(s, c) for (s, c, _m) in session.outbox]
 
 

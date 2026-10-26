@@ -12,14 +12,11 @@ or 1 everywhere this plan looks (open question B in the plan).
 
 from __future__ import annotations
 
-import logging
 import random
 from dataclasses import dataclass
 
 from server.config import Config
 from server.net.registry import Registry
-
-log = logging.getLogger("loa.drops")
 
 _default_rng = random.SystemRandom()
 

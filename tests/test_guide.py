@@ -16,12 +16,16 @@ from server.config import Config
 from server.db import connect, create_player, find_player, set_guide_id
 from server.modules import guide, player
 from server.net.registry import Registry
-from server.net.server import Server
+from server.net.server import Server, Session
 from server.settings import Settings
 from tests.test_server_core import Client, _run_server, _stop
 
 STOCK = Path(".stock")
 BIND = "127.0.0.1"
+
+# No new_player_guide_info row has this id (asserted in the test below, not
+# assumed), so NewGuideManager could never resume from it.
+UNKNOWN_GUIDE = 999999999
 
 # The players table exactly as Plan A created it (server/db.py at d946f3c).
 # A real character of Stefan's lives in a database of this shape.
@@ -70,7 +74,7 @@ def test_save_guide_id_persists_and_answers_status_zero(reg, settings, cfg) -> N
 
     async def scenario() -> None:
         handlers = {}
-        handlers.update(guide.handlers(reg, settings, conn))
+        handlers.update(guide.handlers(reg, settings, conn, cfg))
         handlers.update(player.handlers(reg, settings, conn, cfg))
         server = Server(reg, settings, handlers, bind_host=BIND)
         task, port = await _run_server(server)
@@ -86,6 +90,30 @@ def test_save_guide_id_persists_and_answers_status_zero(reg, settings, cfg) -> N
         await _stop(task)
 
     asyncio.run(scenario())
+    assert int(find_player(conn, "stefan")["guide_id"]) == 10041
+
+
+def test_an_unknown_guide_id_is_refused_and_not_saved(reg, settings, cfg, caplog) -> None:
+    """The guide_id is CLIENT input, and NewGuideManager:check resumes from it
+    by looking the row up. An id with no new_player_guide_info row cannot be
+    resumed, so storing it would strand the tutorial: refuse with status 1,
+    warn, write nothing. No monotonicity check - the guide legitimately jumps
+    backwards (jump_id)."""
+    assert cfg.guide(10041) is not None          # the id the tests above save
+    assert cfg.guide(UNKNOWN_GUIDE) is None
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_guide_id(conn, pid, 10041)
+    handlers = guide.handlers(reg, settings, conn, cfg)
+    session = Session(writer=None, peer="t", bound_port=0)
+    session.player_id = pid
+
+    req = reg.message_class("SaveGuideIdReq")(guide_id=UNKNOWN_GUIDE)
+    with caplog.at_level("WARNING"):
+        res = handlers[(5, 2041)](session, req)
+
+    assert res.status == 1
+    assert str(UNKNOWN_GUIDE) in caplog.text
     assert int(find_player(conn, "stefan")["guide_id"]) == 10041
 
 

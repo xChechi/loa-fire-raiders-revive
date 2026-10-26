@@ -44,7 +44,7 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers: dict = {}
     handlers.update(login.handlers(registry, settings, conn, cfg))
     handlers.update(player.handlers(registry, settings, conn, cfg))
-    handlers.update(guide.handlers(registry, settings, conn))
+    handlers.update(guide.handlers(registry, settings, conn, cfg))
     handlers.update(gacha.handlers(registry, settings, conn, cfg))
     handlers.update(level.handlers(registry, settings, conn, cfg))
     handlers.update(team.handlers(registry, settings, conn, cfg))

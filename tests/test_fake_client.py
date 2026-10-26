@@ -142,7 +142,7 @@ def test_replay_stage_fights_chapter_one_stage_one(reg, tmp_path: Path, cfg) -> 
         handlers = {}
         handlers.update(login.handlers(reg, settings, conn, cfg))
         handlers.update(player.handlers(reg, settings, conn, cfg))
-        handlers.update(guide.handlers(reg, settings, conn))
+        handlers.update(guide.handlers(reg, settings, conn, cfg))
         handlers.update(gacha.handlers(reg, settings, conn, cfg))
         handlers.update(level.handlers(reg, settings, conn, cfg))
         handlers.update(team.handlers(reg, settings, conn, cfg))

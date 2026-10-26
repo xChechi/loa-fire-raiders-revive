@@ -320,7 +320,7 @@ def handlers(
         # grant_prizes vets the whole list before it writes, so it runs before
         # the irreversible set_chapter_award (Task 11 lesson): an award that
         # cannot be paid leaves the chest claimable.
-        rolled = drops.roll(cfg, int(info["award0"] or 0))
+        rolled = drops.roll(cfg, int(info["award0"] or 0), rng=rng)
         granted = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
         db.set_chapter_award(conn, player_id, chapter, 1)
         notify.items_changed(registry, session, granted["items"])

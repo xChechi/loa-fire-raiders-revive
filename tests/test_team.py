@@ -140,6 +140,27 @@ def test_a_player_with_no_heroes_gets_a_team_with_no_units(
     res.SerializeToString()
 
 
+def test_query_self_team_answers_an_empty_team_when_no_character_exists(
+    reg, cfg, settings, caplog
+) -> None:
+    """The row-is-None branch (team.py:158-165). QuerySelfTeamRes has no status
+    field, so the client cannot be refused: a missing team_base kills the Lua
+    VM at LineTeam.lua:34. An empty team plus a WARNING is the only answer."""
+    conn = connect(settings.db_path)
+    handlers = team.handlers(reg, settings, conn, cfg, rng=random.Random(7))
+    session = Session(writer=None, peer="t", bound_port=0)
+
+    with caplog.at_level("WARNING"):
+        res = handlers[(5, 2327)](session, _req(reg, [0, HERO, 0, 0, 0, 0, 0]))
+
+    assert session.player_id is None
+    assert res.HasField("team_base")
+    assert len(res.team_base.units) == 0
+    assert len(res.urandom) == 64
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    res.SerializeToString()
+
+
 def test_an_entry_the_player_does_not_own_is_skipped_and_logged(
     reg, cfg, world, caplog
 ) -> None:
