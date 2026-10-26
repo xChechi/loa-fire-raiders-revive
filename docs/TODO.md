@@ -2,65 +2,71 @@
 
 Updated 26-10-2026.
 
-## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (branch `plan-b1`, 27 commits `673e300..HEAD`, 243 tests)
+## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (master, 32 commits `673e300..HEAD`, 257 tests)
 
 Built and unit-tested: the config layer over the stock `.db` files, `5_2041` guide persistence, the
 starting kit at character creation, `ClientHero` from `npc_info`/`hero_quality`/`hero_growth`, the
 drop roller, item and hero payouts, the `5_2008` change notification, the tavern gacha, and the
 campaign handlers (`5_2201` enter, `5_2203` finish, `5_2209` chapter chest, `5_2205`/`5_2207`
 refused), the fight team `5_2327`, and the scripted first draws of the tutorial.
-`docs/dev-loop.md` section 7 holds the emulator acceptance runs of 23-10-2026.
+`docs/dev-loop.md` section 7 holds the six emulator acceptance runs of 23-10-2026
+and 26-10-2026.
 
-**Ready for your emulator pass: the tutorial half of milestone 2 is MET, the campaign half is
-unproven.**
+**Milestone 2 is MET on both halves, on 26-10-2026 (run 6 in `docs/dev-loop.md` section 7).
+Ready for your own emulator pass.**
 
 The tutorial half, on `LOA_API30`: both summons pay out, the guide reaches and persists **10160**
 (twice, on two independent characters), a relaunch shows the main city with the guide resumed — no
 intro, no guide battle — and a server restart keeps the database. `5_2327 QuerySelfTeamReq` is
-handled (`server/modules/team.py`, commit `c3e6923`), so the campaign fight now opens, with a team
-of 2 units and **zero `LUA ERROR` in the whole run**.
+handled (`server/modules/team.py`, commit `c3e6923`), so the campaign fight opens at all, with
+**zero `LUA ERROR` in the whole run**.
 
-The campaign half: **every stage 1-1 fight was lost** — three fights across two characters, all
-`win = 0` — so the win path (star, drop payout, `last_level`, the stage-2 unlock, the chapter chest)
-is unit-tested but never exercised on the emulator. The reason is not the server. The tutorial's
-first gold and diamond single draws are **scripted**: `variables.FIRST_GOLD_GACHA` 188000 pays hero
-104000 and `variables.FIRST_DIAMOND_GACHA` 189000 pays hero 210000, so the original tutorial team is
-100000 + 104000 + 210000, not the one or two heroes a random roll handed us. Commit `bc59fec`
-implements that. Three more facts from the same analysis: hero ultimates are **manual taps only**
-(`BattleHeroItem:onTouchHeroSkill`; the auto path is commented out below player level 3), there is
-**no battle timeout**, and the client fights with our `unit` block verbatim.
+The campaign half, as run 6 proved it on 26-10-2026: **stage 1-1 won, 3 stars, in 40 s; stage 1-2
+won, 3 stars, in 48 s.** Drops are paid (粗布头巾 10000 x2 from 1-1; soul stone 500000 x10 and three
+gear items from 1-2), gold and xp land, the player and all three heroes reach level **2**,
+`last_level` is 10010, both `levels` rows stand at **star 3**, stage 2 is unlocked on the chapter
+map, and both persistence checks are green — a relaunch resumes the guide at **10290** with no
+intro and no guide battle, a server restart logs `login ok` with no `created character`. Zero
+`Traceback`, zero `LUA ERROR`, zero `FATAL` in the run, and the unanswered-id list is unchanged.
+The post-loss guide deadlock is **gone**. The chapter chest was **not** reached, and not for lack of
+energy (61/62 left): guide step 10290, the 女神 summon, masks the chapter map, and that flow is
+Plan B2.
 
-Runs 4 and 5 (26-10-2026, after `bc59fec`) closed the remaining client-side questions: the scripted
-draws pay 104000 and 210000 every time, the three-hero team fights, the taps on the hero cards reach
-the client and **the ultimates fire** (seven casts in one fight, logcat-verified), and the fight is
-**still lost**. Our hero `unit` block equals what the client computes itself, so the loss is game
-balance: three level-1 heroes without an angel do not clear the two waves of stage 10000. The stock
-server gave a new character more: `variables.NEW_FIGHT_HELP_HERO` = NPC 1103009 冰雪女皇 (level 6,
-2,098 HP, 222 power), memo "the hero that supports the newbie fights (stages 1-2)". The client has
-no route for a server-only attacker unit in the campaign (`BattleFactoryBase:getAttackers` builds
-only the local lineup; the stage stories create none), so delivering that support hero needs a
-small client Lua patch plus a server rule — a design decision, recorded under "Next".
+Why it took five runs to get there. The tutorial's first gold and diamond single draws are
+**scripted**: `variables.FIRST_GOLD_GACHA` 188000 pays hero 104000 and
+`variables.FIRST_DIAMOND_GACHA` 189000 pays hero 210000, so the original tutorial team is
+100000 + 104000 + 210000, not the one or two heroes a random roll handed us (commit `bc59fec`).
+Even then runs 4 and 5 **lost** every attempt with the ultimates firing: hero ultimates are
+**manual taps only** (`BattleHeroItem:onTouchHeroSkill`; the auto path is commented out below
+player level 3), there is **no battle timeout**, the client fights with our `unit` block verbatim —
+and three level-1 heroes do not clear the two waves of stage 10000. The stock server gave a new
+character more: `variables.NEW_FIGHT_HELP_HERO` = NPC 1103009 冰雪女皇 (level 6, 2,098 HP, 222
+power), memo "the hero that supports the newbie fights (stages 1-2)". **That support hero is now
+implemented, server and client**: the rule in `server/modules/team.py` (`423a684`, narrowed to the
+campaign fight type in `9bf9af6`) and Lua patch 11 in `client/build_assets.py` (`92dac3f`), which
+builds a type-3 `team_base` unit that has no local counterpart in the line-up. Run 6's fight was
+decided by it — **two casts of its own ultimate `3110001`** plus one knight cast, where seven hero
+casts had lost the same stage. `team_base.fightAbility` stays the player's own heroes. One cosmetic
+shortfall: the support NPC gets HP and rage bars but **no portrait card** in the HUD (stock draws
+cards for the local line-up only). It fights and it casts.
 
-One finding not patched: after a **lost** first fight the new-player guide **deadlocks**. Its touch
-mask over steps 10180-10280 allows only stage 2, which the server rightly refuses as locked, while
-the equip step wants item 10000 — which drops only from stage 1-1. Winning 1-1 removes it.
+One finding not patched, kept because it explains runs 2 to 5: after a **lost** first fight the
+new-player guide deadlocked, its touch mask over steps 10180-10280 allowing only stage 2 (refused
+as locked) while the equip step wanted item 10000, which drops only from stage 1-1. Winning 1-1
+removes it, and run 6 confirmed that.
 
 Nothing is shipped and nothing is confirmed until you drive it yourself.
 
 ## Next — in order
 
-- [x] **The newbie fights get the stock support hero** (decided 26-10-2026, option A, stock-faithful).
-      Server rule `423a684`: `5_2328` adds `variables.NEW_FIGHT_HELP_HERO` (npc 1103009, level 6,
-      2,098 HP, 222 power) as a type-3 unit at the first free place 1-6 for the first chapter's stages
-      idx 1-2 while the player has not cleared them; `team_base.fightAbility` stays his own heroes.
-      Client patch 11 `92dac3f`: `BattleFactoryBase:getAttackers` now builds a unit for a type-3
-      `team_base` entry with no local counterpart, mirroring the `UNIT_SERVER_FIGHT` branch of
-      `initUnitData`. **APK rebuild and emulator proof pending** — the patch only reaches the device
-      through `py -3.14 -m client.build_assets` plus the gradle rebuild (`docs/dev-loop.md` section 6).
-- [ ] **The win-path assertions of run 2.** Star, drop payout, `last_level`, stage-2 unlock, chapter
-      chest, the guide past the equip chain. Open questions C and D wait on a won fight.
+- [ ] **Your own emulator pass.** `docs/dev-loop.md` section 7, "Pre-launch checklist for the next
+      run": move `data/player.db` aside (never delete it), win stage 1-1 with the support hero —
+      tap the cards while they glow — then the relaunch and server-restart persistence pass, and
+      both greps at zero. The APK installed on `LOA_API30` is already the patch-11 build.
 - [ ] **Plan B2: heroes.** Level, star-up, gear, awaken, angels. Modules `hero`, `angel`, `item` per spec 3.1.
-      Also carries the guide steps past 10160 (equip 10180-10210, angel 10293) that Plan B1 left out.
+      It also carries what Plan B1 left out and run 6 ran into: the **angel step 10290**, the
+      **chapter chest** sitting behind it, the equip chain 10180-10210 (which needs **hero level 2**,
+      reached after stage 1-2), and the **HUD portrait card for the support NPC** as a cosmetic.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
 

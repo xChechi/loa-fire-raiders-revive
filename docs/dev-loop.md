@@ -266,9 +266,9 @@ of the newbie fights, added 26-10-2026 — is a change to the Lua that ships ins
 APK, so it needs both lines above: `py -3.14 -m client.build_assets` and the gradle
 rebuild, not only a server restart.
 
-## 7. Milestone 2 acceptance runs (Plan B1), 23-10-2026
+## 7. Milestone 2 acceptance runs (Plan B1), 23-10-2026 to 26-10-2026
 
-Three runs, kept in order. **Run 1 below is history — read "Run 2 and 3" for the current state of
+Six runs, kept in order. **Run 1 below is history — read "Run 2 and 3" for the current state of
 the branch.** The `5_2328` blocker run 1 found was fixed in `c3e6923` and runs 2 and 3 were made
 against the fix.
 
@@ -468,14 +468,80 @@ the route is a client patch plus a server rule — see `docs/TODO.md`, "Next". L
 reports in the SDD workspace. Ids still unanswered: unchanged (5_2013, 5_2039, 5_2145, 5_2623,
 11_2005, 11_2009).
 
+### Run 6 (Task 17e, 26-10-2026): with the support hero — the campaign half is MET
+
+Same AVD `LOA_API30`, warm. HEAD `df4db75` (the Task 19 support-hero rule plus patch 11); no code
+was changed by the run. **Step 0 is new here: patch 11 lives inside the APK's assets**, so
+`py -3.14 -m client.build_assets` ran first (eleven `patched` lines, the last one
+`BattleFactoryBase.lua`) and then `./gradlew.bat --no-daemon :app:assembleRelease`,
+**BUILD SUCCESSFUL in 3 m 26 s**. The APK is 340,864,368 bytes — 1,669 bytes more than run 5's
+installed build — and `adb install -r` upgraded it **in place**: `firstInstallTime` stays
+21-10-2026, `lastUpdateTime` 26-10-2026 12:44, nothing uninstalled, no app data lost. Fresh world:
+`data/player.db` **moved** aside to `data/player.db.b1-run5`. Server banner
+`26-10-2026 12:45:13 INFO loa.net listening on 0.0.0.0:8112`.
+
+**Outcome: stage 1-1 won with 3 stars in 40 s, stage 1-2 won with 3 stars in 48 s. The campaign
+half of milestone 2 is MET, so milestone 2 is MET on both halves.** The support hero is the whole
+difference, not the taps: run 5 lost the same stage with seven hero ultimates; run 6 won it with
+**two casts of the npc's own `spell:3110001`** plus one knight cast — and stage 1-1 was played with
+mis-measured card coordinates, so most of its taps missed.
+
+| # | Assertion | Result | Evidence |
+|---|---|---|---|
+| 1 | Three heroes after the two guided summons | **PASS** | `12:49:37 first gold single draw ... banner 1200000 ... [(30, 104000, 1)]` and `12:51:12 ... banner 2400000 ... [(30, 210000, 1)]`; lineup 战力 **3000** (`r6-lineup.png`) |
+| 2 | The support hero is in the `5_2327` team for stage 10000 | **PASS** | `12:53:48 loa.team stage 10000 is a newbie fight, support hero 1103009 joins at position 1`, then `team of 4 unit(s) [(2, 100000), (4, 210000), (6, 104000), (1, 1103009)]` |
+| 3 | Patch 11 ran on the device | **PASS** | logcat `12:53:47.865 ... support unit from server at place` (once, in `getAttackers`, 1.1 s before `LevelIntoRes` reaches the client); the built asset greps 1 for `initByServerFightHero(serverInfo,false)` |
+| 4 | A fourth unit is drawn and fights | **PASS (partial)** | `r6-fight-4.png`: four attacker sprites, the ice queen 1103009 among them; `r6-fight-5.png`: four HP/rage bar pairs but only **three portrait cards** — the support NPC has bars and no card. Cosmetic: it fights and casts |
+| 5 | Stage 1-1 won with stars | **PASS** | `12:54:28 stage 10000 finished by player 1 with 3 star(s), won=True`, `r6-result.png` |
+| 6 | Energy per entry | **PASS** | 6 per entry on both stages |
+| 7 | Payout: gold / xp / items / `levels` / `last_level` | **PASS** | +516 gold and 粗布头巾 10000 x2 from stage 1; +516 gold, soul stone 500000 x10 and three gear items from stage 2; every hero +21 xp → **level 2**; `levels` both rows at **star 3**; `last_level` **10010** |
+| 8 | Stage 2 unlocked | **PASS** | `b1-04-campaign-chapter1.png`: 飞鹰岗哨 ★★★ and the 战斧要塞 node live on the map |
+| 9 | Item 10000 in the bag | **PASS in the DB** | `items` row `(3, 1, 10000, 2)`; the 包裹 button itself is swallowed by guide 10290 (`b1-05-bag-blocked-by-guide.png`), the same mask run 2 hit |
+| 10 | Guide past 10160 | **PASS** | 10150 → 10160 → … → **10290**. The run-2/4/5 deadlock at 10160 is gone |
+| 11 | Stage 1-2, the support hero joins there too | **PASS** | `13:02:20 stage 10010 is a newbie fight, support hero 1103009 joins at position 1`, `13:03:08 ... 3 star(s), won=True` (48 s), `r6-s2-8.png` |
+| 12 | Chapter chest | **NOT REACHED** | Energy was 61/62, so it was affordable; guide 10290 (女神) masks the chapter map and a tap on the 战斧要塞 node did nothing (`r6-45-stage3-panel.png`). `chapters` empty, no energy bought |
+| 13 | Relaunch persistence | **PASS** | No intro, no guide battle, main city with the guide resumed at 10290; level 2, 62/62 energy (`b1-03-city-after-tutorial.png`, `r6-44-city-after-relaunch.png`) |
+| 14 | Server-restart persistence | **PASS** | `13:52:48 login ok, player id 1` with **no** `created character` (`r6-after-server-restart.png`) |
+
+Rows 1 to 5 are the chain runs 2 to 5 never completed, and they are the reason the campaign half
+now counts as met: the team reaches the client, the patch builds the unit, the unit fights, the
+stage is won. Row 4 is the one honest partial, row 12 the one thing not reached.
+
+Greps, verbatim: `grep -cE "Traceback|ERROR"` on the server logs → **0**; logcat (43,768 lines)
+`LUA ERROR` **0**, `FATAL` **0**, `FATAL EXCEPTION` **0** (`AndroidRuntime` 1,618, all boot noise).
+The unanswered ids are identical to runs 2 to 5: 5_2013, 5_2039, 5_2145, 5_2623, 11_2005, 11_2009.
+
+Two things to know before the next fight. The card row **re-centres when the fourth unit joins** —
+the measured centres are `667 901 / 901 901 / 1134 901 / 1368 901`, not run 5's three-card row — and
+the device's logcat ring buffer dropped the `cocos2d-x debug info` lines of the stage-1-2 fight
+before it was captured, so that stage's evidence is the server log plus screenshots, not a cast
+list. The guide's equip chain now stops on `需求英雄等级:2` with the heroes still level 1 at that
+moment (they reach level 2 from the stage-1-1 result), and the guide no longer wedges there: it
+moves on to 10290 by itself.
+
+Open questions after run 6:
+
+| | Question | State |
+|---|---|---|
+| **C** | `stage_info.once` and the second entry into a cleared stage | **Still open.** Stage 10010 carries `once = 1` and was cleared at star 3, but it was never re-entered (`levels` count 1), so the flag-1 branch is still unexercised from a *cleared* stage. |
+| **D** | `ClientHero.spells` | **Answered by run 5:** hero ultimates fire from the server's `spells` list. Run 6 adds the same for a type-3 unit — the server sent `spells` [3110001, 10000000] and `spell:3110001` fired twice. |
+
+Logs and frames kept: `C:/tmp/loa-server-b1-run6.err.log`, `...run6b.err.log` (post-restart),
+`C:/tmp/loa-b1/logcat-run6.txt` (the complete stage-1-1 capture), `fight-window6.txt`,
+`logcat-run6-full.txt`, `tapper6.sh`, `shooter6.sh`, and the `r6-*` screenshots, listed in full in
+the Task 17e report in the SDD workspace.
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
    `data/player.db.plan-a-2026-10-21` (Stefan's Plan A character),
    `data/player.db.b1-run1` and `data/player.db.b1-run2`.
-2. **Win stage 1-1.** Only possible once the support-hero decision in `docs/TODO.md` is implemented:
-   three level-1 heroes lose even with every ultimate fired (runs 4 and 5). Tap the cards when they
-   glow and advance the waves promptly; put the wave-advance point in the tap cycle.
+2. **Win stage 1-1 with the support hero.** It joins by itself — the server log says
+   `stage 10000 is a newbie fight, support hero 1103009 joins at position N` and the logcat says
+   `support unit from server at place` — and run 6 won 1-1 and 1-2 with it, where three level-1
+   heroes lose even with every ultimate fired (runs 4 and 5). Tap the glowing cards and advance the
+   waves promptly; put the wave-advance point `1938 530` in the tap cycle, and use the four-card
+   row `667 901 / 901 901 / 1134 901 / 1368 901` (it re-centres when the support unit joins).
 3. **Then the restart-persistence pass:** force-stop and relaunch the app, then stop and restart the
    server, and diff the DB before and after (only energy may move, by the 360 s regen).
 4. **Both of these must come out zero:** `grep -c Traceback data/server.log` and
