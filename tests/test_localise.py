@@ -84,6 +84,20 @@ def test_placeholders_counts_each_kind():
     assert c == {"#": 1, "%s": 1, "{0}": 1, "\\n": 1, "$": 2, "|": 1}
 
 
+@pytest.mark.parametrize(
+    "en",
+    ["Deals #%-damage boost", "+#%defense for # turns", "Gain #%damage and #%speed"],
+)
+def test_percent_followed_by_english_word_is_not_a_slot(en):
+    assert placeholders(en) == {"#": en.count("#")}
+    assert check_line("造成#%伤害" + "#" * (en.count("#") - 1), en) is None
+
+
+def test_percent_slot_before_chinese_or_unit_still_counts():
+    assert placeholders("需要更新%sm资源") == {"%s": 1}
+    assert placeholders("%d%%") == {"%d": 1}
+
+
 def test_check_line_accepts_good_translation():
     assert check_line("消耗#点体力\\n确定?", "Costs # Stamina\\nConfirm?") is None
 

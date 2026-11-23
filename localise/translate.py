@@ -48,10 +48,12 @@ PRICE_OUT = 20.0
 PRICE_CACHE_READ = 0.20
 PRICE_CACHE_WRITE = PRICE_IN * 1.25
 
-# Tokens the model must carry over unchanged: digit slots, printf slots,
+# Tokens the model must carry over unchanged: digit slots, printf slots (the
+# stock text only has %s and %d; a slot followed by two letters is English
+# like "10%damage", not a slot),
 # {n} slots, escaped line breaks/tabs, the game's own `$` slot and `|`
 # separator.
-PLACEHOLDER = re.compile(r"#|%[-+#.]*[sdfi]|\{[A-Za-z0-9_#]*\}|\\n|\\t|\$|\|")
+PLACEHOLDER = re.compile(r"#|%[sd](?![a-z]{2})|\{[A-Za-z0-9_#]*\}|\\n|\\t|\$|\|")
 TAG = re.compile(r"</?([A-Za-z!][\w-]*)")
 LINE = re.compile(r"^\s*(\d+)\.\s?(.*)$")
 
