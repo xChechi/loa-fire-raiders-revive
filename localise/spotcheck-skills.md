@@ -84,7 +84,7 @@ Drawn with seed 100 from 1,168 translated skill/buff description templates. `#` 
 | 78 | 生命上限增加#%，防御增加#% | Max HP increased by #%, DEF increased by #% |
 | 79 | 神圣的光辉照耀着友军，增加己方怒气最高的#个单位怒气，并增加攻击#回合 | Holy radiance shines upon allies, granting Rage to the # allies with the highest Rage and raising their ATK for # turns |
 | 80 | 神狼发动的神速之力冲向敌人，对竖排目标造成#.#%伤害 | The Divine Wolf charges the enemy with godspeed, dealing #.#% damage to a column of targets |
-| 81 | 符文战熊技能二#描述 | Rune Bear Skill 2 # description |
+| 81 | 符文战熊技能二#描述 | Rune War Bear Skill 2# Description |
 | 82 | 第#回合秒人技能 | Turn # instant-kill skill |
 | 83 | 美人鱼符文#的描述 | Mermaid Rune # Description |
 | 84 | 群狼技能三#描述 | Wolf Pack Skill 3 # Description |
