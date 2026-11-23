@@ -109,6 +109,9 @@ ENGLISH_TEXT_HOOK = r'''-- LOA private server (patch 12): English text layout, s
 do
     local CJK = "[\227-\233]"
     local MIN_SIZE = 12
+    -- enableStrokeEx draws a 2 px outline round every glyph, which a bare
+    -- measuring label does not have.
+    local STROKE_PAD = LOA_TEXT_STROKE_PAD or 2
     local rawCreate = CCLabelTTF.create
     local widthCache, heightCache = {}, {}
 
@@ -119,7 +122,7 @@ do
         if s == "" then return 0 end
         local key = font .. "\1" .. size .. "\1" .. s
         local w = widthCache[key]
-        if w == nil then w = probe(s, font, size).width; widthCache[key] = w end
+        if w == nil then w = probe(s, font, size).width + STROKE_PAD * #s; widthCache[key] = w end
         return w
     end
     local function lineHeight(font, size)
@@ -178,7 +181,7 @@ do
         if longest > limit then s = math.max(MIN_SIZE, math.floor(s * limit / longest)) end
         local out, lines = wrap(text, font, s, limit)
         if maxh and maxh > 0 then
-            while s > MIN_SIZE and lines * lineHeight(font, s) > maxh * 1.1 do
+            while s > MIN_SIZE and lines * lineHeight(font, s) > maxh do
                 s = s - 1
                 out, lines = wrap(text, font, s, limit)
             end

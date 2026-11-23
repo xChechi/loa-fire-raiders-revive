@@ -15,6 +15,7 @@ pytestmark = pytest.mark.skipif(shutil.which("luajit") is None, reason="luajit n
 
 FAKE_ENGINE = r"""
 DEFAULT_TEXT_FONT = "msyh.ttf"; DEFAULT_TEXT_SIZE = 20
+LOA_TEXT_STROKE_PAD = 0
 local function size(w, h) return {width = w, height = h} end
 CCSize = size
 function ccp(x, y) return {x = x, y = y} end
