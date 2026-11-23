@@ -18,6 +18,7 @@ TOUCHED = (
     "scripts/app/game/utils/MMGUICreator.lua",
     "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua",
     "scripts/app/game/view/ui/bag/BagLeftPanel.lua",
+    "scripts/app/game/view/ui/LevelDes.lua",
 )
 
 
@@ -338,3 +339,15 @@ def test_patch_14_right_anchors_the_bag_owned_label(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     bag = (assets / "scripts/app/game/view/ui/bag/BagLeftPanel.lua").read_text(encoding="utf-8")
     assert "self.stc1:setAnchorPoint(ccp(1, 0.5)); self.stc1:setPositionX(206);" in bag
+
+
+def test_patch_15_keeps_the_stage_story_above_the_drops_panel(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    des = (assets / "scripts/app/game/view/ui/LevelDes.lua").read_text(encoding="utf-8")
+    assert "self.levelInfo.description, 163 - 15, 265, self.widgetBg, cc.size(500, 170)," in des
+
+
+def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    scene = (assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(encoding="utf-8")
+    assert "txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);" in scene

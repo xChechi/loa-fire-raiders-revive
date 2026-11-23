@@ -95,6 +95,7 @@ _SUPPORT_UNIT_BLOCK = (
 GUI_CREATOR = "scripts/app/game/utils/MMGUICreator.lua"
 ROLE_INFO = "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua"
 BAG_LEFT = "scripts/app/game/view/ui/bag/BagLeftPanel.lua"
+LEVEL_DES = "scripts/app/game/view/ui/LevelDes.lua"
 
 # Patch 12, English text layout. The engine draws every label with its own
 # FreeType code (FTLabelManager in libgame.so), which may break a line after
@@ -401,6 +402,21 @@ PATCHES: tuple[Patch, ...] = (
           "    self.stc1:setColor(g_colorManager.C3_WHITE);\n",
           "    self.stc1:setColor(g_colorManager.C3_WHITE);\n"
           "    self.stc1:setAnchorPoint(ccp(1, 0.5)); self.stc1:setPositionX(206);\n"),
+    # 15. LevelDes: the stage story is centred in a 500 x 300 box that reaches
+    #     down behind the stamina / drops panel; three Chinese lines never got
+    #     there, six English ones do. Same top edge (y 350), 170 high, so the
+    #     text shrinks to stay above the panel.
+    Patch(LEVEL_DES,
+          "self.levelInfo.description, 163 - 15, 200, self.widgetBg, cc.size(500, 300),",
+          "self.levelInfo.description, 163 - 15, 265, self.widgetBg, cc.size(500, 170),"),
+    # 16. GameLoginScene: the consent line is centred on x -15 and the green
+    #     "Privacy Policy" button starts at x 55, where the Chinese line ends;
+    #     right-align the line to end at x 50 so a longer English one grows left.
+    Patch(SCENE,
+          "    txt1:setColor(g_colorManager.C3_WHITE);\n",
+          "    txt1:setColor(g_colorManager.C3_WHITE);\n"
+          "    txt1:setTextHorizontalAlignment(kCCTextAlignmentRight);"
+          " txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
