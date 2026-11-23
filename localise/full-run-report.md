@@ -8,18 +8,18 @@ Model `claude-opus-5-5`, normal Messages API, batches of up to 40 lines / 4000 c
 |---|---|---|---|
 | names-1 | 113 | 113 | 0 |
 | names-2 | 2,772 | 2,772 | 0 |
-| text | 8,236 | 8,236 | 0 |
-| total | 11,121 | 11,121 | 0 |
+| text | 8,324 | 8,324 | 0 |
+| total | 11,209 | 11,209 | 0 |
 
 ## Tokens and cost
 
 | run | calls | rejected calls | input | output | cache write | cache read | API time min | USD |
 |---|---|---|---|---|---|---|---|---|
 | drift (all) | 1 | 0 | 1,077 | 1,748 | 0 | 61,003 | 0 | 0.0515 |
-| full (all) | 277 | 2 | 237,857 | 368,648 | 186,059 | 12,474,204 | 52 | 11.7495 |
+| full (all) | 280 | 2 | 239,224 | 370,366 | 247,062 | 12,596,210 | 52 | 12.1188 |
 | sample (medium) | 6 | 0 | 4,189 | 6,703 | 1,856 | 6,926 | 1 | 0.1615 |
 
-All API spend on this project so far (both sample efforts + full run): $12.0962.
+All API spend on this project so far (both sample efforts + full run): $12.4654.
 
 ## Templates missing after retry
 
