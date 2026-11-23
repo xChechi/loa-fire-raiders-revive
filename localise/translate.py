@@ -289,17 +289,40 @@ def split_result(items: list[Item], lines: list[str], problems: list[str]):
     return good, [it for i, it in enumerate(items, 1) if i in bad]
 
 
-def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_):
+def missing_pins(templates, lines, pins: dict[str, list[tuple[str, str]]]) -> list[str]:
+    """`line N: ...` problems for lines lacking a pinned English name."""
+    out = []
+    for i, (tpl, en) in enumerate(zip(templates, lines), 1):
+        lost = [e for _, e in pins.get(tpl, []) if e.lower() not in en.lower()]
+        if lost:
+            out.append(f"line {i}: pinned name missing {lost}")
+    return out
+
+
+def translate_batch(
+    client, db, items: list[Item], glossary, effort, run, pass_, pins=None
+):
     """Translate one batch; lines that fail validation are retried once on
-    their own, the good lines of a rejected reply are kept. Returns ok flag."""
+    their own, the good lines of a rejected reply are kept. `pins` maps a
+    template to (Chinese, English) names its translation must use verbatim.
+    Returns ok flag."""
     system = system_text(glossary)
     reason = ""
     todo = list(items)
+    pins = pins or {}
     for attempt in (1, 2):
         templates = [it.template for it in todo]
         kinds = sorted({it.kind for it in todo})
+        pinned = sorted({p for t in templates for p in pins.get(t, [])})
+        note = (
+            "Use these names exactly as written, character for character: "
+            + "; ".join(f"{zh} = {en}" for zh, en in pinned)
+            + ".\n"
+            if pinned
+            else ""
+        )
         user = (
-            f"Text type: {', '.join(kinds)}.\n"
+            f"Text type: {', '.join(kinds)}.\n{note}"
             f"Translate these {len(templates)} lines.\n\n{format_batch(templates)}"
         )
         t0 = time.monotonic()
@@ -309,6 +332,8 @@ def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_)
         lines: list[str] = []
         if text is not None:
             lines, problems = validate_batch(templates, text)
+            if lines:
+                problems += missing_pins(templates, lines, pins)
         ok = not problems
         u = usage or dict.fromkeys(
             (
@@ -585,6 +610,79 @@ def glossary_mismatches(glossary: dict[str, str], texts: dict[str, str]):
     return out
 
 
+# Names whose glossary English drifted in other texts, picked by hand from the
+# 3+ character mismatches of the full run (23-11-2026). Left out: names that
+# the Chinese also uses as plain words in those texts (守护女神, 入侵者,
+# 震撼大地, 无人能挡, 火元素, 守护者 as a typo of 守护着, 致命一击, ...), and
+# skill names used as verbs in their own description (疯狂撕咬, 二连斩).
+DRIFT_NAMES = (
+    "泰坦巨岩", "奥创灭世", "守夜人", "血族末裔", "狂暴之爪", "符文战熊",
+    "紫耀石之杖", "紫耀石之盔", "金耀石至宝", "冥剑伯爵", "烈焰之怒", "光明神使",
+    "幻雷魔灵", "雪之誓言", "魔法炮车火", "魔法炮车雷", "光明圣剑",
+)
+DRIFT_REPORT = HERE / "drift-fixes.md"
+
+
+def drift_targets(glossary: dict[str, str], texts: dict[str, str], names) -> dict:
+    """template -> [(zh, en)] for texts that contain a drift name (not only as
+    part of a longer glossary name) but not its glossary English."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    longer = [g for g in glossary if len(g) >= 3 and "#" not in g]
+    for tz, te in texts.items():
+        for zh in names:
+            if zh not in tz or zh not in glossary:
+                continue
+            if any(zh != o and zh in o and o in tz for o in longer):
+                continue
+            if glossary[zh].lower() not in te.lower():
+                out.setdefault(tz, []).append((zh, glossary[zh]))
+    return out
+
+
+def run_drift(effort: str, stock: Path, budget_stop: float) -> int:
+    import anthropic
+
+    templates = build_templates(iter_entries(stock))
+    first, names, texts = full_plan(templates)
+    db = open_cache()
+    done = cached(db, effort)
+    glossary = glossary_from(db, effort, first + names)
+    gl = dict(glossary)
+    by_tpl = {it.template: it for it in texts}
+    targets = drift_targets(
+        gl, {t: done[t] for t in by_tpl if t in done}, DRIFT_NAMES
+    )
+    before = {t: done[t] for t in targets}
+    print(f"[{effort}/drift] {len(targets)} templates to re-translate")
+    client = anthropic.Anthropic(api_key=read_api_key())
+    for batch in batches([by_tpl[t] for t in sorted(targets)]):
+        total = spend(db)
+        if total > budget_stop - 0.10:
+            print(f"BUDGET STOP: spent ${total:.4f}")
+            return 4
+        translate_batch(client, db, batch, glossary, effort, "drift", "drift", pins=targets)
+        print(f"    running total ${spend(db):.4f}")
+    after = cached(db, effort)
+    out = [
+        "# Glossary drift corrections",
+        "",
+        f"Names re-pinned: {', '.join(DRIFT_NAMES)}. Each listed template was "
+        "re-translated with its glossary names pinned in the request; the "
+        "reply had to contain the pinned English.",
+        "",
+        "| Chinese | pinned | before | after |",
+        "|---|---|---|---|",
+    ]
+    for t in sorted(targets):
+        pins = ", ".join(f"{zh} = {en}" for zh, en in targets[t])
+        out.append(
+            f"| {_md(t)} | {_md(pins)} | {_md(before[t])} | {_md(after[t])} |"
+        )
+    DRIFT_REPORT.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote {DRIFT_REPORT}")
+    return 0
+
+
 def write_full_report(db, stock: Path, effort: str) -> None:
     templates = build_templates(iter_entries(stock))
     first, names, texts = full_plan(templates)
@@ -835,6 +933,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--sample", type=int, help="sample size")
     mode.add_argument("--full", action="store_true", help="translate every template")
     mode.add_argument("--full-report", action="store_true", help="only write the reports")
+    mode.add_argument("--fix-drift", action="store_true", help="re-pin drifted names")
     parser.add_argument("--efforts", default="low,medium", help="sample mode")
     parser.add_argument("--effort", default="medium", help="full mode")
     parser.add_argument("--budget-stop", type=float, default=15.0, help="USD, all runs")
@@ -846,6 +945,10 @@ def main(argv: list[str] | None = None) -> int:
         efforts = [e.strip() for e in args.efforts.split(",") if e.strip()]
         run_sample(args.sample, efforts, stock)
         return 0
+    if args.fix_drift:
+        status = run_drift(args.effort, stock, args.budget_stop)
+        if status:
+            return status
     if args.full:
         status = run_full(args.effort, stock, args.budget_stop, args.max_seconds)
         if status:

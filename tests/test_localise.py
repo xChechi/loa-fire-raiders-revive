@@ -267,6 +267,29 @@ def test_split_result_all_good():
     assert split_result(items, ["OK"], []) == ([(items[0], "OK")], [])
 
 
+from localise.translate import drift_targets, missing_pins
+
+
+def test_drift_targets_skip_matching_and_longer_names():
+    gl = {"泰坦巨岩": "Titan Rock", "战争机器": "War Machine", "战争机器人": "War Mech"}
+    tx = {
+        "收集#个碎片合成泰坦巨岩": "Collect # Shards to forge Titan Boulder",
+        "泰坦巨岩的碎片": "Titan Rock Shard",
+        "战争机器人医疗形态": "War Mech Medic Form",
+    }
+    assert drift_targets(gl, tx, ["泰坦巨岩", "战争机器"]) == {
+        "收集#个碎片合成泰坦巨岩": [("泰坦巨岩", "Titan Rock")]
+    }
+
+
+def test_missing_pins_names_the_line():
+    pins = {"合成泰坦巨岩": [("泰坦巨岩", "Titan Rock")]}
+    assert missing_pins(["确定", "合成泰坦巨岩"], ["OK", "Forge Titan Boulder"], pins) == [
+        "line 2: pinned name missing ['Titan Rock']"
+    ]
+    assert missing_pins(["合成泰坦巨岩"], ["Forge titan rock"], pins) == []
+
+
 def test_rank_with_added_hash_is_rejected():
     assert "placeholders" in check_line("排行第|！", "ranking #|!")
     assert check_line("排行第|！", "ranked |!") is None
