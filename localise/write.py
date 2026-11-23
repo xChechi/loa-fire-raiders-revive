@@ -173,6 +173,7 @@ KEY_OVERRIDES = {
     "z00006": "Locked",        # 未召唤: angel screen, right-aligned under the name
     "x07016": "Drops",         # 可能掉落: stage info, icons follow
     "z00201": "Drops",         # 可能掉落: item source panel, 120 px box
+    "z00221": "Cost:",         # 消耗体力: stage info, 120 px box, stamina icon follows
 }
 
 # g_lan:getTxt("key") .. value  /  value .. g_lan:getTxt("key")
