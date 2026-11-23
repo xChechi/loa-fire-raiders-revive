@@ -413,7 +413,7 @@ _OTHER_COLS = re.compile(
 
 
 def category(t: Template) -> str | None:
-    if "ui" in t.sources:
+    if "ui" in t.sources or "script" in t.sources:
         return "UI string"
     if "server" in t.sources:
         return "server message"

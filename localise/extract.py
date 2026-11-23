@@ -231,6 +231,12 @@ def iter_entries(stock_dir: Path):
                             )
         finally:
             db.close()
+    # Fourth source: Chinese literals hard-coded in the Lua (localise.scripts).
+    from localise.scripts import iter_script_strings
+
+    for s in iter_script_strings(stock_dir):
+        if s.verdict == "translate":
+            yield Entry("script", f"lua:{s.relpath}:{s.line}", s.relpath, s.value)
 
 
 def build_templates(entries) -> dict[str, Template]:
@@ -263,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     entries = list(iter_entries(stock))
     templates = build_templates(entries)
     print(f"{'source':8} {'strings':>8} {'unique':>8} {'chars':>9} {'templates':>9}")
-    for source in ("ui", "server", "config"):
+    for source in ("ui", "server", "config", "script"):
         es = [e for e in entries if e.source == source]
         uniq = {e.text for e in es}
         tpls = {mask(t)[0] for t in uniq}
