@@ -38,6 +38,7 @@ from localise.extract import (
     mask,
     unmask,
 )
+from localise.scripts import iter_script_strings
 from localise.translate import CACHE, category, cached, open_cache
 from server.settings import load as load_settings
 
@@ -151,7 +152,39 @@ class Renderer:
         # A cell that stored real line breaks gets real ones back.
         if "\n" in text and "\\n" not in text:
             out = out.replace("\\n", "\n").replace("\\t", "\t")
+        # Padding spaces of the source ("等级:   " before a value) survive;
+        # the translation pass strips them.
+        lead = len(text) - len(text.lstrip(PAD))
+        trail = len(text) - len(text.rstrip(PAD))
+        if lead or trail:
+            out = " " * lead + out.strip(PAD) + " " * trail
         return out
+
+
+PAD = " 　"
+
+# g_lan:getTxt("key") .. value  /  value .. g_lan:getTxt("key")
+_CONCAT_AFTER = re.compile(r'getTxt\(\s*"(\w+)"\s*\)\s*\.\.')
+_CONCAT_BEFORE = re.compile(r'\.\.\s*g_lan:getTxt\(\s*"(\w+)"\s*\)')
+
+
+def concat_keys(scripts_dir: Path) -> tuple[set[str], set[str]]:
+    """Language keys glued to a value with `..` (after, before) somewhere in
+    the stock Lua. Chinese needs no space there, English does ("Level2")."""
+    after, before = set(), set()
+    for path in Path(scripts_dir).rglob("*.lua"):
+        src = path.read_bytes().decode("utf-8", errors="replace")
+        after.update(_CONCAT_AFTER.findall(src))
+        before.update(_CONCAT_BEFORE.findall(src))
+    return after, before
+
+
+def space_for_concat(en: str, after: bool, before: bool) -> str:
+    if after and en and not en.endswith((" ", "(", "[", "\n", "\\n", "/", "+", "-", "x", "*")):
+        en += " "
+    if before and en and not en.startswith((" ", ")", "]", ",", ".", ":", ";", "!", "?", "%", "/", "\n", "\\n")):
+        en = " " + en
+    return en
 
 
 def lua_quote(s: str) -> str:
@@ -171,17 +204,19 @@ def lua_quote(s: str) -> str:
     return '"' + "".join(out) + '"'
 
 
-def write_lua(src: Path, dst: Path, render: Renderer) -> tuple[int, int]:
+def write_lua(src: Path, dst: Path, render: Renderer,
+              concat: tuple[set[str], set[str]] = (set(), set())) -> tuple[int, int]:
     """Returns (strings replaced, strings left in Chinese)."""
     raw = src.read_bytes().decode("utf-8")
     parts, pos, done, left = [], 0, 0, 0
-    for _key, start, end, value in lua_string_spans(raw):
+    for key, start, end, value in lua_string_spans(raw):
         if not CJK.search(value):
             continue
         en = render(value)
         if en is None:
             left += 1
             continue
+        en = space_for_concat(en, key in concat[0], key in concat[1])
         parts.append(raw[pos:start])
         parts.append(lua_quote(en))
         pos = end
@@ -226,6 +261,34 @@ def write_db(src: Path, dst: Path, render: Renderer) -> tuple[int, int]:
     return done, left
 
 
+def write_scripts(stock: Path, out: Path, render: Renderer) -> tuple[int, int, int]:
+    """English copies of the Lua files with hard-coded Chinese UI text.
+    Returns (files written, literals replaced, literals left)."""
+    by_file: dict[str, list] = {}
+    for s in iter_script_strings(stock):
+        if s.verdict == "translate":
+            by_file.setdefault(s.relpath, []).append(s)
+    files = done = left = 0
+    for rel, strings in sorted(by_file.items()):
+        raw = (stock / "assets" / rel).read_bytes().decode("utf-8")
+        parts, pos = [], 0
+        for s in sorted(strings, key=lambda s: s.start):
+            en = render(s.value)
+            if en is None:
+                left += 1
+                continue
+            parts.append(raw[pos : s.start])
+            parts.append(lua_quote(en))
+            pos = s.end
+            done += 1
+        parts.append(raw[pos:])
+        dst = out / "assets" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes("".join(parts).encode("utf-8"))
+        files += 1
+    return files, done, left
+
+
 def lua_name(stock_name: str) -> str:
     return stock_name.replace("_cn.lua", "_en.lua")
 
@@ -235,9 +298,12 @@ def write_all(stock: Path, out: Path = EN_DIR, effort: str = "medium",
     templates = build_templates(iter_entries(stock))
     skill = {t for t, v in templates.items() if category(v) == "skill/buff description"}
     render = Renderer(cached(open_cache(cache), effort), skill)
+    concat = concat_keys(stock / "assets/scripts")
     for name in LUA_FILES:
-        done, left = write_lua(stock / LANG / name, out / LANG / lua_name(name), render)
+        done, left = write_lua(stock / LANG / name, out / LANG / lua_name(name), render, concat)
         print(f"{lua_name(name)}: {done} strings in English, {left} left")
+    files, done, left = write_scripts(stock, out, render)
+    print(f"scripts: {files} files, {done} literals in English, {left} left")
     total_done = total_left = 0
     for src in sorted((stock / SPLIT).glob("*.db")):
         done, left = write_db(src, out / SPLIT / src.name, render)

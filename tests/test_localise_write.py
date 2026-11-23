@@ -202,3 +202,35 @@ def test_every_english_db_matches_the_stock_db_except_chinese_text():
                             assert d in vb, (name, t, x[0], d)
                     else:
                         assert va == vb and type(va) is type(vb), (name, t, x[0])
+
+
+# --- spacing and the script source ---------------------------------------------------------
+
+from localise.write import space_for_concat
+
+
+def test_renderer_keeps_the_padding_spaces_of_the_source():
+    r = Renderer({"等级:   ": "Level:", "等级:": "Level:"}, set())
+    assert r("等级:   ") == "Level:   "
+    assert r("等级:") == "Level:"
+
+
+def test_concatenated_keys_get_a_separating_space():
+    assert space_for_concat("Level", True, False) == "Level "
+    assert space_for_concat("Level Cap", True, False) == "Level Cap "
+    assert space_for_concat("Owned: ", True, False) == "Owned: "
+    assert space_for_concat("pcs", False, True) == " pcs"
+    assert space_for_concat(")", False, True) == ")"
+    assert space_for_concat("Level", False, False) == "Level"
+
+
+@needs_output
+@pytest.mark.skipif(shutil.which("luajit") is None, reason="luajit not installed")
+def test_every_translated_script_still_compiles():
+    files = sorted((EN_DIR / "assets/scripts").rglob("*.lua"))
+    assert files
+    lua = "for _, p in ipairs(arg) do assert(loadfile(p)) end io.write(#arg)"
+    proc = subprocess.run(["luajit", "-", *[f.as_posix() for f in files]], input=lua,
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == str(len(files))
