@@ -234,3 +234,12 @@ def test_every_translated_script_still_compiles():
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == str(len(files))
+
+
+def test_key_overrides_replace_the_translation_for_that_key_only(tmp_path: Path):
+    src = tmp_path / "Language_cn.lua"
+    src.write_text('L = {\n    z00004 = "已获得女神",\n    x1 = "已获得女神",\n}\n', encoding="utf-8")
+    r = Renderer({"已获得女神": "Angels Obtained"}, set())
+    write_lua(src, tmp_path / "en.lua", r)
+    out = (tmp_path / "en.lua").read_text(encoding="utf-8")
+    assert 'z00004 = "Collected"' in out and 'x1 = "Angels Obtained"' in out

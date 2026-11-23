@@ -163,6 +163,18 @@ class Renderer:
 
 PAD = " 　"
 
+# Language keys whose label sits in a box sized for 3-5 Chinese characters,
+# with a value or another label right next to it. Shorter English that keeps
+# the meaning; picked on the 23-11-2026 screenshots.
+KEY_OVERRIDES = {
+    "h07001": "Rebirth Lv:",   # 转生等级: hero detail, value follows
+    "h07002": "Rebirth Req:",  # 转生需求: hero detail, value follows
+    "z00004": "Collected",     # 已获得女神: angel screen, "0/30" 130 px to the right
+    "z00006": "Locked",        # 未召唤: angel screen, right-aligned under the name
+    "x07016": "Drops",         # 可能掉落: stage info, icons follow
+    "z00201": "Drops",         # 可能掉落: item source panel, 120 px box
+}
+
 # g_lan:getTxt("key") .. value  /  value .. g_lan:getTxt("key")
 _CONCAT_AFTER = re.compile(r'getTxt\(\s*"(\w+)"\s*\)\s*\.\.')
 _CONCAT_BEFORE = re.compile(r'\.\.\s*g_lan:getTxt\(\s*"(\w+)"\s*\)')
@@ -212,7 +224,7 @@ def write_lua(src: Path, dst: Path, render: Renderer,
     for key, start, end, value in lua_string_spans(raw):
         if not CJK.search(value):
             continue
-        en = render(value)
+        en = KEY_OVERRIDES.get(key) or render(value)
         if en is None:
             left += 1
             continue
