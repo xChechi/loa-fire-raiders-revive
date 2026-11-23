@@ -76,6 +76,24 @@ def test_parse_lua_strings_quoted_long_and_comments():
     ]
 
 
+def test_parse_lua_strings_nested_lists_get_indexed_keys():
+    src = (
+        "Language = {\n"
+        '    a1 = "生命",\n'
+        '    mojun1 = {\n        "第一句",\n        "第二句",\n    },\n'
+        '    t = { x = "嵌套" },\n'
+        '    b2 = "之后",\n'
+        "};\n"
+    )
+    assert parse_lua_strings(src) == [
+        ("a1", "生命"),
+        ("mojun1[1]", "第一句"),
+        ("mojun1[2]", "第二句"),
+        ("t.x", "嵌套"),
+        ("b2", "之后"),
+    ]
+
+
 # --- placeholder validation ------------------------------------------------------
 
 

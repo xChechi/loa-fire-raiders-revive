@@ -100,14 +100,21 @@ def parse_lua_strings(src: str) -> list[tuple[str, str]]:
     A small lexer, so `--` inside a string is not a comment and `--[[ ]]`
     block comments are skipped.
     """
-    out: list[tuple[str, str]] = []
+    return [(k, v) for k, _, _, v in lua_string_spans(src)]
+
+
+def lua_string_spans(src: str) -> list[tuple[str, int, int, str]]:
+    """Like parse_lua_strings, with the [start, end) span of each literal."""
+    out: list[tuple[str, int, int, str]] = []
     i, n = 0, len(src)
     last_ident: str | None = None
     pending_key: str | None = None
+    tables: list[list] = []  # open `{`: [key it was assigned to, positional count]
     long_open = re.compile(r"\[(=*)\[")
     ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
     while i < n:
         c = src[i]
+        start = i
         if src.startswith("--", i):
             m = long_open.match(src, i + 2)
             if m:
@@ -145,14 +152,24 @@ def parse_lua_strings(src: str) -> list[tuple[str, str]]:
                 last_ident = None
                 i += 1
             else:
+                if c == "{":
+                    tables.append([pending_key or "", 0])
+                elif c == "}" and tables:
+                    tables.pop()
                 if not c.isspace():
                     last_ident = None
                     if c != "=":
                         pending_key = None
                 i += 1
             continue
+        # Inside a nested table (e.g. `mojun1 = { "...", "..." }`) the key is
+        # `parent.key`, or `parent[n]` for the n-th positional string.
+        parent = tables[-1][0] if len(tables) >= 2 else ""
         if pending_key is not None:
-            out.append((pending_key, value))
+            out.append((f"{parent}.{pending_key}" if parent else pending_key, start, i, value))
+        elif parent:
+            tables[-1][1] += 1
+            out.append((f"{parent}[{tables[-1][1]}]", start, i, value))
         pending_key = None
         last_ident = None
     return out
