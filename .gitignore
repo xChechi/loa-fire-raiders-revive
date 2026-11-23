@@ -4,6 +4,7 @@ __pycache__/
 .stock/
 data/
 captures/
+localise/cache.sqlite
 *.apk
 *.jks
 *.keystore

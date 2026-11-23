@@ -1,0 +1,568 @@
+"""Translate digit-masked templates to English with Claude (spec 3.3).
+
+Templates go out in line-numbered batches of 40 (plain text, not JSON); the
+reply must have the same line numbers and keep every placeholder, else the
+batch is retried once and then recorded as failed. Results are cached per
+(template, effort) in localise/cache.sqlite, so a rerun only sends what is
+missing. Names (heroes, angels, items, skills, stages, NPCs) are translated
+first and fed to every later batch as a glossary.
+
+Only the sample mode exists so far:
+  py -3.14 -m localise.translate --sample 200 --efforts low,medium
+writes localise/sample-report.md with usage, cost and a projection.
+
+The API key is read from C:/Users/Stefan.Nasev/.config/loa/.env
+(ANTHROPIC_API_KEY=...) and never printed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import re
+import sqlite3
+import time
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+
+from localise.extract import (
+    CJK,
+    Template,
+    build_templates,
+    is_name_column,
+    iter_entries,
+)
+
+MODEL = "claude-opus-5-5"
+MAX_TOKENS = 16000
+BATCH = 40
+ENV_FILE = Path("C:/Users/Stefan.Nasev/.config/loa/.env")
+HERE = Path(__file__).resolve().parent
+CACHE = HERE / "cache.sqlite"
+REPORT = HERE / "sample-report.md"
+
+# USD per million tokens (owner's figures, 23-11-2026).
+PRICE_IN = 4.0
+PRICE_OUT = 20.0
+PRICE_CACHE_READ = 0.20
+PRICE_CACHE_WRITE = PRICE_IN * 1.25
+
+# Tokens the model must carry over unchanged: digit slots, printf slots,
+# {n} slots, escaped line breaks/tabs, the game's own `$` slot and `|`
+# separator.
+PLACEHOLDER = re.compile(r"#|%[-+#.]*[sdfi]|\{[A-Za-z0-9_#]*\}|\\n|\\t|\$|\|")
+TAG = re.compile(r"</?([A-Za-z!][\w-]*)")
+LINE = re.compile(r"^\s*(\d+)\.\s?(.*)$")
+
+SYSTEM_PROMPT = """\
+You are the English localiser of League of Angels: Fire Raiders, a fantasy \
+mobile RPG (heroes, angels/goddesses, gear, runes, campaign stages, guilds) \
+that GTArcade originally released in English. You translate the Chinese \
+client text of a private server back into natural, concise game English, the \
+way an official Western release would read.
+
+Rules:
+- Every input line is `<number>. <Chinese text>`. Reply with exactly the same \
+numbers in the same order, one line each: `<number>. <English text>`. No \
+preamble, no notes, no blank-line commentary, no JSON.
+- Never split one translation over several lines and never merge lines. A line \
+break inside a text is written as the two characters \\n; keep each \\n where \
+it is.
+- `#` stands for a number. Keep every `#` exactly (same count); never write a \
+digit for it. Example: `消耗#点体力` -> `Costs # Stamina`.
+- Keep `%s`, `%d`, `{0}`-style slots, `$`, `|`, `\\t` and every markup tag \
+(`<content>`, `<text value="..." color="..." .../>`, colour codes) exactly; \
+inside a tag translate only the human text in value="...", never attribute \
+names or colour values.
+- UI strings are button and label text: keep them as short as the Chinese \
+(one or two words for buttons, Title Case for names and buttons).
+- Proper names (heroes, angels, items, skills, places) get an evocative \
+fantasy English name, not a literal gloss; use the glossary when one is \
+given, character for character.
+- Game terms: 体力 Stamina, 钻石 Diamonds, 金币 Gold, 怒气 Rage, 女神/天使 \
+Angel, 英雄 Hero, 公会 Guild, 关卡 Stage, 副本 Dungeon, 竞技场 Arena, 扫荡 \
+Sweep, 觉醒 Awaken, 进阶 Advance, 符文 Rune, 神器 Artifact, VIP stays VIP.
+- Leave Latin text, number slots and punctuation-only parts as they are.
+"""
+
+
+@dataclass(frozen=True)
+class Item:
+    template: str
+    kind: str  # glossary kind (hero, item, ...) or a text category
+
+
+# --- pure helpers (unit-tested, no network) ---------------------------------
+
+
+def placeholders(text: str) -> Counter:
+    return Counter(PLACEHOLDER.findall(text))
+
+
+def tags(text: str) -> list[str]:
+    return TAG.findall(text)
+
+
+def check_line(src: str, en: str) -> str | None:
+    """None if `en` is an acceptable translation of `src`, else the reason."""
+    if not en.strip():
+        return "empty"
+    a, b = placeholders(src), placeholders(en)
+    if a != b:
+        missing = a - b
+        extra = b - a
+        return f"placeholders differ (missing {dict(missing)}, extra {dict(extra)})"
+    if tags(src) != tags(en):
+        return f"tags differ ({tags(src)} vs {tags(en)})"
+    if CJK.search(en):
+        return "Chinese left in output"
+    return None
+
+
+def format_batch(templates: list[str]) -> str:
+    return "\n".join(f"{i}. {t}" for i, t in enumerate(templates, 1))
+
+
+def parse_numbered(text: str, n: int) -> list[str]:
+    """Parse `1. foo` ... `n. bar` into a list of n strings; ValueError if off."""
+    out: dict[int, str] = {}
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        m = LINE.match(raw)
+        if not m:
+            raise ValueError(f"unnumbered line: {raw[:60]!r}")
+        k = int(m.group(1))
+        if k in out:
+            raise ValueError(f"line {k} twice")
+        out[k] = m.group(2).rstrip()
+    if sorted(out) != list(range(1, n + 1)):
+        raise ValueError(f"expected lines 1..{n}, got {len(out)} lines")
+    return [out[i] for i in range(1, n + 1)]
+
+
+def validate_batch(templates: list[str], reply: str) -> tuple[list[str], list[str]]:
+    """Return (translations, problems). Problems empty = batch accepted."""
+    try:
+        lines = parse_numbered(reply, len(templates))
+    except ValueError as exc:
+        return [], [str(exc)]
+    problems = []
+    for i, (src, en) in enumerate(zip(templates, lines), 1):
+        why = check_line(src, en)
+        if why:
+            problems.append(f"line {i}: {why}")
+    return lines, problems
+
+
+def system_text(glossary: list[tuple[str, str]]) -> str:
+    if not glossary:
+        return SYSTEM_PROMPT
+    body = "\n".join(f"{zh} = {en}" for zh, en in glossary)
+    return f"{SYSTEM_PROMPT}\nGlossary (use these English names exactly):\n{body}\n"
+
+
+def cost(usage: dict) -> float:
+    return (
+        usage["input_tokens"] * PRICE_IN
+        + usage["output_tokens"] * PRICE_OUT
+        + usage["cache_read_input_tokens"] * PRICE_CACHE_READ
+        + usage["cache_creation_input_tokens"] * PRICE_CACHE_WRITE
+    ) / 1e6
+
+
+def read_api_key(path: Path = ENV_FILE) -> str:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ANTHROPIC_API_KEY="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    raise SystemExit(f"ANTHROPIC_API_KEY missing in {path}")
+
+
+# --- cache ------------------------------------------------------------------
+
+
+def open_cache(path: Path = CACHE) -> sqlite3.Connection:
+    db = sqlite3.connect(path)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS translations (
+            template TEXT NOT NULL, effort TEXT NOT NULL, en TEXT NOT NULL,
+            kind TEXT, PRIMARY KEY (template, effort));
+        CREATE TABLE IF NOT EXISTS calls (
+            id INTEGER PRIMARY KEY, run TEXT, effort TEXT, pass TEXT,
+            n INTEGER, chars INTEGER, stop_reason TEXT, ok INTEGER,
+            input_tokens INTEGER, output_tokens INTEGER,
+            cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER,
+            seconds REAL, at TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS failures (
+            id INTEGER PRIMARY KEY, run TEXT, effort TEXT, pass TEXT,
+            templates TEXT, reason TEXT, at TEXT DEFAULT CURRENT_TIMESTAMP);
+        """
+    )
+    return db
+
+
+def cached(db: sqlite3.Connection, effort: str) -> dict[str, str]:
+    return dict(
+        db.execute("SELECT template, en FROM translations WHERE effort=?", (effort,))
+    )
+
+
+# --- API --------------------------------------------------------------------
+
+
+def call_claude(client, system: str, user: str, effort: str):
+    """One request. Returns (text or None, stop_reason, usage dict, error)."""
+    import anthropic
+
+    try:
+        resp = client.messages.create(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=[
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ],
+            messages=[{"role": "user", "content": user}],
+            output_config={"effort": effort},
+        )
+    except anthropic.RateLimitError as exc:
+        return None, "rate_limit", None, f"rate limited: {exc.status_code}"
+    except anthropic.APIStatusError as exc:
+        return None, "api_error", None, f"HTTP {exc.status_code}: {exc.message}"
+    except anthropic.APIConnectionError as exc:
+        return None, "connection", None, f"connection error: {exc}"
+    u = resp.usage
+    usage = {
+        "input_tokens": u.input_tokens or 0,
+        "output_tokens": u.output_tokens or 0,
+        "cache_creation_input_tokens": u.cache_creation_input_tokens or 0,
+        "cache_read_input_tokens": u.cache_read_input_tokens or 0,
+    }
+    if resp.stop_reason in ("refusal", "max_tokens"):
+        return None, resp.stop_reason, usage, f"stop_reason {resp.stop_reason}"
+    text = "".join(b.text for b in resp.content if b.type == "text")
+    return text, resp.stop_reason, usage, None
+
+
+def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_):
+    """Translate one batch with one retry; store results. Returns ok flag."""
+    templates = [it.template for it in items]
+    kinds = sorted({it.kind for it in items})
+    user = (
+        f"Text type: {', '.join(kinds)}.\n"
+        f"Translate these {len(templates)} lines.\n\n{format_batch(templates)}"
+    )
+    system = system_text(glossary)
+    reason = ""
+    for attempt in (1, 2):
+        t0 = time.monotonic()
+        text, stop, usage, err = call_claude(client, system, user, effort)
+        secs = time.monotonic() - t0
+        problems = [err] if err else []
+        lines: list[str] = []
+        if text is not None:
+            lines, problems = validate_batch(templates, text)
+        ok = not problems
+        u = usage or dict.fromkeys(
+            (
+                "input_tokens",
+                "output_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            ),
+            0,
+        )
+        db.execute(
+            "INSERT INTO calls (run, effort, pass, n, chars, stop_reason, ok,"
+            " input_tokens, output_tokens, cache_creation_input_tokens,"
+            " cache_read_input_tokens, seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                run, effort, pass_, len(templates), sum(map(len, templates)), stop,
+                int(ok), u["input_tokens"], u["output_tokens"],
+                u["cache_creation_input_tokens"], u["cache_read_input_tokens"], secs,
+            ),
+        )
+        db.commit()
+        print(
+            f"  [{effort}/{pass_}] {len(templates)} lines, attempt {attempt}: "
+            f"{'ok' if ok else 'FAILED'} in {secs:.1f}s, in={u['input_tokens']} "
+            f"out={u['output_tokens']} cw={u['cache_creation_input_tokens']} "
+            f"cr={u['cache_read_input_tokens']}"
+        )
+        if ok:
+            db.executemany(
+                "INSERT OR REPLACE INTO translations VALUES (?,?,?,?)",
+                [(it.template, effort, en, it.kind) for it, en in zip(items, lines)],
+            )
+            db.commit()
+            return True
+        reason = "; ".join(problems)[:2000]
+        print(f"    {reason[:300]}")
+        if stop == "rate_limit":
+            time.sleep(30)
+    db.execute(
+        "INSERT INTO failures (run, effort, pass, templates, reason) VALUES (?,?,?,?,?)",
+        (run, effort, pass_, "\n".join(templates), reason),
+    )
+    db.commit()
+    return False
+
+
+# --- sample -----------------------------------------------------------------
+
+GLOSSARY_QUOTA = {"hero": 12, "angel": 8, "item": 14, "skill": 14, "stage": 6, "npc": 6}
+
+# category -> (quota, predicate on a Template)
+OTHER_QUOTA = {
+    "UI string": 40,
+    "server message": 20,
+    "skill/buff description": 35,
+    "stage/story text": 25,
+    "item/event/mail text": 20,
+}
+
+_SKILL_COLS = re.compile(
+    r"^(spell_info\.(description\d|levelup_desc)|buff_info\.description"
+    r"|angeltrials_buff_info\.desc\d?|awaken_info\.desc|rune_info\.description"
+    r"|artifact_set\.description\d+|signet_set_info\.description)$"
+)
+_STORY_COLS = re.compile(
+    r"^(stage_info\.description|chapter_info\.description|npc_info\.description\d"
+    r"|new_player_guide_info\.talk|memory_chapter_info\.description|mail_info\.body)$"
+)
+_OTHER_COLS = re.compile(
+    r"^(item_info\.description\d|event_info\.desc|mail_info\.subject|function\.name"
+    r"|open_activity_event\.desc|guild_technology_info\.des|nobility_level_info\.des1?"
+    r"|vip_info\.func_name|reward_display_info\.name)$"
+)
+
+
+def category(t: Template) -> str | None:
+    if "ui" in t.sources:
+        return "UI string"
+    if "server" in t.sources:
+        return "server message"
+    cols = t.columns
+    if any(_SKILL_COLS.match(c) for c in cols):
+        return "skill/buff description"
+    if any(_STORY_COLS.match(c) for c in cols):
+        return "stage/story text"
+    if any(_OTHER_COLS.match(c) for c in cols):
+        return "item/event/mail text"
+    return None
+
+
+def glossary_kind(t: Template) -> str | None:
+    for c in sorted(t.columns):
+        k = is_name_column(c)
+        if k:
+            return k
+    return None
+
+
+def select_sample(templates: dict[str, Template], n: int = 200, seed: int = 23):
+    """Return (glossary items, other items): ~30% names, the rest mixed."""
+    rng = random.Random(seed)
+    scale = n / 200
+    chosen: set[str] = set()
+    names: list[Item] = []
+    for kind, quota in GLOSSARY_QUOTA.items():
+        pool = sorted(
+            t.template
+            for t in templates.values()
+            if glossary_kind(t) == kind and "#" not in t.template
+        )
+        for tpl in rng.sample(pool, min(len(pool), round(quota * scale))):
+            chosen.add(tpl)
+            names.append(Item(tpl, kind))
+    others: list[Item] = []
+    for cat, quota in OTHER_QUOTA.items():
+        pool = sorted(
+            t.template
+            for t in templates.values()
+            if t.template not in chosen
+            and glossary_kind(t) is None
+            and category(t) == cat
+        )
+        for tpl in rng.sample(pool, min(len(pool), round(quota * scale))):
+            chosen.add(tpl)
+            others.append(Item(tpl, cat))
+    return names, others
+
+
+def run_pass(client, db, items: list[Item], glossary, effort, run, pass_):
+    done = cached(db, effort)
+    todo = [it for it in items if it.template not in done]
+    print(f"[{effort}/{pass_}] {len(items)} items, {len(todo)} to translate")
+    for i in range(0, len(todo), BATCH):
+        translate_batch(client, db, todo[i : i + BATCH], glossary, effort, run, pass_)
+
+
+def run_sample(n: int, efforts: list[str], stock: Path) -> None:
+    import anthropic
+
+    templates = build_templates(iter_entries(stock))
+    names, others = select_sample(templates, n)
+    client = anthropic.Anthropic(api_key=read_api_key())
+    db = open_cache()
+    for effort in efforts:
+        run_pass(client, db, names, [], effort, "sample", "glossary")
+        done = cached(db, effort)
+        glossary = [(it.template, done[it.template]) for it in names if it.template in done]
+        run_pass(client, db, others, glossary, effort, "sample", "text")
+    write_report(db, client, templates, names, others, efforts)
+
+
+# --- report -----------------------------------------------------------------
+
+
+def _usage_sum(db, effort: str, run: str = "sample") -> dict:
+    row = db.execute(
+        "SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
+        " COALESCE(SUM(cache_creation_input_tokens),0),"
+        " COALESCE(SUM(cache_read_input_tokens),0), COALESCE(SUM(seconds),0),"
+        " COALESCE(SUM(1-ok),0)"
+        " FROM calls WHERE run=? AND effort=?",
+        (run, effort),
+    ).fetchone()
+    keys = (
+        "calls", "input_tokens", "output_tokens", "cache_creation_input_tokens",
+        "cache_read_input_tokens", "seconds", "failed_calls",
+    )
+    return dict(zip(keys, row))
+
+
+def _md(s: str) -> str:
+    return s.replace("|", "\\|")
+
+
+def write_report(db, client, templates, names, others, efforts) -> None:
+    items = names + others
+    sample_chars = sum(len(it.template) for it in items)
+    full_chars = sum(map(len, templates))
+    n_glossary_full = sum(1 for t in templates.values() if glossary_kind(t))
+    n_batches_full = -(-(len(templates) - n_glossary_full) // BATCH)
+
+    out = [
+        "# English localisation: 200-template sample (Claude API)",
+        "",
+        f"Model `{MODEL}`, batches of {BATCH}, line-numbered plain text, "
+        "system prompt (instructions + glossary) marked `cache_control: ephemeral`. "
+        "Prices: $4/MTok input, $20/MTok output, $0.20/MTok cache read, "
+        "$5/MTok cache write (1.25x input).",
+        "",
+        f"Sample: {len(names)} names (glossary pass, translated first) + "
+        f"{len(others)} other templates; {sample_chars:,} template chars. "
+        f"Full set: {len(templates):,} templates, {full_chars:,} chars "
+        f"(scale factor {full_chars / sample_chars:.1f}x).",
+        "",
+        "## Usage and cost per effort level",
+        "",
+        "| effort | calls | failed calls | input | output | cache write | cache read "
+        "| API time s | sample cost $ | full projection $ | full via Batches API $ |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for effort in efforts:
+        u = _usage_sum(db, effort)
+        c = cost(u)
+        proj = c * full_chars / sample_chars
+        out.append(
+            f"| {effort} | {u['calls']} | {u['failed_calls']} | {u['input_tokens']:,} "
+            f"| {u['output_tokens']:,} | {u['cache_creation_input_tokens']:,} "
+            f"| {u['cache_read_input_tokens']:,} | {u['seconds']:.0f} | {c:.4f} "
+            f"| {proj:.2f} | {proj / 2:.2f} |"
+        )
+
+    # Glossary overhead: the full run carries every name in the system prompt.
+    out += ["", "## Glossary overhead in the full run", ""]
+    try:
+        base = client.messages.count_tokens(
+            model=MODEL, system=system_text([]),
+            messages=[{"role": "user", "content": "x"}],
+        ).input_tokens
+        done = cached(db, efforts[-1])
+        gl = [(it.template, done[it.template]) for it in names if it.template in done]
+        with_gl = client.messages.count_tokens(
+            model=MODEL, system=system_text(gl),
+            messages=[{"role": "user", "content": "x"}],
+        ).input_tokens
+        per_entry = (with_gl - base) / max(1, len(gl))
+        full_gl = per_entry * n_glossary_full
+        read_cost = full_gl * n_batches_full * PRICE_CACHE_READ / 1e6
+        out += [
+            f"Instructions alone: {base:,} tokens; with the {len(gl)}-name sample "
+            f"glossary: {with_gl:,} tokens ({per_entry:.1f} tokens per entry).",
+            f"The full set has {n_glossary_full:,} name templates, so a complete "
+            f"glossary is about {full_gl:,.0f} tokens. Sent cached with each of the "
+            f"{n_batches_full} non-name batches that is about "
+            f"{full_gl * n_batches_full / 1e6:.1f} MTok of cache reads, "
+            f"${read_cost:.2f} (plus one cache write of "
+            f"${full_gl * PRICE_CACHE_WRITE / 1e6:.2f} per 5-minute window). "
+            "The char-scaled projection above does not include this; add it. "
+            "Sending only the glossary entries that occur in each batch would "
+            "make it negligible.",
+            "",
+            "The sample's system prompt is below the model's minimum cacheable "
+            "length if the cache columns above are 0, so no caching happened in "
+            "the sample; the full glossary prompt is far above it.",
+        ]
+    except Exception as exc:  # count_tokens is informational only
+        out.append(f"(token count unavailable: {type(exc).__name__})")
+
+    # Side-by-side table.
+    tr = {e: cached(db, e) for e in efforts}
+    rng = random.Random(7)
+    pick = rng.sample(names, min(10, len(names))) + rng.sample(others, min(30, len(others)))
+    pick.sort(key=lambda it: (it.kind, it.template))
+    out += [
+        "",
+        "## 40 representative rows",
+        "",
+        "| kind | Chinese | " + " | ".join(efforts) + " |",
+        "|---|---|" + "---|" * len(efforts),
+    ]
+    for it in pick:
+        cells = [_md(tr[e].get(it.template, "(missing)")) for e in efforts]
+        out.append(f"| {it.kind} | {_md(it.template)} | " + " | ".join(cells) + " |")
+
+    out += ["", "## Batches that failed validation", ""]
+    fails = db.execute(
+        "SELECT effort, pass, reason, templates FROM failures WHERE run='sample' ORDER BY id"
+    ).fetchall()
+    retried = db.execute(
+        "SELECT effort, pass, COUNT(*) FROM calls WHERE run='sample' AND ok=0 "
+        "GROUP BY effort, pass"
+    ).fetchall()
+    if retried:
+        out.append(
+            "Calls rejected and retried: "
+            + ", ".join(f"{e}/{p}: {n}" for e, p, n in retried)
+            + "."
+        )
+        out.append("")
+    if not fails:
+        out.append("None after the one retry.")
+    for effort, pass_, reason, tpls in fails:
+        out.append(
+            f"- {effort}/{pass_}, {len(tpls.splitlines())} lines: {_md(reason[:500])}"
+        )
+    REPORT.write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"wrote {REPORT}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    from server.settings import load as load_settings
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--settings", type=Path, default=Path("settings.toml"))
+    parser.add_argument("--sample", type=int, required=True, help="sample size")
+    parser.add_argument("--efforts", default="low,medium")
+    args = parser.parse_args(argv)
+    efforts = [e.strip() for e in args.efforts.split(",") if e.strip()]
+    run_sample(args.sample, efforts, load_settings(args.settings).stock_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
