@@ -181,3 +181,58 @@ def test_select_sample_is_deterministic_and_disjoint():
     assert {it.kind for it in names} == {"hero"}
     assert {it.kind for it in others} == {"UI string"}
     assert not {it.template for it in names} & {it.template for it in others}
+
+
+# --- full run helpers ------------------------------------------------------------------
+
+from localise.translate import Item, batches, full_plan, glossary_mismatches, reject_records
+
+
+def test_batches_cap_count_and_chars():
+    items = [Item("字" * 10, "k") for _ in range(100)]
+    sizes = [len(b) for b in batches(items, max_n=40, max_chars=10_000)]
+    assert sizes == [40, 40, 20]
+    sizes = [len(b) for b in batches(items, max_n=40, max_chars=95)]
+    assert sizes == [9] * 11 + [1]
+
+
+def test_batches_oversized_item_goes_alone():
+    items = [Item("短", "k"), Item("长" * 50, "k"), Item("短", "k")]
+    assert [len(b) for b in batches(items, max_n=40, max_chars=20)] == [1, 1, 1]
+
+
+def test_reject_records_name_the_offending_line():
+    recs = reject_records(
+        ["确定", "消耗#点"], ["OK", "Costs"], ["line 2: placeholders differ"], "raw"
+    )
+    assert recs == ["placeholders differ\t消耗#点\tCosts"]
+
+
+def test_reject_records_whole_reply_when_unparseable():
+    recs = reject_records(["确定"], [], ["unnumbered line: 'x'"], "x\ny")
+    assert recs == ["unnumbered line: 'x'\t(whole batch)\tx\\ny"]
+
+
+def test_full_plan_orders_heroes_first_and_texts_last():
+    ts = {
+        "玫瑰骑士": Template("玫瑰骑士", {"config"}, {"hero_info.name"}),
+        "圣剑": Template("圣剑", {"config"}, {"item_info.name"}),
+        "确定": Template("确定", {"ui"}, {"Language_cn.lua"}),
+    }
+    first, names, texts = full_plan(ts)
+    assert [it.template for it in first] == ["玫瑰骑士"]
+    assert [it.template for it in names] == ["圣剑"]
+    assert [(it.template, it.kind) for it in texts] == [("确定", "UI string")]
+
+
+def test_glossary_mismatches_finds_other_rendering():
+    gl = {"玫瑰骑士": "Rose Knight", "天马骑士": "Pegasus Knight", "火": "Fire"}
+    tx = {
+        "玫瑰骑士的普通攻击": "Rose Knight's basic attack",
+        "玫瑰骑士的技能": "Skill of the Knight of Roses",
+        "天马骑士的普通攻击": "pegasus knight's basic attack",
+        "火焰": "Flame",
+    }
+    assert glossary_mismatches(gl, tx) == [
+        ("玫瑰骑士", "Rose Knight", 1, 2, "玫瑰骑士的技能", "Skill of the Knight of Roses")
+    ]

@@ -41,6 +41,12 @@ ENV_FILE = Path("C:/Users/Stefan.Nasev/.config/loa/.env")
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / "cache.sqlite"
 REPORT = HERE / "sample-report.md"
+FULL_REPORT = HERE / "full-run-report.md"
+SPOTCHECK = HERE / "spotcheck-skills.md"
+# Every rejected line (or whole reply when unparseable): effort, pass,
+# attempt, reason, template, output; tab-separated, appended.
+REJECTED = HERE / "rejected.log"
+MAX_BATCH_CHARS = 4000
 
 # USD per million tokens (owner's figures, 23-11-2026).
 PRICE_IN = 4.0
@@ -247,6 +253,26 @@ def call_claude(client, system: str, user: str, effort: str):
     return text, resp.stop_reason, usage, None
 
 
+def reject_records(templates, lines, problems, reply) -> list[str]:
+    """Tab-separated log records for one rejected reply."""
+    out = []
+    for p in problems:
+        m = re.match(r"line (\d+): (.*)", p)
+        if m and lines:
+            i = int(m.group(1))
+            out.append(f"{m.group(2)}\t{templates[i - 1]}\t{lines[i - 1]}")
+        else:
+            raw = (reply or "").replace("\n", "\\n")[:4000]
+            out.append(f"{p}\t(whole batch)\t{raw}")
+    return out
+
+
+def log_rejects(effort, pass_, attempt, templates, lines, problems, reply) -> None:
+    with REJECTED.open("a", encoding="utf-8", newline="\n") as f:
+        for rec in reject_records(templates, lines, problems, reply):
+            f.write(f"{effort}\t{pass_}\tattempt {attempt}\t{rec}\n")
+
+
 def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_):
     """Translate one batch with one retry; store results. Returns ok flag."""
     templates = [it.template for it in items]
@@ -301,6 +327,7 @@ def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_)
             return True
         reason = "; ".join(problems)[:2000]
         print(f"    {reason[:300]}")
+        log_rejects(effort, pass_, attempt, templates, lines, problems, text)
         if stop == "rate_limit":
             time.sleep(30)
     db.execute(
@@ -414,6 +441,229 @@ def run_sample(n: int, efforts: list[str], stock: Path) -> None:
         glossary = [(it.template, done[it.template]) for it in names if it.template in done]
         run_pass(client, db, others, glossary, effort, "sample", "text")
     write_report(db, client, templates, names, others, efforts)
+
+
+# --- full run ---------------------------------------------------------------
+
+# Hero and angel names go first, so every later name (soulstones, skins,
+# skills named after a hero) can already use them.
+FIRST_NAMES = {"hero", "angel"}
+
+
+def batches(items: list[Item], max_n: int = BATCH, max_chars: int = MAX_BATCH_CHARS):
+    """Split into batches of at most max_n items and (unless single) max_chars."""
+    cur: list[Item] = []
+    chars = 0
+    for it in items:
+        if cur and (len(cur) == max_n or chars + len(it.template) > max_chars):
+            yield cur
+            cur, chars = [], 0
+        cur.append(it)
+        chars += len(it.template)
+    if cur:
+        yield cur
+
+
+def spend(db, run: str | None = None) -> float:
+    q = (
+        "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),"
+        " COALESCE(SUM(cache_creation_input_tokens),0),"
+        " COALESCE(SUM(cache_read_input_tokens),0) FROM calls"
+    )
+    row = db.execute(q + " WHERE run=?", (run,)).fetchone() if run else db.execute(q).fetchone()
+    return cost(
+        dict(
+            zip(
+                (
+                    "input_tokens", "output_tokens",
+                    "cache_creation_input_tokens", "cache_read_input_tokens",
+                ),
+                row,
+            )
+        )
+    )
+
+
+def full_plan(templates: dict[str, Template]):
+    """Return (first names, other names, texts) as Item lists, deterministic."""
+    first, names, texts = [], [], []
+    for tpl in sorted(templates):
+        t = templates[tpl]
+        kind = glossary_kind(t)
+        if kind in FIRST_NAMES:
+            first.append(Item(tpl, kind))
+        elif kind:
+            names.append(Item(tpl, kind))
+        else:
+            texts.append(Item(tpl, category(t) or "game text"))
+    names.sort(key=lambda it: (it.kind, it.template))
+    texts.sort(key=lambda it: (it.kind, it.template))
+    return first, names, texts
+
+
+def glossary_from(db, effort: str, items: list[Item]) -> list[tuple[str, str]]:
+    done = cached(db, effort)
+    return sorted((it.template, done[it.template]) for it in items if it.template in done)
+
+
+def run_full(effort: str, stock: Path, budget_stop: float, max_seconds: float) -> int:
+    """0 = all passes done, 3 = time slice used up (rerun), 4 = budget stop."""
+    import anthropic
+
+    templates = build_templates(iter_entries(stock))
+    first, names, texts = full_plan(templates)
+    client = anthropic.Anthropic(api_key=read_api_key())
+    db = open_cache()
+    t_end = time.monotonic() + max_seconds
+    worst = 0.0  # most expensive batch so far, the margin kept below the stop
+    passes = [
+        ("names-1", first, lambda: []),
+        ("names-2", names, lambda: glossary_from(db, effort, first)),
+        ("text", texts, lambda: glossary_from(db, effort, first + names)),
+    ]
+    for pass_, items, gl in passes:
+        done = cached(db, effort)
+        todo = [it for it in items if it.template not in done]
+        print(f"[{effort}/{pass_}] {len(items)} items, {len(todo)} to translate")
+        if not todo:
+            continue
+        glossary = gl()
+        print(f"  glossary entries: {len(glossary)}")
+        for batch in batches(todo):
+            if time.monotonic() > t_end:
+                print("time slice used up; rerun to resume")
+                return 3
+            total = spend(db)
+            if total + worst > budget_stop:
+                print(
+                    f"BUDGET STOP: spent ${total:.4f}, next batch could pass "
+                    f"${budget_stop:.2f}"
+                )
+                return 4
+            translate_batch(client, db, batch, glossary, effort, "full", pass_)
+            after = spend(db)
+            worst = max(worst, after - total)
+            print(f"    running total ${after:.4f} (full run ${spend(db, 'full'):.4f})")
+    return 0
+
+
+def glossary_mismatches(glossary: dict[str, str], texts: dict[str, str]):
+    """Names whose glossary English is absent from a text containing the name.
+
+    Returns [(zh, en, mismatches, total uses, example zh, example en)] sorted
+    by mismatch count. Names under two characters or with `#` are skipped.
+    """
+    out = []
+    for zh, en in glossary.items():
+        if len(zh) < 2 or "#" in zh:
+            continue
+        uses = [(tz, te) for tz, te in texts.items() if zh in tz]
+        bad = [(tz, te) for tz, te in uses if en.lower() not in te.lower()]
+        if bad:
+            out.append((zh, en, len(bad), len(uses), bad[0][0], bad[0][1]))
+    out.sort(key=lambda r: (-r[2], r[0]))
+    return out
+
+
+def write_full_report(db, stock: Path, effort: str) -> None:
+    templates = build_templates(iter_entries(stock))
+    first, names, texts = full_plan(templates)
+    done = cached(db, effort)
+    out = [
+        f"# English localisation: full run (effort {effort})",
+        "",
+        f"Model `{MODEL}`, normal Messages API, batches of up to {BATCH} lines "
+        f"/ {MAX_BATCH_CHARS} chars. Order: hero and angel names, the other "
+        "names with the hero/angel glossary, then all other text with the full "
+        "glossary. Medium-effort rows from the sample were reused, not re-paid.",
+        "",
+        "## Counts",
+        "",
+        "| pass | templates | translated | missing after retry |",
+        "|---|---|---|---|",
+    ]
+    missing_all = []
+    for pass_, items in (("names-1", first), ("names-2", names), ("text", texts)):
+        miss = [it for it in items if it.template not in done]
+        missing_all += [(pass_, it) for it in miss]
+        out.append(f"| {pass_} | {len(items):,} | {len(items) - len(miss):,} | {len(miss):,} |")
+    n_all = len(first) + len(names) + len(texts)
+    out.append(f"| total | {n_all:,} | {n_all - len(missing_all):,} | {len(missing_all):,} |")
+
+    rows = db.execute(
+        "SELECT run, COUNT(*), SUM(1-ok), SUM(input_tokens), SUM(output_tokens),"
+        " SUM(cache_creation_input_tokens), SUM(cache_read_input_tokens), SUM(seconds)"
+        " FROM calls WHERE effort=? OR run='full' GROUP BY run ORDER BY run",
+        (effort,),
+    ).fetchall()
+    out += [
+        "",
+        "## Tokens and cost",
+        "",
+        "| run | calls | rejected calls | input | output | cache write | cache read "
+        "| API time min | USD |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for run, n, bad, i, o, cw, cr, secs in rows:
+        usd = spend(db, run) if run == "full" else cost(
+            {"input_tokens": i, "output_tokens": o,
+             "cache_creation_input_tokens": cw, "cache_read_input_tokens": cr}
+        )
+        out.append(
+            f"| {run} ({effort if run == 'sample' else 'all'}) | {n} | {bad} | {i:,} "
+            f"| {o:,} | {cw:,} | {cr:,} | {secs / 60:.0f} | {usd:.4f} |"
+        )
+    out.append("")
+    out.append(f"All API spend on this project so far (both sample efforts + full run): "
+               f"${spend(db):.4f}.")
+
+    out += ["", "## Templates missing after retry", ""]
+    if not missing_all:
+        out.append("None.")
+    for pass_, it in missing_all:
+        out.append(f"- {pass_} ({it.kind}): `{it.template}`")
+    reasons = db.execute(
+        "SELECT pass, reason FROM failures WHERE run='full' ORDER BY id"
+    ).fetchall()
+    if reasons:
+        out += ["", "Failure reasons per batch (last attempt):", ""]
+        out += [f"- {p}: {_md(r[:400])}" for p, r in reasons]
+
+    gl = dict(glossary_from(db, effort, first + names))
+    tx = {it.template: done[it.template] for it in texts if it.template in done}
+    mism = glossary_mismatches(gl, tx)
+    out += [
+        "",
+        "## Glossary consistency (top 30)",
+        "",
+        f"{len(mism)} glossary names have at least one non-name translation "
+        "that contains the Chinese name but not its glossary English "
+        "(case-insensitive substring check; names under 2 chars or with `#` "
+        "skipped). Some are inflections or plurals, not real mismatches.",
+        "",
+        "| Chinese name | glossary English | mismatches / uses | example text | its English |",
+        "|---|---|---|---|---|",
+    ]
+    for zh, en, bad, uses, ez, ee in mism[:30]:
+        out.append(f"| {_md(zh)} | {_md(en)} | {bad} / {uses} | {_md(ez)} | {_md(ee)} |")
+    FULL_REPORT.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote {FULL_REPORT}")
+
+    skills = sorted(it.template for it in texts
+                    if it.kind == "skill/buff description" and it.template in done)
+    pick = sorted(random.Random(100).sample(skills, min(100, len(skills))))
+    sc = [
+        f"# Spot check: 100 random skill/buff descriptions (effort {effort})",
+        "",
+        f"Drawn with seed 100 from {len(skills):,} translated skill/buff "
+        "description templates. `#` is a number slot.",
+        "",
+        "| # | Chinese | English |",
+        "|---|---|---|",
+    ]
+    sc += [f"| {i} | {_md(t)} | {_md(done[t])} |" for i, t in enumerate(pick, 1)]
+    SPOTCHECK.write_text("\n".join(sc) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote {SPOTCHECK}")
 
 
 # --- report -----------------------------------------------------------------
@@ -561,11 +811,26 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--settings", type=Path, default=Path("settings.toml"))
-    parser.add_argument("--sample", type=int, required=True, help="sample size")
-    parser.add_argument("--efforts", default="low,medium")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--sample", type=int, help="sample size")
+    mode.add_argument("--full", action="store_true", help="translate every template")
+    mode.add_argument("--full-report", action="store_true", help="only write the reports")
+    parser.add_argument("--efforts", default="low,medium", help="sample mode")
+    parser.add_argument("--effort", default="medium", help="full mode")
+    parser.add_argument("--budget-stop", type=float, default=15.0, help="USD, all runs")
+    parser.add_argument("--max-seconds", type=float, default=540.0,
+                        help="stop between batches after this long; rerun resumes")
     args = parser.parse_args(argv)
-    efforts = [e.strip() for e in args.efforts.split(",") if e.strip()]
-    run_sample(args.sample, efforts, load_settings(args.settings).stock_dir)
+    stock = load_settings(args.settings).stock_dir
+    if args.sample:
+        efforts = [e.strip() for e in args.efforts.split(",") if e.strip()]
+        run_sample(args.sample, efforts, stock)
+        return 0
+    if args.full:
+        status = run_full(args.effort, stock, args.budget_stop, args.max_seconds)
+        if status:
+            return status
+    write_full_report(open_cache(), stock, args.effort)
     return 0
 
 
