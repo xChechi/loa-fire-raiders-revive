@@ -236,3 +236,37 @@ def test_glossary_mismatches_finds_other_rendering():
     assert glossary_mismatches(gl, tx) == [
         ("玫瑰骑士", "Rose Knight", 1, 2, "玫瑰骑士的技能", "Skill of the Knight of Roses")
     ]
+
+
+# --- partial keep ----------------------------------------------------------------------
+
+from localise.translate import split_result
+
+
+def test_split_result_keeps_good_lines_and_retries_bad_ones():
+    items = [Item("确定", "k"), Item("排行第|", "k"), Item("取消", "k")]
+    good, retry = split_result(
+        items, ["OK", "ranking #|", "Cancel"], ["line 2: placeholders differ"]
+    )
+    assert good == [(items[0], "OK"), (items[2], "Cancel")]
+    assert retry == [items[1]]
+
+
+def test_split_result_unparsed_reply_retries_everything():
+    items = [Item("确定", "k"), Item("取消", "k")]
+    assert split_result(items, [], ["expected lines 1..2, got 1 lines"]) == ([], items)
+
+
+def test_split_result_api_error_retries_everything():
+    items = [Item("确定", "k")]
+    assert split_result(items, [], ["HTTP 529: overloaded"]) == ([], items)
+
+
+def test_split_result_all_good():
+    items = [Item("确定", "k")]
+    assert split_result(items, ["OK"], []) == ([(items[0], "OK")], [])
+
+
+def test_rank_with_added_hash_is_rejected():
+    assert "placeholders" in check_line("排行第|！", "ranking #|!")
+    assert check_line("排行第|！", "ranked |!") is None

@@ -92,6 +92,9 @@ given, character for character.
 Angel, 英雄 Hero, 公会 Guild, 关卡 Stage, 副本 Dungeon, 竞技场 Arena, 扫荡 \
 Sweep, 觉醒 Awaken, 进阶 Advance, 符文 Rune, 神器 Artifact, VIP stays VIP.
 - Leave Latin text, number slots and punctuation-only parts as they are.
+- Never add a `#` of your own: `#` only ever stands for a number that is in \
+the Chinese. For ranks and ordinals write words, not a number sign: \
+`排行第|` -> `ranked |`, never `ranking #|` or `No. #|`.
 """
 
 
@@ -273,17 +276,32 @@ def log_rejects(effort, pass_, attempt, templates, lines, problems, reply) -> No
             f.write(f"{effort}\t{pass_}\tattempt {attempt}\t{rec}\n")
 
 
+def split_result(items: list[Item], lines: list[str], problems: list[str]):
+    """Split one reply into (accepted (item, en) pairs, items to retry).
+
+    A reply that did not parse (no lines) rejects every item; otherwise only
+    the lines named in `line N: ...` problems are rejected.
+    """
+    if not lines:
+        return [], list(items)
+    bad = {int(m.group(1)) for p in problems if (m := re.match(r"line (\d+):", p))}
+    good = [(it, en) for i, (it, en) in enumerate(zip(items, lines), 1) if i not in bad]
+    return good, [it for i, it in enumerate(items, 1) if i in bad]
+
+
 def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_):
-    """Translate one batch with one retry; store results. Returns ok flag."""
-    templates = [it.template for it in items]
-    kinds = sorted({it.kind for it in items})
-    user = (
-        f"Text type: {', '.join(kinds)}.\n"
-        f"Translate these {len(templates)} lines.\n\n{format_batch(templates)}"
-    )
+    """Translate one batch; lines that fail validation are retried once on
+    their own, the good lines of a rejected reply are kept. Returns ok flag."""
     system = system_text(glossary)
     reason = ""
+    todo = list(items)
     for attempt in (1, 2):
+        templates = [it.template for it in todo]
+        kinds = sorted({it.kind for it in todo})
+        user = (
+            f"Text type: {', '.join(kinds)}.\n"
+            f"Translate these {len(templates)} lines.\n\n{format_batch(templates)}"
+        )
         t0 = time.monotonic()
         text, stop, usage, err = call_claude(client, system, user, effort)
         secs = time.monotonic() - t0
@@ -318,21 +336,23 @@ def translate_batch(client, db, items: list[Item], glossary, effort, run, pass_)
             f"out={u['output_tokens']} cw={u['cache_creation_input_tokens']} "
             f"cr={u['cache_read_input_tokens']}"
         )
-        if ok:
+        good, todo = split_result(todo, lines, problems)
+        if good:
             db.executemany(
                 "INSERT OR REPLACE INTO translations VALUES (?,?,?,?)",
-                [(it.template, effort, en, it.kind) for it, en in zip(items, lines)],
+                [(it.template, effort, en, it.kind) for it, en in good],
             )
             db.commit()
+        if not todo:
             return True
         reason = "; ".join(problems)[:2000]
-        print(f"    {reason[:300]}")
+        print(f"    kept {len(good)}, retrying {len(todo)}: {reason[:300]}")
         log_rejects(effort, pass_, attempt, templates, lines, problems, text)
         if stop == "rate_limit":
             time.sleep(30)
     db.execute(
         "INSERT INTO failures (run, effort, pass, templates, reason) VALUES (?,?,?,?,?)",
-        (run, effort, pass_, "\n".join(templates), reason),
+        (run, effort, pass_, "\n".join(it.template for it in todo), reason),
     )
     db.commit()
     return False
