@@ -502,11 +502,14 @@ def write_report(db, client, templates, names, others, efforts) -> None:
             "The char-scaled projection above does not include this; add it. "
             "Sending only the glossary entries that occur in each batch would "
             "make it negligible.",
-            "",
-            "The sample's system prompt is below the model's minimum cacheable "
-            "length if the cache columns above are 0, so no caching happened in "
-            "the sample; the full glossary prompt is far above it.",
         ]
+        if not any(_usage_sum(db, e)["cache_read_input_tokens"] for e in efforts):
+            out += [
+                "",
+                "No cache reads in the sample: its system prompt is below the "
+                "model's minimum cacheable length; the full glossary prompt is "
+                "far above it.",
+            ]
     except Exception as exc:  # count_tokens is informational only
         out.append(f"(token count unavailable: {type(exc).__name__})")
 
