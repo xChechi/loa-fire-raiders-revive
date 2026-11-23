@@ -16,6 +16,8 @@ pytestmark = pytest.mark.skipif(shutil.which("luajit") is None, reason="luajit n
 FAKE_ENGINE = r"""
 DEFAULT_TEXT_FONT = "msyh.ttf"; DEFAULT_TEXT_SIZE = 20
 local function size(w, h) return {width = w, height = h} end
+CCSize = size
+function ccp(x, y) return {x = x, y = y} end
 CCLabelTTF = {}
 CCLabelTTF.__index = CCLabelTTF
 function CCLabelTTF.create(cls, text, font, fs, dims)
@@ -35,6 +37,8 @@ function CCLabelTTF:getFontSize() return self.fs end
 function CCLabelTTF:getFontName() return self.font end
 function CCLabelTTF:setFontSize(s) self.fs = s end
 function CCLabelTTF:setString(t) self.text = t end
+function CCLabelTTF:setRotation(r) self.rot = r end
+function CCLabelTTF:setAnchorPoint(p) self.anchor = p end
 Label = {}
 Label.__index = Label
 function Label.create(cls) return setmetatable({}, Label) end
@@ -76,11 +80,30 @@ def test_chinese_is_left_to_the_engine():
 
 def test_a_word_wider_than_the_area_shrinks_the_font():
     out = run(
-        'local l = CCLabelTTF:create("Breakthrough", "f", 24, {width = 33, height = 80})\n'
+        'local l = CCLabelTTF:create("Breakthrough", "f", 24, {width = 100, height = 40})\n'
         "io.write(l.text, ' ', l.fs)"
     )
-    # 12 chars * 12 px = 144 px at 24; limit 31.35 px -> floor(24 * 31.35 / 144) = 5 -> min 12
-    assert out == "Breakthrough 12"
+    # 12 chars * 12 px = 144 px at 24; limit 95 px -> floor(24 * 95 / 144) = 15
+    assert out == "Breakthrough 15"
+
+
+def test_a_tall_narrow_tab_is_turned_sideways():
+    out = run(
+        'local l = CCLabelTTF:create("Equip", "f", 24, {width = 33, height = 80})\n'
+        "l:setAnchorPoint(ccp(1, 0.5))\n"
+        "io.write(l.text, ' ', l.fs, ' ', l.rot, ' ', l.dims.width, 'x', l.dims.height,"
+        " ' ', l.anchor.x, ',', l.anchor.y)"
+    )
+    # "Equip" is 60 px at 24 > 33: laid out 80 x 33, turned 90, anchor (1, .5) -> (.5, 1)
+    assert out == "Equip 24 90 80x33 0.5,1"
+
+
+def test_a_tall_tab_whose_word_fits_stays_upright():
+    out = run(
+        'local l = CCLabelTTF:create("Go", "f", 24, {width = 33, height = 80})\n'
+        "io.write(tostring(l.rot))"
+    )
+    assert out == "nil"
 
 
 def test_too_many_lines_shrink_until_they_fit_the_height():

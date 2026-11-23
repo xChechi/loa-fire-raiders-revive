@@ -175,18 +175,58 @@ do
     end
 
     local baseSize = setmetatable({}, {__mode = "k"})
+    local rotated = setmetatable({}, {__mode = "k"})
+
+    -- A tall narrow area (the side tabs, "装\n备" style) whose English word
+    -- does not fit across at 4/5 of the size: lay the text along the long
+    -- side and turn the label 90 degrees clockwise.
+    local function turnSideways(text, font, size, w, h)
+        if type(text) ~= "string" or text:find(CJK) or not w or w <= 0 or h < 2 * w then
+            return false
+        end
+        font = (font and font ~= "") and font or DEFAULT_TEXT_FONT
+        local s = math.floor((tonumber(size) or 20) * 0.8)
+        for word in text:gmatch("%S+") do
+            if width(word, font, s) > w * 0.95 then return true end
+        end
+        return false
+    end
 
     CCLabelTTF.create = function(cls, ...)
         local n = select("#", ...)
         local a = {...}
         local base = a[3]
+        local turn = false
         if n >= 4 and type(a[1]) == "string" and a[4] ~= nil then
-            local ok, t, s = pcall(fit, a[1], a[2], a[3], a[4].width, a[4].height)
-            if ok and t then a[1], a[3] = t, s end
+            local w, h = a[4].width, a[4].height
+            local ok, t = pcall(turnSideways, a[1], a[2], a[3], w, h)
+            if ok and t then
+                turn = true
+                a[4] = CCSize(h, w)
+                w, h = h, w
+            end
+            local ok2, t2, s2 = pcall(fit, a[1], a[2], a[3], w, h)
+            if ok2 and t2 then a[1], a[3] = t2, s2 end
         end
         local label = rawCreate(cls, unpack(a, 1, n))
         if label and n >= 4 and base then baseSize[label] = base end
+        if label and turn then
+            rotated[label] = true
+            label:setRotation(90)
+        end
         return label
+    end
+
+    -- For a turned label the caller's anchor refers to the upright box;
+    -- (ax, ay) there is (1 - ay, ax) on the turned one.
+    local rawAnchor = CCLabelTTF.setAnchorPoint
+    if rawAnchor then
+        CCLabelTTF.setAnchorPoint = function(self, p, ...)
+            if rotated[self] and p then
+                return rawAnchor(self, ccp(1 - p.y, p.x))
+            end
+            return rawAnchor(self, p, ...)
+        end
     end
 
     local rawSetString = CCLabelTTF.setString
