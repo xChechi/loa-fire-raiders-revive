@@ -430,3 +430,23 @@ def test_unknown_id_without_a_res_says_it_sends_nothing(reg, settings, caplog) -
         await _stop(task)
 
     asyncio.run(scenario())
+
+
+def test_config_reads_the_english_tables_when_configured(settings: Settings, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from server.__main__ import config_root
+
+    assert config_root(settings) == STOCK
+    en = tmp_path / "en"
+    (en / "assets/res/data/split").mkdir(parents=True)
+    assert config_root(replace(settings, english_dir=en)) == en
+
+
+def test_config_refuses_a_missing_english_dir(settings: Settings, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from server.__main__ import config_root
+
+    with pytest.raises(SystemExit, match="localise.write"):
+        config_root(replace(settings, english_dir=tmp_path / "nope"))

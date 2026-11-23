@@ -197,6 +197,31 @@ def apply_patches(
     return changed
 
 
+def overlay_english(english: Path, dest_assets: Path) -> int:
+    """Put the localise.write output over the copied assets; returns files copied.
+
+    The English Lua goes in under the Chinese file names. The client loads
+    `language.Language_` .. CONFIG_LANAGUE, and CONFIG_LANAGUE = "cn" in
+    main.lua also selects the SDK branch, IS_FACEBOOK and the opid table, so
+    renaming the language would change behaviour; substituting the files
+    changes only the text.
+    """
+    src = Path(english) / "assets/res"
+    if not (src / "language/Language_en.lua").is_file():
+        raise FileNotFoundError(
+            f"{src / 'language/Language_en.lua'} missing; run `py -3.14 -m localise.write`"
+        )
+    n = 0
+    for en_name in ("Language_en.lua", "Language_start_en.lua"):
+        shutil.copy2(src / "language" / en_name,
+                     dest_assets / "res/language" / en_name.replace("_en.lua", "_cn.lua"))
+        n += 1
+    for db in sorted((src / "data/split").glob("*.db")):
+        shutil.copy2(db, dest_assets / "res/data/split" / db.name)
+        n += 1
+    return n
+
+
 def build(
     stock: Path,
     dest_assets: Path,
@@ -204,6 +229,7 @@ def build(
     server_ip: str,
     username: str,
     port: int,
+    english: Path | None = None,
 ) -> None:
     src_assets = stock / "assets"
     if dest_assets.exists():
@@ -216,6 +242,10 @@ def build(
         src = src_assets / name
         if src.exists():
             shutil.copy2(src, dest_assets / name)
+
+    if english is not None:
+        n = overlay_english(english, dest_assets)
+        print(f"English text: {n} files from {english}")
 
     changed = apply_patches(dest_assets, server_ip, username, port)
     for rel in changed:
@@ -245,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     s = load_settings(args.settings)
-    build(s.stock_dir, args.assets, args.jnilibs, s.host, s.username, s.port)
+    build(s.stock_dir, args.assets, args.jnilibs, s.host, s.username, s.port,
+          s.english_dir)
     print(f"assets ready, server list points at {s.host}:{s.port}")
     return 0
 

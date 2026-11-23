@@ -16,6 +16,10 @@ class Settings:
     port: int
     username: str
     guide_id: int
+    # Output of `py -3.14 -m localise.write`. When set, the server reads its
+    # config tables from here and client.build_assets ships the English
+    # language files and tables; None keeps the stock Chinese everywhere.
+    english_dir: Path | None = None
 
 
 def load(path: Path = Path("settings.toml")) -> Settings:
@@ -30,4 +34,5 @@ def load(path: Path = Path("settings.toml")) -> Settings:
         port=int(cfg["net"]["port"]),
         username=cfg["account"]["username"],
         guide_id=int(cfg["player"]["guide_id"]),
+        english_dir=Path(cfg["paths"]["english_dir"]) if "english_dir" in cfg["paths"] else None,
     )

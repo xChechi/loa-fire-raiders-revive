@@ -2,6 +2,10 @@
 stock_dir = ".stock"
 db_path = "data/player.db"
 apk = "C:/Users/Stefan.Nasev/Downloads/LOA Fire Raiders 277sy.apk"
+# English text (spec 3.3): output of `py -3.14 -m localise.write`. The server
+# reads its config tables from here and client.build_assets ships the English
+# language files and tables. Remove the line to go back to the stock Chinese.
+english_dir = "data/en"
 
 [net]
 # Client-side address, baked into the APK's server list by client.build_assets.

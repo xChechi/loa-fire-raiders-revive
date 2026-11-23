@@ -48,3 +48,16 @@ def test_bind_defaults_to_all_interfaces_when_absent(tmp_path: Path) -> None:
     cfg = tmp_path / "settings.toml"
     cfg.write_text(SAMPLE, encoding="utf-8")
     assert load(cfg).bind == "0.0.0.0"
+
+
+def test_english_dir_is_read_when_present(tmp_path: Path) -> None:
+    cfg = tmp_path / "settings.toml"
+    cfg.write_text(SAMPLE.replace('apk = "C:/x.apk"', 'apk = "C:/x.apk"\nenglish_dir = "data/en"'),
+                   encoding="utf-8")
+    assert load(cfg).english_dir == Path("data/en")
+
+
+def test_english_dir_defaults_to_none(tmp_path: Path) -> None:
+    cfg = tmp_path / "settings.toml"
+    cfg.write_text(SAMPLE, encoding="utf-8")
+    assert load(cfg).english_dir is None

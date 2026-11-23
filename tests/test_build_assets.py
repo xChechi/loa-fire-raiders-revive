@@ -278,3 +278,36 @@ def test_patch_11_builds_the_servers_support_unit_in_the_attacker_team(
     assert built < lua.index("        self.attackers=attackers;")
     # Only a server unit with no local counterpart is added.
     assert "attackers.units[place]==nil" in lua
+
+
+def test_english_overlay_replaces_the_chinese_language_files_and_dbs(tmp_path: Path) -> None:
+    from client.build_assets import overlay_english
+
+    assets = tmp_path / "assets"
+    (assets / "res/language").mkdir(parents=True)
+    (assets / "res/data/split").mkdir(parents=True)
+    (assets / "res/language/Language_cn.lua").write_text("cn", encoding="utf-8")
+    (assets / "res/language/Language_start_cn.lua").write_text("cn start", encoding="utf-8")
+    (assets / "res/data/split/item_info.db").write_bytes(b"cn db")
+    (assets / "res/data/split/only_stock.db").write_bytes(b"stock")
+    en = tmp_path / "en"
+    (en / "assets/res/language").mkdir(parents=True)
+    (en / "assets/res/data/split").mkdir(parents=True)
+    (en / "assets/res/language/Language_en.lua").write_text("en", encoding="utf-8")
+    (en / "assets/res/language/Language_start_en.lua").write_text("en start", encoding="utf-8")
+    (en / "assets/res/data/split/item_info.db").write_bytes(b"en db")
+
+    assert overlay_english(en, assets) == 3
+
+    assert (assets / "res/language/Language_cn.lua").read_text(encoding="utf-8") == "en"
+    assert (assets / "res/language/Language_start_cn.lua").read_text(encoding="utf-8") == "en start"
+    assert (assets / "res/data/split/item_info.db").read_bytes() == b"en db"
+    assert (assets / "res/data/split/only_stock.db").read_bytes() == b"stock"
+    assert not (assets / "res/language/Language_en.lua").exists()
+
+
+def test_english_overlay_without_writer_output_fails_loudly(tmp_path: Path) -> None:
+    from client.build_assets import overlay_english
+
+    with pytest.raises(FileNotFoundError, match="localise.write"):
+        overlay_english(tmp_path / "missing", tmp_path / "assets")

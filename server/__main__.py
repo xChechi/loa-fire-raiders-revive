@@ -38,9 +38,24 @@ async def serve_and_announce(server: Server, settings) -> None:
     await task
 
 
+def config_root(settings) -> Path:
+    """Where the config tables come from: the English copies when configured
+    (so names, mail and status texts the server sends are English), else the
+    stock tree. The stock .db files are never modified either way."""
+    en = settings.english_dir
+    if en is None:
+        return settings.stock_dir
+    if not (Path(en) / "assets/res/data/split").is_dir():
+        raise SystemExit(
+            f"english_dir {en} has no assets/res/data/split; "
+            "run `py -3.14 -m localise.write` first"
+        )
+    return Path(en)
+
+
 def build_handlers(registry: Registry, settings) -> dict:
     conn = db.connect(settings.db_path)
-    cfg = Config.load(settings.stock_dir)
+    cfg = Config.load(config_root(settings))
     handlers: dict = {}
     handlers.update(login.handlers(registry, settings, conn, cfg))
     handlers.update(player.handlers(registry, settings, conn, cfg))
