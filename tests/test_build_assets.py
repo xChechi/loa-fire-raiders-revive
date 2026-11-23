@@ -15,6 +15,7 @@ TOUCHED = (
     "scripts/sdk/LuaSuperSDKManager.lua",
     "scripts/upgrade/upgrade.lua",
     BATTLE_FACTORY,
+    "scripts/app/game/utils/MMGUICreator.lua",
 )
 
 
@@ -296,8 +297,15 @@ def test_english_overlay_replaces_the_chinese_language_files_and_dbs(tmp_path: P
     (en / "assets/res/language/Language_en.lua").write_text("en", encoding="utf-8")
     (en / "assets/res/language/Language_start_en.lua").write_text("en start", encoding="utf-8")
     (en / "assets/res/data/split/item_info.db").write_bytes(b"en db")
+    (assets / "scripts/app").mkdir(parents=True)
+    (assets / "scripts/app/Scene.lua").write_text("cn lua", encoding="utf-8")
+    (assets / "scripts/app/Other.lua").write_text("untouched", encoding="utf-8")
+    (en / "assets/scripts/app").mkdir(parents=True)
+    (en / "assets/scripts/app/Scene.lua").write_text("en lua", encoding="utf-8")
 
-    assert overlay_english(en, assets) == 3
+    assert overlay_english(en, assets) == 4
+    assert (assets / "scripts/app/Scene.lua").read_text(encoding="utf-8") == "en lua"
+    assert (assets / "scripts/app/Other.lua").read_text(encoding="utf-8") == "untouched"
 
     assert (assets / "res/language/Language_cn.lua").read_text(encoding="utf-8") == "en"
     assert (assets / "res/language/Language_start_cn.lua").read_text(encoding="utf-8") == "en start"

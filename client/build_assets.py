@@ -92,6 +92,165 @@ _SUPPORT_UNIT_BLOCK = (
     '        end\n'
 )
 
+GUI_CREATOR = "scripts/app/game/utils/MMGUICreator.lua"
+
+# Patch 12, English text layout. The engine draws every label with its own
+# FreeType code (FTLabelManager in libgame.so), which may break a line after
+# any character: right for Chinese, wrong for English ("summ|on"). For text
+# without CJK this breaks lines on spaces before the text reaches the engine,
+# and shrinks the font when the longest word or the lines do not fit the
+# label's area (the narrow side tabs, "Angel Obtained"). Text with CJK goes
+# through untouched. MMGUICreator is required by GameGlobal before any UI is
+# built, so the overrides are in place for every label.
+ENGLISH_TEXT_HOOK = r'''-- LOA private server (patch 12): English text layout, see client/build_assets.py.
+do
+    local CJK = "[\227-\233]"
+    local MIN_SIZE = 12
+    local rawCreate = CCLabelTTF.create
+    local widthCache, heightCache = {}, {}
+
+    local function probe(s, font, size)
+        return rawCreate(CCLabelTTF, s, font, size):getContentSize()
+    end
+    local function width(s, font, size)
+        if s == "" then return 0 end
+        local key = font .. "\1" .. size .. "\1" .. s
+        local w = widthCache[key]
+        if w == nil then w = probe(s, font, size).width; widthCache[key] = w end
+        return w
+    end
+    local function lineHeight(font, size)
+        local key = font .. "\1" .. size
+        local h = heightCache[key]
+        if h == nil then h = probe("Ag", font, size).height; heightCache[key] = h end
+        return h
+    end
+
+    local function wrap(text, font, size, maxw)
+        local out, n = {}, 0
+        local space = width("a a", font, size) - width("aa", font, size)
+        for line in (text .. "\n"):gmatch("(.-)\n") do
+            local indent = line:match("^ *")
+            local cur, curw = nil, 0
+            for word in line:gmatch("%S+") do
+                local ww = width(word, font, size)
+                if cur == nil then
+                    cur, curw = indent .. word, width(indent, font, size) + ww
+                elseif curw + space + ww <= maxw then
+                    cur, curw = cur .. " " .. word, curw + space + ww
+                else
+                    n = n + 1; out[n] = cur
+                    cur, curw = word, ww
+                end
+            end
+            n = n + 1; out[n] = cur or indent
+        end
+        return table.concat(out, "\n"), n
+    end
+
+    -- (text, size) that fit maxw x maxh, or nil to leave the text alone.
+    local function fit(text, font, size, maxw, maxh)
+        if type(text) ~= "string" or text == "" or text:find(CJK) or not maxw or maxw <= 0 then
+            return nil
+        end
+        text = text:gsub("\\n", "\n")
+        font = (font and font ~= "") and font or DEFAULT_TEXT_FONT
+        size = math.floor(tonumber(size) or DEFAULT_TEXT_SIZE or 20)
+        local limit = maxw * 0.95
+        local s = size
+        local longest = 0
+        for word in text:gmatch("%S+") do
+            local ww = width(word, font, s)
+            if ww > longest then longest = ww end
+        end
+        if longest > limit then s = math.max(MIN_SIZE, math.floor(s * limit / longest)) end
+        local out, lines = wrap(text, font, s, limit)
+        if maxh and maxh > 0 then
+            while s > MIN_SIZE and lines * lineHeight(font, s) > maxh * 1.1 do
+                s = s - 1
+                out, lines = wrap(text, font, s, limit)
+            end
+        end
+        return out, s
+    end
+
+    local baseSize = setmetatable({}, {__mode = "k"})
+
+    CCLabelTTF.create = function(cls, ...)
+        local n = select("#", ...)
+        local a = {...}
+        local base = a[3]
+        if n >= 4 and type(a[1]) == "string" and a[4] ~= nil then
+            local ok, t, s = pcall(fit, a[1], a[2], a[3], a[4].width, a[4].height)
+            if ok and t then a[1], a[3] = t, s end
+        end
+        local label = rawCreate(cls, unpack(a, 1, n))
+        if label and n >= 4 and base then baseSize[label] = base end
+        return label
+    end
+
+    local rawSetString = CCLabelTTF.setString
+    CCLabelTTF.setString = function(self, text, ...)
+        if type(text) == "string" and text ~= "" then
+            local ok, t, s = pcall(function()
+                local d = self:getDimensions()
+                if not d or d.width <= 0 then return nil end
+                local base = baseSize[self] or self:getFontSize()
+                baseSize[self] = base
+                local t2, s2 = fit(text, self:getFontName(), base, d.width, d.height)
+                if t2 == nil then return nil, base end
+                return t2, s2
+            end)
+            if ok then
+                if s and s ~= self:getFontSize() then self:setFontSize(s) end
+                if t then text = t end
+            end
+        end
+        return rawSetString(self, text, ...)
+    end
+
+    if Label and Label.setText and Label.setTextAreaSize and Label.setFontSize then
+        local info = setmetatable({}, {__mode = "k"})
+        local rawSetText, rawSetArea, rawSetFS = Label.setText, Label.setTextAreaSize, Label.setFontSize
+        local function get(self)
+            local i = info[self]
+            if i == nil then i = {}; info[self] = i end
+            return i
+        end
+        local function apply(self)
+            local i = get(self)
+            local t, s
+            if i.w and i.w > 0 then
+                local ok
+                ok, t, s = pcall(fit, i.text, DEFAULT_TEXT_FONT, i.size or 20, i.w, i.h)
+                if not ok then t, s = nil, nil end
+            end
+            local size = s or i.size
+            if size and size ~= i.cur then rawSetFS(self, size); i.cur = size end
+            return rawSetText(self, t or i.text)
+        end
+        Label.setText = function(self, text)
+            local i = get(self)
+            i.text = text
+            if type(text) ~= "string" then return rawSetText(self, text) end
+            return apply(self)
+        end
+        Label.setTextAreaSize = function(self, size)
+            rawSetArea(self, size)
+            local i = get(self)
+            i.w, i.h = size.width, size.height
+            if type(i.text) == "string" then apply(self) end
+        end
+        Label.setFontSize = function(self, size)
+            local i = get(self)
+            i.size, i.cur = size, size
+            rawSetFS(self, size)
+            if type(i.text) == "string" and i.w then apply(self) end
+        end
+    end
+end
+'''
+
 PATCHES: tuple[Patch, ...] = (
     # 1. main.lua: development mode, so the client skips the version string
     #    match and the DB MD5 check in LoginSocketData:checkServerVersion.
@@ -167,6 +326,10 @@ PATCHES: tuple[Patch, ...] = (
     Patch(BATTLE_FACTORY,
           _ATTACKER_LOOP_END + _ATTACKER_TEAM_PUBLISH,
           _ATTACKER_LOOP_END + _SUPPORT_UNIT_BLOCK + _ATTACKER_TEAM_PUBLISH),
+    # 12. English text layout: wrap on spaces, shrink to fit (ENGLISH_TEXT_HOOK).
+    Patch(GUI_CREATOR,
+          'local MMGUICreator = class("MMGUICreator");\n',
+          ENGLISH_TEXT_HOOK + 'local MMGUICreator = class("MMGUICreator");\n'),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
@@ -218,6 +381,14 @@ def overlay_english(english: Path, dest_assets: Path) -> int:
         n += 1
     for db in sorted((src / "data/split").glob("*.db")):
         shutil.copy2(db, dest_assets / "res/data/split" / db.name)
+        n += 1
+    # Lua files whose hard-coded Chinese UI text was translated
+    # (localise.scripts); the PATCHES apply on top of these copies.
+    scripts = Path(english) / "assets/scripts"
+    for lua in sorted(scripts.rglob("*.lua")) if scripts.is_dir() else []:
+        dst = dest_assets / "scripts" / lua.relative_to(scripts)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(lua, dst)
         n += 1
     return n
 
