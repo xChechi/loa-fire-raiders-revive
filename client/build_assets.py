@@ -93,6 +93,8 @@ _SUPPORT_UNIT_BLOCK = (
 )
 
 GUI_CREATOR = "scripts/app/game/utils/MMGUICreator.lua"
+ROLE_INFO = "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua"
+BAG_LEFT = "scripts/app/game/view/ui/bag/BagLeftPanel.lua"
 
 # Patch 12, English text layout. The engine draws every label with its own
 # FreeType code (FTLabelManager in libgame.so), which may break a line after
@@ -370,6 +372,26 @@ PATCHES: tuple[Patch, ...] = (
     Patch(GUI_CREATOR,
           'local MMGUICreator = class("MMGUICreator");\n',
           ENGLISH_TEXT_HOOK + 'local MMGUICreator = class("MMGUICreator");\n'),
+    # 13. RoleUIInfoPanel: the level, EXP and rebirth values sit at fixed x
+    #     (420 / 475) that fit the Chinese labels; English labels are wider
+    #     ("Rebirth L0Spin"), so each value starts after its label, never left
+    #     of where it was. descLabel[1..4] are the rebirth requirement, rebirth
+    #     level, EXP and level labels, at y 360, 400, 440, 480.
+    *[Patch(ROLE_INFO, f"createMMLabel({txt}, {size}, ccp({x}, {y}), nil, nil, true)",
+            f"createMMLabel({txt}, {size}, ccp(math.max({x}, 364 + "
+            f"self.descLabel[{i}]:getContentSize().width), {y}), nil, nil, true)")
+      for txt, size, x, y, i in (('"0"', 22, 420, 480, 4), ('"0"', 20, 420, 440, 3))],
+    *[Patch(ROLE_INFO, f'createMMLabel(" ", 22, ccp({x},{y}), nil, nil, true)',
+            f'createMMLabel(" ", 22, ccp(math.max({x}, 364 + '
+            f'self.descLabel[{i}]:getContentSize().width),{y}), nil, nil, true)')
+      for x, y, i in ((475, 400, 2), (475, 360, 1))],
+    # 14. BagLeftPanel: "Owned" is centred on x 180 and the count starts at a
+    #     fixed 213; anchor the label's right edge at 206, where the centred
+    #     Chinese 拥有 ends, so a wider word grows to the left.
+    Patch(BAG_LEFT,
+          "    self.stc1:setColor(g_colorManager.C3_WHITE);\n",
+          "    self.stc1:setColor(g_colorManager.C3_WHITE);\n"
+          "    self.stc1:setAnchorPoint(ccp(1, 0.5)); self.stc1:setPositionX(206);\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

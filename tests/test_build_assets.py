@@ -16,6 +16,8 @@ TOUCHED = (
     "scripts/upgrade/upgrade.lua",
     BATTLE_FACTORY,
     "scripts/app/game/utils/MMGUICreator.lua",
+    "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua",
+    "scripts/app/game/view/ui/bag/BagLeftPanel.lua",
 )
 
 
@@ -319,3 +321,20 @@ def test_english_overlay_without_writer_output_fails_loudly(tmp_path: Path) -> N
 
     with pytest.raises(FileNotFoundError, match="localise.write"):
         overlay_english(tmp_path / "missing", tmp_path / "assets")
+
+
+def test_patch_13_places_hero_values_after_their_labels(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    panel = (assets / "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua").read_text(
+        encoding="utf-8"
+    )
+    for x, y, i in ((420, 480, 4), (420, 440, 3), (475, 400, 2), (475, 360, 1)):
+        assert f"math.max({x}, 364 + self.descLabel[{i}]:getContentSize().width)" in panel
+    # the labels exist before the values that measure them
+    assert panel.index("self.descLabel[i] = stcTfd") < panel.index("math.max(420")
+
+
+def test_patch_14_right_anchors_the_bag_owned_label(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    bag = (assets / "scripts/app/game/view/ui/bag/BagLeftPanel.lua").read_text(encoding="utf-8")
+    assert "self.stc1:setAnchorPoint(ccp(1, 0.5)); self.stc1:setPositionX(206);" in bag
