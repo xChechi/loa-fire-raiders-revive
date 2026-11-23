@@ -66,8 +66,8 @@ def test_english_wraps_on_spaces_not_inside_words():
         'local l = CCLabelTTF:create("Tap here to summon an Angel", "f", 20, {width = 120, height = 200})\n'
         "io.write(l.text)"
     )
-    # 10 px per char, limit 114 px: "Tap here to" (110) | "summon an" | "Angel"
-    assert out == "Tap here to\nsummon an\nAngel"
+    # 10 px per char, limit 103.2 px: "Tap here" | "to summon" | "an Angel"
+    assert out == "Tap here\nto summon\nan Angel"
 
 
 def test_chinese_is_left_to_the_engine():
@@ -83,8 +83,8 @@ def test_a_word_wider_than_the_area_shrinks_the_font():
         'local l = CCLabelTTF:create("Breakthrough", "f", 24, {width = 100, height = 40})\n'
         "io.write(l.text, ' ', l.fs)"
     )
-    # 12 chars * 12 px = 144 px at 24; limit 95 px -> floor(24 * 95 / 144) = 15
-    assert out == "Breakthrough 15"
+    # one-line box (40 < 1.8 * 24): 144 px at 24 onto 86 px -> floor(24 * 86 / 144) = 14
+    assert out == "Breakthrough 14"
 
 
 def test_a_tall_narrow_tab_is_turned_sideways():
@@ -124,8 +124,8 @@ def test_set_string_rewraps_from_the_original_size():
         'l:setString("Short one")\n'
         "io.write(a, ' ', l.fs, ' ', l.text)"
     )
-    # "Breakthroughs" (130 px) > 114 px -> 17; the next text starts again from 20
-    assert out == "17 20 Short one"
+    # "Breakthroughs" (130 px) > 103.2 px -> 15; the next text starts again from 20
+    assert out == "15 20 Short one"
 
 
 def test_label_widget_wraps_once_the_area_is_known():

@@ -158,8 +158,17 @@ do
         text = text:gsub("\\n", "\n")
         font = (font and font ~= "") and font or DEFAULT_TEXT_FONT
         size = math.floor(tonumber(size) or DEFAULT_TEXT_SIZE or 20)
-        local limit = maxw * 0.95
+        -- The engine's own line breaking kicks in a little before our
+        -- measurement says the line is full (stroke, kerning): on the AVD a
+        -- line measured at 95% was broken again inside "her|oes".
+        local limit = maxw * 0.86
         local s = size
+        -- A box only one line tall: shrink the whole text onto one line.
+        if maxh and maxh > 0 and maxh < 1.8 * lineHeight(font, s) and not text:find("\n") then
+            local w = width(text, font, s)
+            if w > limit then s = math.max(MIN_SIZE, math.floor(s * limit / w)) end
+            return text, s
+        end
         local longest = 0
         for word in text:gmatch("%S+") do
             local ww = width(word, font, s)
