@@ -443,11 +443,17 @@ PATCHES: tuple[Patch, ...] = (
     #     sideways; "Breakthrough" does not fit 80 even at the minimum size,
     #     so the engine breaks it ("Breakthro|ugh"), and f00380 "Awakening "
     #     carries a trailing space that wraps too. 96 long (the tabs are 110
-    #     apart) and trimmed.
+    #     apart) and trimmed. On the AVD the engine still broke "Breakthrou|gh"
+    #     (the stroke makes the line wider than measured) and the left-aligned
+    #     "Skills" sat at the box end, under the selected Equip tab. Once the
+    #     fit has picked the size, the box is dropped: one line, never wrapped,
+    #     centred on the tab by its anchor, 12 lower than the stock centre so
+    #     the selected tab above does not cover its first letter.
     Patch("scripts/app/game/view/ui/RoleUI.lua",
           "createMMLabel(tempTabTxtAry[k], 24, ccp(-19, -3), CCSize(33, 80), ui.TEXT_ALIGN_LEFT, true);",
-          'createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
-          "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);"),
+          'createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -15), '
+          "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true); "
+          "tabTfd1:setDimensions(CCSize(0, 0));"),
     # 20. NewGuideTalkPanel: the princess's line is fitted to a 300 x 120 box,
     #     but the engine's own wrap adds a line, and the vertically centred
     #     text then runs below the bubble. Fit to 100 high instead, centred on

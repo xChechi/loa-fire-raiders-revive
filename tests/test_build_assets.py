@@ -416,8 +416,9 @@ def test_patch_19_gives_the_hero_side_tabs_a_longer_trimmed_label(assets: Path) 
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     ui = (assets / "scripts/app/game/view/ui/RoleUI.lua").read_text(encoding="utf-8")
     assert "CCSize(33, 80)" not in ui
-    assert ('createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
-            "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);") in ui
+    assert ('createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -15), '
+            "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true); "
+            "tabTfd1:setDimensions(CCSize(0, 0));") in ui
 
 
 def test_patch_20_keeps_the_guide_talk_inside_its_bubble(assets: Path) -> None:
