@@ -23,6 +23,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/RoleUI.lua",
     "scripts/app/game/manager/guide/NewGuideTalkPanel.lua",
     "scripts/app/game/view/ui/des/DesSweepPanel.lua",
+    "scripts/app/game/view/ui/roleListUI/RoleListRoleRender.lua",
 )
 
 
@@ -397,6 +398,19 @@ def test_patch_15_keeps_the_stage_story_above_the_drops_panel(assets: Path) -> N
     assert ("local desc = g_cocoGUI_creator:add_txt_mm(26, self.levelInfo.description, "
             "163 - 15, 280, self.widgetBg, cc.size(500, 110),") in des
     assert des.index("cc.size(500, 110),") < des.index("desc:setDimensions(cc.size(500, 140))")
+
+
+def test_patch_23_shrinks_long_hero_list_names_to_end_before_the_class_badge(
+    assets: Path,
+) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    render = (assets / "scripts/app/game/view/ui/roleListUI/RoleListRoleRender.lua").read_text(
+        encoding="utf-8"
+    )
+    fit = ("local w = self.nameTfd:getContentSize().width; "
+           "self.nameTfd:setScale(w > 142 and 142 / w or 1)")
+    assert render.count(fit) == 1
+    assert render.index("self.nameTfd:setString(tempHeroName);") < render.index(fit)
 
 
 def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:

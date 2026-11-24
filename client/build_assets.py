@@ -491,6 +491,15 @@ PATCHES: tuple[Patch, ...] = (
           "  local txt_node, txt_w = g_gameUI_Tools:createContentNode(txtTable)\n"
           "  txt_node:setPosition(ccp(-228 - 50, 0))\n"
           "  if txt_w and txt_w > 430 then txt_node:setScale(430 / txt_w) end\n"),
+    # 23. RoleListRoleRender: the hero name is centred 35 right of the centre
+    #     of the 248-wide class strip, whose badge ends 38 left of it;
+    #     "Earthshaker Colossus" ran over the badge. Scale a name wider than
+    #     142 down, so it stays clear of the badge on the left.
+    Patch("scripts/app/game/view/ui/roleListUI/RoleListRoleRender.lua",
+          "    self.nameTfd:setString(tempHeroName);\n",
+          "    self.nameTfd:setString(tempHeroName);\n"
+          "    local w = self.nameTfd:getContentSize().width; "
+          "self.nameTfd:setScale(w > 142 and 142 / w or 1)\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
