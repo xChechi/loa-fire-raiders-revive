@@ -343,6 +343,28 @@ def test_english_overlay_ships_the_redrawn_images_over_the_stock_ones(tmp_path: 
     assert (assets / "res/assets/ui/other.png").read_bytes() == b"stock png"
 
 
+def test_english_overlay_ships_the_english_story_scripts(tmp_path: Path) -> None:
+    from client.build_assets import overlay_english
+
+    assets = tmp_path / "assets"
+    (assets / "res/language").mkdir(parents=True)
+    (assets / "res/data/split").mkdir(parents=True)
+    (assets / "res/assets/story").mkdir(parents=True)
+    (assets / "res/assets/story/Story_1001.lua").write_text("cn story", encoding="utf-8")
+    (assets / "res/assets/story/Story_2001.lua").write_bytes(b"gbk story")
+    en = tmp_path / "en"
+    (en / "assets/res/language").mkdir(parents=True)
+    (en / "assets/res/data/split").mkdir(parents=True)
+    (en / "assets/res/language/Language_en.lua").write_text("en", encoding="utf-8")
+    (en / "assets/res/language/Language_start_en.lua").write_text("en", encoding="utf-8")
+    (en / "assets/res/assets/story").mkdir(parents=True)
+    (en / "assets/res/assets/story/Story_1001.lua").write_text("en story", encoding="utf-8")
+
+    assert overlay_english(en, assets) == 3
+    assert (assets / "res/assets/story/Story_1001.lua").read_text(encoding="utf-8") == "en story"
+    assert (assets / "res/assets/story/Story_2001.lua").read_bytes() == b"gbk story"
+
+
 def test_english_overlay_without_writer_output_fails_loudly(tmp_path: Path) -> None:
     from client.build_assets import overlay_english
 

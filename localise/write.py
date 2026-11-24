@@ -5,6 +5,8 @@ Output (git-ignored), a mirror of the stock layout:
   data/en/assets/res/language/Language_start_en.lua  (from Language_start_cn.lua)
   data/en/assets/res/data/split/*.db                 (all 144 tables copied,
                                                       Chinese text cells replaced)
+  data/en/assets/scripts/**/*.lua                    (hard-coded UI text)
+  data/en/assets/res/assets/story/Story_*.lua        (story dialogue, speakers)
 
 Every Lua file keeps its keys, order, comments and line endings; only the
 string literals that hold Chinese are replaced (as double-quoted literals).
@@ -39,6 +41,7 @@ from localise.extract import (
     unmask,
 )
 from localise.scripts import iter_script_strings
+from localise.story import iter_story_strings
 from localise.translate import CACHE, category, cached, open_cache
 from server.settings import load as load_settings
 
@@ -304,6 +307,33 @@ def write_scripts(stock: Path, out: Path, render: Renderer) -> tuple[int, int, i
     return files, done, left
 
 
+def write_story(stock: Path, out: Path, render: Renderer) -> tuple[int, int, int]:
+    """English copies of the story scripts (localise.story), same file names.
+    Returns (files written, literals replaced, literals left)."""
+    by_file: dict[str, list] = {}
+    for s in iter_story_strings(stock):
+        by_file.setdefault(s.relpath, []).append(s)
+    files = done = left = 0
+    for rel, strings in sorted(by_file.items()):
+        raw = (stock / rel).read_bytes().decode("utf-8")
+        parts, pos = [], 0
+        for s in strings:
+            en = render(s.value)
+            if en is None:
+                left += 1
+                continue
+            parts.append(raw[pos : s.start])
+            parts.append(lua_quote(en))
+            pos = s.end
+            done += 1
+        parts.append(raw[pos:])
+        dst = out / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes("".join(parts).encode("utf-8"))
+        files += 1
+    return files, done, left
+
+
 def lua_name(stock_name: str) -> str:
     return stock_name.replace("_cn.lua", "_en.lua")
 
@@ -319,6 +349,8 @@ def write_all(stock: Path, out: Path = EN_DIR, effort: str = "medium",
         print(f"{lua_name(name)}: {done} strings in English, {left} left")
     files, done, left = write_scripts(stock, out, render)
     print(f"scripts: {files} files, {done} literals in English, {left} left")
+    files, done, left = write_story(stock, out, render)
+    print(f"story: {files} files, {done} literals in English, {left} left")
     total_done = total_left = 0
     for src in sorted((stock / SPLIT).glob("*.db")):
         done, left = write_db(src, out / SPLIT / src.name, render)

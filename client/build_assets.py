@@ -545,14 +545,16 @@ def overlay_english(english: Path, dest_assets: Path) -> int:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(lua, dst)
         n += 1
-    # Images whose baked-in Chinese text was re-drawn (localise.images),
-    # same relative path as the stock file they replace.
+    # Images whose baked-in Chinese text was re-drawn (localise.images) and
+    # the story scripts with English dialogue (localise.story), same relative
+    # path as the stock file they replace.
     images = Path(english) / "assets/res/assets"
-    for png in sorted(images.rglob("*.png")) if images.is_dir() else []:
-        dst = dest_assets / "res/assets" / png.relative_to(images)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(png, dst)
-        n += 1
+    for pattern in ("*.png", "*.lua"):
+        for f in sorted(images.rglob(pattern)) if images.is_dir() else []:
+            dst = dest_assets / "res/assets" / f.relative_to(images)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dst)
+            n += 1
     return n
 
 

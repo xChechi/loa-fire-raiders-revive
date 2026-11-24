@@ -413,6 +413,8 @@ _OTHER_COLS = re.compile(
 
 
 def category(t: Template) -> str | None:
+    if t.sources == {"story"}:
+        return "story speaker name" if t.columns == {"story.name"} else "story dialogue"
     if "ui" in t.sources or "script" in t.sources:
         return "UI string"
     if "server" in t.sources:
@@ -546,6 +548,31 @@ def full_plan(templates: dict[str, Template]):
     return first, names, texts
 
 
+# Glossary kinds whose names a story line must carry verbatim: heroes, angels
+# and places (stage and chapter names). NPC and item names are left free, many
+# are plain words in a sentence (骷髅 skeleton, 村民 villager).
+STORY_PIN_KINDS = {"hero", "angel", "stage"}
+# Glossary names the story uses as plain words (checked 24-11-2026): "my
+# rebirth cross", "caught you, intruder", "he is in my lamp".
+STORY_PIN_SKIP = {"重生", "入侵者", "神灯"}
+
+
+def story_pins(templates, glossary: dict[str, str], kinds: dict[str, str]) -> dict:
+    """template -> sorted [(zh, en)] of the hero/angel/place names it contains,
+    except a name that only occurs inside a longer glossary name in it."""
+    names = [zh for zh in glossary
+             if kinds.get(zh) in STORY_PIN_KINDS and len(zh) >= 2 and "#" not in zh
+             and zh not in STORY_PIN_SKIP]
+    longer = [g for g in glossary if len(g) >= 3 and "#" not in g]
+    out = {}
+    for tpl in templates:
+        hits = [zh for zh in names
+                if zh in tpl and not any(zh != o and zh in o and o in tpl for o in longer)]
+        if hits:
+            out[tpl] = sorted((zh, glossary[zh]) for zh in hits)
+    return out
+
+
 def glossary_from(db, effort: str, items: list[Item]) -> list[tuple[str, str]]:
     done = cached(db, effort)
     return sorted((it.template, done[it.template]) for it in items if it.template in done)
@@ -574,6 +601,13 @@ def run_full(effort: str, stock: Path, budget_stop: float, max_seconds: float) -
             continue
         glossary = gl()
         print(f"  glossary entries: {len(glossary)}")
+        # Story lines must use the glossary's hero/angel/place names verbatim.
+        pins = story_pins(
+            [it.template for it in todo if it.kind.startswith("story")],
+            dict(glossary), {it.template: it.kind for it in first + names},
+        )
+        if pins:
+            print(f"  story templates with pinned names: {len(pins)}")
         for batch in batches(todo):
             if time.monotonic() > t_end:
                 print("time slice used up; rerun to resume")
@@ -585,7 +619,7 @@ def run_full(effort: str, stock: Path, budget_stop: float, max_seconds: float) -
                     f"${budget_stop:.2f}"
                 )
                 return 4
-            translate_batch(client, db, batch, glossary, effort, "full", pass_)
+            translate_batch(client, db, batch, glossary, effort, "full", pass_, pins)
             after = spend(db)
             worst = max(worst, after - total)
             print(f"    running total ${after:.4f} (full run ${spend(db, 'full'):.4f})")

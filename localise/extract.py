@@ -177,7 +177,7 @@ def lua_string_spans(src: str) -> list[tuple[str, int, int, str]]:
 
 @dataclass
 class Entry:
-    source: str  # ui | server | config
+    source: str  # ui | server | config | script | story
     location: str  # e.g. lua:Language_cn.lua:all10104, db:item_info.item_info.name:17
     column: str  # lua file, or table.column
     text: str
@@ -237,6 +237,12 @@ def iter_entries(stock_dir: Path):
     for s in iter_script_strings(stock_dir):
         if s.verdict == "translate":
             yield Entry("script", f"lua:{s.relpath}:{s.line}", s.relpath, s.value)
+    # Fifth source: the story dialogue and speaker names (localise.story).
+    from localise.story import iter_story_strings
+
+    for s in iter_story_strings(stock_dir):
+        column = "story.name" if s.is_name else "story.talk"
+        yield Entry("story", f"lua:{s.relpath}:{s.line}", column, s.value)
 
 
 def build_templates(entries) -> dict[str, Template]:
@@ -269,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     entries = list(iter_entries(stock))
     templates = build_templates(entries)
     print(f"{'source':8} {'strings':>8} {'unique':>8} {'chars':>9} {'templates':>9}")
-    for source in ("ui", "server", "config", "script"):
+    for source in ("ui", "server", "config", "script", "story"):
         es = [e for e in entries if e.source == source]
         uniq = {e.text for e in es}
         tpls = {mask(t)[0] for t in uniq}
