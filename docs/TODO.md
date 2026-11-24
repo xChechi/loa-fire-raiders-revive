@@ -67,6 +67,14 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       It also carries what Plan B1 left out and run 6 ran into: the **angel step 10290**, the
       **chapter chest** sitting behind it, the equip chain 10180-10210 (which needs **hero level 2**,
       reached after stage 1-2), and the **HUD portrait card for the support NPC** as a cosmetic.
+      **Status 24-11-2026 (branch `plan-b2-wave1`, Phase A T1-T8 done, 473 tests; ACC-1 = run 7 in
+      `docs/dev-loop.md` section 7):** the guide now runs through the equip chain (10210), the angel
+      summon (10293), the angel line-up, Equip All with crafting (10313) and quality-up (10380) to
+      10390 with no wedge; relaunch and server restart keep gear and angel. Open from that run: the
+      **chapter chest** needs boss stage 10022 (the client counts only `once = 0` stages), which our
+      three heroes lose without the support NPC; one stock-client `LUA ERROR` in
+      `RoleEquipGetEquipPanel.lua:44` during the guided equip; the chat `11_2006` error (task B1).
+      Phase B and C not started. Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
 

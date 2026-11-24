@@ -532,6 +532,51 @@ Logs and frames kept: `C:/tmp/loa-server-b1-run6.err.log`, `...run6b.err.log` (p
 `logcat-run6-full.txt`, `tapper6.sh`, `shooter6.sh`, and the `r6-*` screenshots, listed in full in
 the Task 17e report in the SDD workspace.
 
+### Run 7 (Plan B2 ACC-1, 24-11-2026): tutorial path through the angel summon
+
+Same AVD `LOA_API30`, warm, the English APK installed 24-11-2026 11:39 (versionName 1.0.0.5);
+no client change in Plan B2, so no rebuild. Branch `plan-b2-wave1`, server HEAD `dcd8a44` (T1-T8
+plus the zero-stock fix). Fresh world: `data/player.db` **moved** to `data/player.db.pre-b2-acc1`.
+Server banner `24-11-2026 12:31:09 INFO loa.net listening on 0.0.0.0:8112`. Fights were driven
+with run 6's `tapper6.sh` (card row `667/901/1134/1368 x 901` plus wave point `1938 530`).
+
+**Outcome: the guide now runs from the first summon through 10160 → 10210 (equip) → 10290 →
+10293 (angel summon) → 10297 → angel fielded (10352) → 10310-10313 (Equip All with crafting) →
+10380 (quality-up) → 10390, with no wedge. Assertions 1-4, 6 and 7 pass. The chapter chest
+(assertion 5) was not reached: the client counts only `once = 0` stages, so it needs the boss
+stage 10022, which was lost twice without the support hero.**
+
+| # | Assertion | Result | Evidence |
+|---|---|---|---|
+| 1 | Hero list shows Lv.2 without a relaunch | **PASS** | After stage 1-1 (won 3 stars in 48 s, `12:37:28`), the hero list shows all three at **2**, Rose Knight's slot 1 marked Equippable (`02-hero-list-lv2-equippable-no-relaunch.jpg`, `03-...`, `05-...`). Run 6's `需求英雄等级:2` stop is gone. |
+| 2 | Guide 10180→10210 equips 10000 on Rose Knight slot 1 | **PASS** | `12:38:45 guide_id 10210 saved`, `12:38:45 loa.hero hero 100000 of player 1 equips 10000 in slot 0`; DB copy `heroes(100000).item0 = 10000`, bag 10000 2 → 1 (`04-hood-10000-equipped-slot1.jpg`). |
+| 3 | 10290→10293: summon 500000 opens `AngelSummonAlert`; `angels` row; stones 10 → 0 | **PASS** | `12:41:33 guide_id 10293 saved`, `12:41:33 loa.angel angel 500000 summoned by player 1 for 10x 500000`; DB copy `angels = (500000, level 1, exp 0, star 1)`, the 500000 `items` row gone (10 → 0, deleted by `dcd8a44`) (`06-angel-summon-alert.jpg`, `07-...`, `08-angels-collected-1-of-30.jpg`). |
+| 4 | Guide 10294→10297→10340→10352 (angel in line-up)→10370 | **PASS** | The angel panel opens and closes (`09-...`), the guide moves to the next stage (`10-...`), the line-up's Angel tab fields Idol Angel (`11-angel-fielded-in-lineup.jpg`). Only some of these steps save server-side, so the evidence is the screens. |
+| 5 | Stage 10012 3-starred; chapter-1 chest pays (`star_req0` 9, 5_2209) | **10012 PASS, chest NOT REACHED** | `12:44:24 stage 10012 finished ... 3 star(s), won=True` (`12-...`). The chest showed **6/9** after 10012 and still 6/9 after 10020 (3 stars, `12:47:09`): `LevelManager:getAllGotStar` sums only stages with `once == 0`, i.e. 10000, 10012 and **10022** (10010 and 10020 are `once = 1`). Boss 10022 was lost twice (`12:52:29`, `12:56:09`, 0 stars). `chapters` stays empty; no 5_2209 was sent (`13-...`, `21-...`, `22-...`, `23-...`). |
+| 6 | Threads 10310-10313, 10380, 10440-10451 | **10310-10313 PASS, 10380 PASS, 10440-10451 not triggered** | `12:48:21 guide_id 10310`, `12:48:47 10312`, `12:49:00 10313`, `12:49:00 loa.hero hero 100000 ... equips all: slots [1, 2, 3, 4, 5], 1600 gold` — the client's own preview said the same five items, two crafts, **1600 gold** (`16-...`); DB: six slots `10000, 11010, 11120, 11040, 11020, 11170`, gold 1,262,066 → 1,260,466. Then `12:49:13 guide_id 10380`, `raised to quality 20`; the success panel **appeared** (it needs the Res plus exactly one hero notify), green name, "skill awakening" Holy Sword of Light, slots cleared to the quality-20 set (`18-...`, `19-...`, `20-...`); `12:49:56 guide_id 10390`. |
+| 7 | Relaunch keeps gear and angel; server restart logs `login ok` with no `created character` | **PASS** | force-stop + relaunch: `12:58:37 login ok`, Idol Angel stands in the city, Mage's pendant 10030 and Ranger's hood stay in their slots, Rose Knight green (`24-...`, `25-...`). Server killed and restarted (`13:07:07` banner): `13:08:04 login ok, player id 1`, no `created character` (`26-...`). DB before/after the restart: `heroes`, `angels`, `items`, `levels`, `chapters` identical; `players` differs only in `energy` 48 → 49 and `energy_at` (the 360 s regen). |
+| 8 | `grep -cE "Traceback\|ERROR"` server = 0; logcat `LUA ERROR` = 0 | **server PASS (0); logcat FAIL (3)** | Server, both logs: **0**. Logcat (5 captures, 159,134 lines): `FATAL` 0, `FATAL EXCEPTION` 0, `LUA ERROR` **3**: 2 x the known `ChatRoom:1163` from `11_2006` on main-city login (Plan B2 task B1 fixes it), and 1 x `RoleEquipGetEquipPanel.lua:44 attempt to index field 'itemVo'` during the guided equip at 12:38:43. That listener reads `self.itemVo.entry` on every `INFO_CHANGE_NTF_ITEM` while the guide's panel has no `itemVo`; any server that pushes the bag decrement on equip trips it, so it is a stock-client quirk, not patched (no Lua change in this plan). |
+| 9 | Unanswered ids vs run 6 | **unchanged** | `11_2005`, `11_2009`, `5_2013`, `5_2039`, `5_2145`, `5_2623` — identical to runs 2 to 6. |
+
+Findings for the next tasks:
+
+- **Equip All on a shared material.** Jungle Ranger's quality-10 slot 0 wants 10000 and slot 1
+  crafts 10120 from 10000 + 10030. With one 10000 in the bag the client's preview offered both
+  (it checks each slot against the whole bag), the server equipped the hood and skipped the craft
+  (`12:54:23 ... equips all: slots [0], 0 gold`) because it validates the plan against one simulated
+  bag. No gold was charged for the skipped craft. Faithful to the bag; noted in case Stefan sees it.
+- **The angel in the fight.** `5_2327` still logs `WARNING loa.team ... asks for angel 500000 in the
+  angel slot; angels are not in Plan B1, the fight runs without it` (4 times). Plan settled point 7
+  says the client builds the angel unit itself; the result screens show the angel with EXP +21/+22.
+  The warning text is stale; `team.py` was not touched in this run.
+- **Power.** Hero power stays 3000 / 1000 with gear and quality (O1) and the angel shows Power 0 (O2),
+  as the plan's defaults say.
+
+Logs and DB copies (not in the repo): `C:/tmp/loa-acc1/server.log`, `server-restart.log`,
+`logcat-part1..5.txt`, `db-after-12.db`, `db-after-summon.db`, `db-pre-equipall.db`,
+`db-post-equipall.db`, `db-before-restart.db`, `db-after-restart.db`. Frames:
+`docs/screens/en-2026-11-24-acc1/01-...` to `27-...` (JPEG q85).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
