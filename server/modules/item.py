@@ -2,33 +2,48 @@
 
 Categories are the client's own constants (ClientPlayer.lua:146-186) and are the
 same numbers as drop_base.drop_type: 1 gold, 2 energy, 9 diamond, 11 player xp,
-12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel. The five this plan can
+12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel. The seven this server can
 actually apply are below; any other one raises, because a reward that silently
 shrinks is worse than a crash in a log Stefan reads.
 
 There is no ClientItem message in allProtos.pb: an owned item is a ClientStock
 (one row per item entry, `amount` absolute), which is what QueryMyselfRes
 carries in its repeated `inventory` field.
+
+A stock never passes item_info.stackable; what does not fit goes into one
+mail 99999 物品超限提醒 per call. A hero the player already owns arrives as
+HERO_DISCOUNT_STAR_{hero_info.star} of hero_info.item, the conversion the
+client itself shows (MMAwardDropItem.lua:70-97). An owned angel arrives as
+ANGEL_DISCOUNT_STAR_{star} of activation_item, both read off the angel's first
+angel_info row (MMAwardDropItem.lua:105-129), which is its star-1 row.
 """
 
 from __future__ import annotations
 
 import sqlite3
+import time
 
 from server import db
 from server.config import Config
+from server.modules import mail
 from server.net.registry import Registry
 from server.net.server import fill_required
 
 CATEGORY_GOLD = 1
 CATEGORY_ENERGY = 2
 CATEGORY_DIAMOND = 9
+CATEGORY_PLAYER_XP = 11
 CATEGORY_ITEM = 20
 CATEGORY_HERO = 30
+CATEGORY_ANGEL = 40
 
-KNOWN_CATEGORIES = frozenset(
-    {CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_ITEM, CATEGORY_HERO}
-)
+# mail_info 99999 物品超限提醒; its body has one "|" for the item names.
+OVERFLOW_MAIL = 99999
+
+KNOWN_CATEGORIES = frozenset({
+    CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_PLAYER_XP,
+    CATEGORY_ITEM, CATEGORY_HERO, CATEGORY_ANGEL,
+})
 
 
 def build_client_stock(registry: Registry, row: sqlite3.Row, index: int):
@@ -68,8 +83,41 @@ def _checked(cfg: Config, prizes) -> list[tuple[int, int, int]]:
             raise KeyError(f"item_info has no row for item {refer}")
         if category == CATEGORY_HERO and not cfg.hero_qualities(refer):
             raise KeyError(f"hero_quality has no row for hero {refer}")
+        if category == CATEGORY_HERO:
+            _hero_stones(cfg, refer)
+        if category == CATEGORY_ANGEL:
+            _angel_stones(cfg, refer)
         out.append((category, refer, amount))
     return out
+
+
+def _angel_stones(cfg: Config, angel: int) -> tuple[int, int]:
+    """(activation item, count) a duplicate of this angel turns into. Only an
+    angel with a summonable star-1 row can be granted at all."""
+    info = cfg.angel_by_star(angel, 1)
+    if info is None:
+        raise ValueError(f"angel {angel} has no summonable star-1 row in angel_info")
+    key = f"ANGEL_DISCOUNT_STAR_{int(info['star'])}"
+    if cfg.variable(key) in (None, ""):
+        raise KeyError(f"variables.{key} is missing (angel {angel})")
+    stone = int(info["activation_item"])
+    if cfg.item(stone) is None:
+        raise KeyError(f"item_info has no row for item {stone} (angel {angel})")
+    return stone, cfg.variable_int(key, 0)
+
+
+def _hero_stones(cfg: Config, hero: int) -> tuple[int, int]:
+    """(soul stone item, count) a duplicate of this hero turns into."""
+    info = cfg.hero(hero)
+    if info is None:
+        raise KeyError(f"hero_info has no row for hero {hero}")
+    key = f"HERO_DISCOUNT_STAR_{int(info['star'])}"
+    if cfg.variable(key) in (None, ""):
+        raise KeyError(f"variables.{key} is missing (hero {hero})")
+    stone = int(info["item"])
+    if cfg.item(stone) is None:
+        raise KeyError(f"item_info has no row for item {stone} (hero {hero})")
+    return stone, cfg.variable_int(key, 0)
 
 
 def grant_prizes(
@@ -79,11 +127,30 @@ def grant_prizes(
 
     The return value is what both the persistence and the client notification
     need: the new absolute gold, diamond and energy, the new absolute amount of
-    every item touched, and the row id of every hero created.
+    every item touched, the row id of every hero created, and the id of the
+    overflow mail if one was sent (the caller queues notify.mail_arrived).
+    `xp` is db.add_player_xp's before/after/levelled over the whole call, or
+    None without player xp; `angels` lists the angel entries granted.
     """
     out: dict = {
         "gold": 0, "diamond": 0, "energy": 0, "items": [], "heroes": [],
+        "mails": [], "xp": None, "angels": [],
     }
+    overflow: dict[int, int] = {}
+
+    def _item(refer: int, amount: int) -> None:
+        row = conn.execute(
+            "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+            (int(player_id), refer),
+        ).fetchone()
+        have = int(row["amount"]) if row else 0
+        cap = int(cfg.item(refer)["stackable"] or 0)
+        give = amount if cap <= 0 else max(0, min(amount, cap - have))
+        if amount > give:
+            overflow[refer] = overflow.get(refer, 0) + amount - give
+        if give:
+            out["items"].append((refer, db.grant_item(conn, player_id, refer, give)))
+
     for category, refer, amount in _checked(cfg, prizes):
         if category == CATEGORY_GOLD:
             conn.execute(
@@ -98,16 +165,49 @@ def grant_prizes(
         elif category == CATEGORY_ENERGY:
             db.add_energy(conn, cfg, player_id, amount)
         elif category == CATEGORY_ITEM:
-            out["items"].append((refer, db.grant_item(conn, player_id, refer, amount)))
+            _item(refer, amount)
+        elif category == CATEGORY_PLAYER_XP:
+            change = db.add_player_xp(conn, cfg, player_id, amount)
+            if out["xp"] is not None:
+                change["before"] = out["xp"]["before"]
+                change["levelled"] = change["after"][0] != change["before"][0]
+            out["xp"] = change
+        elif category == CATEGORY_ANGEL:
+            for _ in range(max(1, amount)):
+                owned = conn.execute(
+                    "SELECT 1 FROM angels WHERE player_id = ? AND angel_entry = ?",
+                    (int(player_id), refer),
+                ).fetchone()
+                if owned:
+                    _item(*_angel_stones(cfg, refer))
+                else:
+                    # angel.summon starts an angel at its star-1 min_level too.
+                    level = int(cfg.angel_by_star(refer, 1)["min_level"] or 1)
+                    db.grant_angel(conn, player_id, refer, level=level, star=1)
+                    out["angels"].append(refer)
         else:
             # The lowest hero_quality row is the one a summon starts at, and
             # hero.quality_row_for reads the same row back on the way out.
             quality = int(cfg.hero_qualities(refer)[0]["quality"])
             for _ in range(max(1, amount)):
-                out["heroes"].append(
-                    db.grant_hero(conn, player_id, refer, quality)
-                )
+                owned = conn.execute(
+                    "SELECT 1 FROM heroes WHERE player_id = ? AND entry = ?",
+                    (int(player_id), refer),
+                ).fetchone()
+                if owned:
+                    _item(*_hero_stones(cfg, refer))
+                else:
+                    out["heroes"].append(
+                        db.grant_hero(conn, player_id, refer, quality)
+                    )
     conn.commit()
+    if overflow:
+        names = ", ".join(str(cfg.item(r)["name"]) for r in overflow)
+        out["mails"].append(mail.deliver(
+            conn, cfg, player_id, OVERFLOW_MAIL,
+            [(CATEGORY_ITEM, r, n) for r, n in overflow.items()],
+            int(time.time()), body=names,
+        ))
     row = conn.execute(
         "SELECT * FROM players WHERE id = ?", (int(player_id),)
     ).fetchone()
