@@ -17,7 +17,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import drops, item, notify
+from server.modules import drops, hero, item, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -276,6 +276,19 @@ def handlers(
                     registry, session,
                     (before[0], before[2], before[3]), (after[0], after[2], after[3]),
                 )
+            # BattleFactoryLevel:toExpInfo only feeds the end screen, so the
+            # client's ClientHero keeps its old level until one ident-2 notify
+            # per hero that gained xp says otherwise (plan B2 settled point 2a).
+            if int(stage["unit_xp"] or 0) > 0:
+                for entry, _hlevel, _hxp in hero_xp:
+                    hero_row = conn.execute(
+                        "SELECT * FROM heroes WHERE player_id = ? AND entry = ?"
+                        " ORDER BY id", (player_id, entry),
+                    ).fetchone()
+                    notify.hero_changed(
+                        registry, session, entry,
+                        hero.hero_notify_fields(registry, cfg, hero_row),
+                    )
         log.info(
             "stage %d finished by player %d with %d star(s), won=%s", lvl, player_id,
             star, won,

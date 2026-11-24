@@ -509,3 +509,70 @@ def test_a_fight_with_the_support_hero_pays_xp_to_the_owned_heroes_only(
         "SELECT COUNT(*) FROM heroes WHERE player_id = ? AND entry = 1103009", (pid,)
     ).fetchone()[0] == 0
     res.SerializeToString()
+
+
+# --- Wave 1 T4b: the stage result updates the client's heroes ----------------
+# BattleFactoryLevel:toExpInfo only feeds the end screen, so without an ident-2
+# notify ClientHero.level stays 1 until relaunch and item 10000
+# (required_level 2) cannot be equipped (plan settled point 2a).
+def _hero_notifies(session):
+    return [m for (s, c, m) in session.outbox if (s, c) == (5, 2008) and m.ident == 2]
+
+
+def test_level_out_pushes_hero_notify_for_each_hero_that_gained_xp(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    for entry in (100000, 101000, 102000):
+        grant_hero(conn, pid, entry, 10, star=1, level=1)
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.outbox.clear()
+    req = reg.message_class("LevelOutReq")(level=10000, star=3, angel=0)
+    # 1103009 is the support hero: not owned, so it gains nothing and gets no notify.
+    req.heroes.extend([100000, 101000, 102000, 1103009])
+    handlers[(5, 2203)](session, req)
+    notes = _hero_notifies(session)
+    assert sorted(m.refer for m in notes) == [100000, 101000, 102000]
+    for m in notes:
+        m.SerializeToString()
+
+
+def test_level_out_hero_notify_carries_new_level_2(reg, cfg, world) -> None:
+    """Stage 10000 pays unit_xp 20 and xp_for_level(1).hero_xp_for_next_level
+    is 20, so three level-1 heroes reach level 2 with 0 xp left."""
+    from server.modules.notify import HERO_FIELDS
+
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    for entry in (100000, 101000, 102000):
+        grant_hero(conn, pid, entry, 10, star=1, level=1)
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.outbox.clear()
+    req = reg.message_class("LevelOutReq")(level=10000, star=3, angel=0)
+    req.heroes.extend([100000, 101000, 102000])
+    handlers[(5, 2203)](session, req)
+    notes = _hero_notifies(session)
+    assert len(notes) == 3
+    for m in notes:
+        assert m.flags & (1 << HERO_FIELDS.index("level"))
+        assert m.flags & (1 << HERO_FIELDS.index("xp"))
+        assert m.flags & (1 << HERO_FIELDS.index("item0"))
+        names = [n for i, n in enumerate(HERO_FIELDS) if m.flags & (1 << i)]
+        values = dict(zip(names, m.data))
+        assert values["level"] == 2.0
+        assert values["xp"] == 0.0
+        assert values["max_level"] == 2.0
+    # The notifies follow the stage's own player/item pushes, after the Res.
+    idents = [m.ident for (s, c, m) in session.outbox if (s, c) == (5, 2008)]
+    assert idents[-3:] == [2, 2, 2]
+
+
+def test_lost_fight_pushes_no_hero_notify(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.outbox.clear()
+    req = reg.message_class("LevelOutReq")(level=10000, star=0, angel=0)
+    req.heroes.append(100000)
+    handlers[(5, 2203)](session, req)
+    assert _hero_notifies(session) == []
