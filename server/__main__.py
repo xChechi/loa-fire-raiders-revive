@@ -9,7 +9,10 @@ from pathlib import Path
 
 from server import db
 from server.config import Config
-from server.modules import angel, gacha, guide, hero, level, login, player, team
+from server.modules import (
+    activity, angel, bag, buy, chat, checkin, gacha, guide, hero, level, login,
+    mail, player, shop, team,
+)
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import load
@@ -65,6 +68,13 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers.update(team.handlers(registry, settings, conn, cfg))
     handlers.update(angel.handlers(registry, settings, conn, cfg))
     handlers.update(hero.handlers(registry, settings, conn, cfg))
+    handlers.update(chat.handlers(registry, settings, conn, cfg))
+    handlers.update(checkin.handlers(registry, settings, conn, cfg))
+    handlers.update(mail.handlers(registry, settings, conn, cfg))
+    handlers.update(buy.handlers(registry, settings, conn, cfg))
+    handlers.update(shop.handlers(registry, settings, conn, cfg))
+    handlers.update(bag.handlers(registry, settings, conn, cfg))
+    handlers.update(activity.handlers(registry, settings, conn, cfg))
     return handlers
 
 

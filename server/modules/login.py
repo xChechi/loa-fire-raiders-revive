@@ -6,10 +6,11 @@ import logging
 import random
 import sqlite3
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 from server import db
 from server.config import Config
+from server.modules import activity, checkin
 from server.net.registry import Registry
 from server.net.server import Handler, Session
 from server.settings import Settings
@@ -97,12 +98,19 @@ def handlers(
         )
 
     def _session_fields(cls_name: str, status: int, token: str):
+        # Both Res carry the function blacklist; LoginSocketData reads it from
+        # either (loginReceiveHdr :297-298, registerReceiveHdr :354-355).
+        blacklist_cls = registry.message_class("ClientFunctionBlackList")
         return registry.message_class(cls_name)(
             status=status,
             token=token,
             session=random.randrange(1, 2**31),
             time_zone_offset=_tz_offset_seconds(),
             timestamp=int(time.time()),
+            blacklist=[
+                blacklist_cls(entry=entry, disabled=disabled)
+                for entry, disabled in activity.blacklist_entries(cfg)
+            ],
         )
 
     def _player_id(sent_username: str) -> int:
@@ -137,11 +145,13 @@ def handlers(
         # STATUS_NO_ROLE never reaches the client's gate, so the server creates
         # the character itself rather than wait for a 3_2003 that never comes.
         session.player_id = _player_id(req.username)
+        checkin.record_login(conn, cfg, session.player_id, date.today().isoformat())
         log.info("login ok, player id %d", session.player_id)
         return _session_fields("LoginRes", STATUS_OK, req.token)
 
     def gameplay(session: Session, req):
         session.player_id = _player_id(req.username)
+        checkin.record_login(conn, cfg, session.player_id, date.today().isoformat())
         return _session_fields("GameplayRes", STATUS_OK, req.token)
 
     def heartbeat(session: Session, req):

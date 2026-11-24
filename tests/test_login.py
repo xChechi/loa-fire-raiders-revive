@@ -319,3 +319,73 @@ def test_a_starting_kit_variable_the_config_lacks_fails_loudly(reg, settings) ->
     with pytest.raises(KeyError, match="HERO_GOLD_INIT"):
         login.starting_kit(cfg)
     cfg.close()
+
+
+# Every IMPL/ANS Req of the Wave 1 inventory (plan 2026-11-24, tables A-I),
+# except the achievements of table H, which E1 adds.
+WAVE1_IDS = [
+    (5, 2303), (5, 2305),
+    (5, 2105), (5, 2163), (5, 2109), (5, 2111), (5, 2725), (5, 2107), (5, 2127),
+    (5, 2139),
+    (5, 2137), (5, 2131), (5, 2933), (5, 2037),
+    (5, 2013), (5, 2145), (5, 2141), (5, 2147), (5, 2143), (5, 2129), (5, 2135),
+    (5, 2643), (5, 2649),
+    (5, 2015), (5, 2009), (5, 2023), (5, 2025), (5, 2585), (5, 2043),
+    (5, 2223), (5, 2225), (5, 2227),
+    (5, 2205), (5, 2207), (11, 2005), (11, 2009),
+]
+
+
+def test_build_handlers_covers_wave1_ids(reg, settings) -> None:
+    from server.__main__ import build_handlers
+    from server.modules import activity
+
+    handlers = build_handlers(reg, settings)
+    missing = [k for k in [*WAVE1_IDS, *activity.CLOSED_IDS] if k not in handlers]
+    assert missing == []
+
+
+def _login_once(reg, settings, cfg, cmd: int = 2001, name: str = "LoginReq"):
+    conn = connect(settings.db_path)
+    handlers = login.handlers(reg, settings, conn, cfg)
+    body = reg.message_class(name)(
+        username="stefan", token="local", datetime=1, args=["1"]
+    )
+    res = handlers[(3, cmd)](Session(writer=None, peer="t", bound_port=0), body)
+    return conn, res
+
+
+def test_login_records_login_day(reg, settings, cfg) -> None:
+    from datetime import date
+
+    conn, _ = _login_once(reg, settings, cfg)
+    row = find_player(conn, "stefan")
+    assert row["last_login_day"] == date.today().isoformat()
+    assert int(row["login_days"]) == 1
+    assert int(row["login_award"]) & 1 == 1  # day 1 claimable
+    assert row["daily_day"] == date.today().isoformat()
+
+    # a second login the same day counts nothing more
+    login.handlers(reg, settings, conn, cfg)[(3, 2001)](
+        Session(writer=None, peer="t", bound_port=0),
+        reg.message_class("LoginReq")(username="stefan", token="local"),
+    )
+    assert int(find_player(conn, "stefan")["login_days"]) == 1
+
+
+def test_gameplay_records_login_day(reg, settings, cfg) -> None:
+    from datetime import date
+
+    conn, _ = _login_once(reg, settings, cfg, 2003, "GameplayReq")
+    assert find_player(conn, "stefan")["last_login_day"] == date.today().isoformat()
+
+
+def test_login_res_carries_blacklist(reg, settings, cfg) -> None:
+    from server.modules import activity
+
+    expected = activity.blacklist_entries(cfg)
+    for cmd, name in ((2001, "LoginReq"), (2003, "GameplayReq")):
+        _, res = _login_once(reg, settings, cfg, cmd, name)
+        assert [(b.entry, b.disabled) for b in res.blacklist] == expected
+        assert 10410 not in {b.entry for b in res.blacklist}  # 7-day login visible
+        res.SerializeToString()
