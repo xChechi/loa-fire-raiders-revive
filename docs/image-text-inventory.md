@@ -31,7 +31,7 @@ and signs only, no Chinese. The 71 *num*.png atlases are digit strips.
 
 ## Stage 1 re-draw (24-11-2026)
 
-141 images are now re-drawn in English by `py -3.14 -m localise.images` from the reviewed table
+142 images are now re-drawn in English by `py -3.14 -m localise.images` from the reviewed table
 `localise/images.toml`, into `data/en/assets/res/assets` (shipped by `client.build_assets`).
 Before/after sheets: `docs/screens/en-images-stage1/`.
 
@@ -43,7 +43,7 @@ Before/after sheets: `docs/screens/en-images-stage1/`.
 | title words | 52 of 77 | 25 carry no text (empty ribbons, frames, bars, banners) or are already English (title_double "x2") |
 | stamps | 0 of 27 | none carries Chinese: icons, masks, NEW!, VIP11/12, 1-4 dice faces |
 | main city activity buttons (activityBtn, not in the name rules) | 28 of 29 | actBtn_3: 抢 inside a red-envelope badge, a different style; left for later |
-| seen on screen | 14 | 注销账号, 服务器 plate, 胜利, 联盟EXP, 联盟升级, 挑战, 总览 x3, 无/可/未装备, 可合成, 以下未激活 |
+| seen on screen | 15 | 战力: on the lineup (level_line_img_fight), 注销账号, 服务器 plate, 胜利, 联盟EXP, 联盟升级, 挑战, 总览 x3, 无/可/未装备, 可合成, 以下未激活 |
 
 Not in stage 1: hero and angel name images, chapter banners, logo/login art.
 

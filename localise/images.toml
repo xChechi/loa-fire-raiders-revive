@@ -1046,6 +1046,14 @@ en = "Not Activated"
 erase = [112, 0, 266, 25]
 text = [112, 1, 266, 24]
 
+[[image]]
+preset = "screen_text"
+path = "ui/level_line_img_fight.png"
+zh = "战力:"
+# lineup screen (LineFightPanel), before the team power digits
+en = "Power:"
+text = [1, 1, 55, 27]
+
 # --- main city activity buttons (ui/mainSceneImg/activityBtn) ---------------------
 # Same style as the mainBtn icons; not in the inventory's name rules, but on the
 # main city screen. actBtn_3 (抢 on a red badge) is handled separately below.
