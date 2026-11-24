@@ -227,3 +227,173 @@ def test_chapter_award_is_remembered(tmp_path) -> None:
     assert [(int(r["chapter"]), int(r["award"])) for r in chapters_of(conn, pid)] == [
         (10000, 1)
     ]
+
+
+def test_wave1_tables_exist(tmp_path) -> None:
+    conn = connect(tmp_path / "player.db")
+    names = {
+        row["name"]
+        for row in conn.execute("select name from sqlite_master where type='table'")
+    }
+    assert {"mails", "checkins", "events", "stores"} <= names
+    indexes = {
+        row["name"]
+        for row in conn.execute("select name from sqlite_master where type='index'")
+    }
+    assert "angels_player_entry" in indexes
+    players = {r["name"] for r in conn.execute("PRAGMA table_info(players)")}
+    assert {
+        "login_award", "login_days", "last_login_day", "daily_day",
+        "buy_energy_used", "buy_gold_used",
+    } <= players
+
+
+def test_hero_items_default_to_six_zeros(tmp_path) -> None:
+    from server.db import grant_hero, heroes_of, set_hero_items
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    hid = grant_hero(conn, pid, 100000, quality=10)
+    row = heroes_of(conn, pid)[0]
+    assert [int(row[f"item{i}"]) for i in range(6)] == [0] * 6
+    set_hero_items(conn, hid, [10000, 0, 0, 0, 0, 11170])
+    row = heroes_of(conn, pid)[0]
+    assert [int(row[f"item{i}"]) for i in range(6)] == [10000, 0, 0, 0, 0, 11170]
+
+
+def test_b1_world_migrates_without_loss(tmp_path) -> None:
+    """A B1 player.db (Plan A players + a heroes row with quality) opens, keeps
+    its rows, and the Wave 1 columns read their defaults."""
+    import sqlite3
+
+    from server.db import PLAN_A_SCHEMA_PROBE, heroes_of
+
+    path = tmp_path / "player.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(PLAN_A_SCHEMA_PROBE)
+    raw.executescript(
+        "CREATE TABLE heroes (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " player_id INTEGER NOT NULL REFERENCES players(id), entry INTEGER NOT NULL,"
+        " star INTEGER NOT NULL DEFAULT 1, level INTEGER NOT NULL DEFAULT 1,"
+        " xp INTEGER NOT NULL DEFAULT 0, quality INTEGER NOT NULL DEFAULT 0);"
+    )
+    raw.execute(
+        "INSERT INTO players (username, nickname, level, xp, gold, diamond, vip,"
+        " energy, max_energy, avatar, guide_id, created_at)"
+        " VALUES ('stefan', 'Stefan', 2, 15, 900, 30, 0, 50, 62, 1, 10180,"
+        " '2026-11-24T08:00:00+00:00')"
+    )
+    raw.execute(
+        "INSERT INTO heroes (player_id, entry, star, level, xp, quality)"
+        " VALUES (1, 100000, 2, 3, 40, 10)"
+    )
+    raw.commit()
+    raw.close()
+
+    conn = connect(path)
+    row = find_player(conn, "stefan")
+    assert (row["nickname"], row["level"], row["xp"], row["gold"]) == (
+        "Stefan", 2, 15, 900
+    )
+    assert int(row["guide_id"]) == 10180
+    for column in ("login_award", "login_days", "buy_energy_used", "buy_gold_used"):
+        assert int(row[column]) == 0
+    assert row["last_login_day"] == ""
+    assert row["daily_day"] == ""
+    hero = heroes_of(conn, int(row["id"]))[0]
+    assert (hero["entry"], hero["star"], hero["level"], hero["xp"], hero["quality"]) == (
+        100000, 2, 3, 40, 10
+    )
+    assert [int(hero[f"item{i}"]) for i in range(6)] == [0] * 6
+
+
+def test_stage3_fresh_char_world_opens(tmp_path) -> None:
+    """Every kept world must still load. A COPY is opened, never the original."""
+    import shutil
+
+    import pytest
+
+    src = Path("data") / "player.db.stage3-fresh-char"
+    if not src.exists():
+        pytest.skip("data/player.db.stage3-fresh-char is not in this tree")
+    copy = tmp_path / "player.db"
+    shutil.copy2(src, copy)
+    conn = connect(copy)
+    assert conn.execute("SELECT COUNT(*) FROM players").fetchone()[0] >= 1
+    conn.close()
+
+
+def test_take_item_refuses_more_than_owned_and_writes_nothing(tmp_path) -> None:
+    import pytest
+
+    from server.db import grant_item, items_of, take_item
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_item(conn, pid, 500000, 10)
+    with pytest.raises(ValueError):
+        take_item(conn, pid, 500000, 11)
+    with pytest.raises(ValueError):
+        take_item(conn, pid, 10000, 1)          # never owned
+    assert {int(r["entry"]): int(r["amount"]) for r in items_of(conn, pid)} == {
+        500000: 10
+    }
+    assert take_item(conn, pid, 500000, 4) == 6
+    assert take_item(conn, pid, 500000, 6) == 0
+
+
+def test_spend_refuses_and_writes_nothing(tmp_path) -> None:
+    import pytest
+
+    from server.db import spend
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0, gold=1000, diamond=20)
+    with pytest.raises(ValueError):
+        spend(conn, pid, gold=500, diamond=21)   # diamond short: gold not taken
+    with pytest.raises(ValueError):
+        spend(conn, pid, gold=1001)
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["diamond"])) == (1000, 20)
+    spend(conn, pid, gold=400, diamond=5)
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["diamond"])) == (600, 15)
+
+
+def test_ensure_today_resets_daily_counters_once(tmp_path) -> None:
+    from server.db import ensure_today
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute(
+        "UPDATE players SET buy_energy_used = 2, buy_gold_used = 3,"
+        " daily_day = '2026-11-23' WHERE id = ?", (pid,)
+    )
+    conn.commit()
+    ensure_today(conn, pid, "2026-11-24")
+    row = find_player(conn, "stefan")
+    assert (int(row["buy_energy_used"]), int(row["buy_gold_used"])) == (0, 0)
+    assert row["daily_day"] == "2026-11-24"
+    # A purchase later the same day is not wiped by a second call.
+    conn.execute("UPDATE players SET buy_energy_used = 1 WHERE id = ?", (pid,))
+    conn.commit()
+    ensure_today(conn, pid, "2026-11-24")
+    assert int(find_player(conn, "stefan")["buy_energy_used"]) == 1
+
+
+def test_angels_unique_per_player_entry(tmp_path) -> None:
+    import sqlite3
+
+    import pytest
+
+    from server.db import angels_of, grant_angel
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    aid = grant_angel(conn, pid, 500000, level=1, star=1)
+    rows = angels_of(conn, pid)
+    assert [(int(r["id"]), int(r["angel_entry"]), int(r["level"]), int(r["star"]))
+            for r in rows] == [(aid, 500000, 1, 1)]
+    with pytest.raises(sqlite3.IntegrityError):
+        grant_angel(conn, pid, 500000, level=1, star=1)
+    assert len(angels_of(conn, pid)) == 1

@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS angels (
     exp         INTEGER NOT NULL DEFAULT 0,
     star        INTEGER NOT NULL DEFAULT 1
 );
+-- One angel per entry: AngelManager keys its roster by angel_entry.
+CREATE UNIQUE INDEX IF NOT EXISTS angels_player_entry ON angels(player_id, angel_entry);
 CREATE TABLE IF NOT EXISTS items (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     player_id INTEGER NOT NULL REFERENCES players(id),
@@ -73,6 +75,47 @@ CREATE TABLE IF NOT EXISTS chapters (
     chapter   INTEGER NOT NULL,
     award     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (player_id, chapter)
+);
+-- Wave 1 (Plan B2). `attachments` is a JSON list of prize triples.
+CREATE TABLE IF NOT EXISTS mails (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id   INTEGER NOT NULL REFERENCES players(id),
+    entry       INTEGER NOT NULL DEFAULT 0,
+    sender      TEXT    NOT NULL DEFAULT '',
+    subject     TEXT    NOT NULL DEFAULT '',
+    body        TEXT    NOT NULL DEFAULT '',
+    attachments TEXT    NOT NULL DEFAULT '[]',
+    created     INTEGER NOT NULL DEFAULT 0,
+    expires     INTEGER NOT NULL DEFAULT 0,
+    checked     INTEGER NOT NULL DEFAULT 0,
+    claimed     INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS checkins (
+    player_id    INTEGER PRIMARY KEY REFERENCES players(id),
+    month        INTEGER NOT NULL DEFAULT 0,
+    normal_flags INTEGER NOT NULL DEFAULT 0,
+    vip_flags    INTEGER NOT NULL DEFAULT 0,
+    append_used  INTEGER NOT NULL DEFAULT 0,
+    total_times  INTEGER NOT NULL DEFAULT 0,
+    total_award  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS events (
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    entry     INTEGER NOT NULL,
+    progress  INTEGER NOT NULL DEFAULT 0,
+    done      INTEGER NOT NULL DEFAULT 0,
+    claimed   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, entry)
+);
+-- `slots` is a JSON list of the store's merchandise slots.
+CREATE TABLE IF NOT EXISTS stores (
+    player_id    INTEGER NOT NULL REFERENCES players(id),
+    store        INTEGER NOT NULL,
+    lastupdate   INTEGER NOT NULL DEFAULT 0,
+    slots        TEXT    NOT NULL DEFAULT '[]',
+    refresh_used INTEGER NOT NULL DEFAULT 0,
+    refresh_day  TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (player_id, store)
 );
 """
 
@@ -111,6 +154,21 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # fresh data/player.db per the Task 17 ruling).
     ("players", "gold_single_draws", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "diamond_single_draws", "INTEGER NOT NULL DEFAULT 0"),
+    # Wave 1 (Plan B2): six gear slots per hero (ClientHero.items, item0..item5
+    # in HERO_FIELDS), the 7-day login gift bits, and the daily purchase
+    # counters that ensure_today zeroes on a new ISO day.
+    ("heroes", "item0", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "item1", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "item2", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "item3", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "item4", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "item5", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "login_award", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "login_days", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "last_login_day", "TEXT NOT NULL DEFAULT ''"),
+    ("players", "daily_day", "TEXT NOT NULL DEFAULT ''"),
+    ("players", "buy_energy_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "buy_gold_used", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -200,6 +258,97 @@ def grant_item(
         (int(player_id), int(entry)),
     ).fetchone()
     return int(row["amount"])
+
+
+def take_item(
+    conn: sqlite3.Connection, player_id: int, entry: int, amount: int
+) -> int:
+    """Remove `amount` of an item and return the new absolute amount. Raises
+    ValueError, writing nothing, when fewer are owned; callers check first and
+    refuse with 327942. The row stays at 0 rather than being deleted."""
+    row = conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+        (int(player_id), int(entry)),
+    ).fetchone()
+    have = int(row["amount"]) if row else 0
+    if int(amount) < 0 or have < int(amount):
+        raise ValueError(f"item {entry}: have {have}, need {amount}")
+    conn.execute(
+        "UPDATE items SET amount = amount - ? WHERE player_id = ? AND entry = ?",
+        (int(amount), int(player_id), int(entry)),
+    )
+    conn.commit()
+    return have - int(amount)
+
+
+def spend(
+    conn: sqlite3.Connection, player_id: int, gold: int = 0, diamond: int = 0
+) -> None:
+    """Take gold and diamonds together. Raises ValueError, writing nothing, when
+    either balance is too low."""
+    row = conn.execute(
+        "SELECT gold, diamond FROM players WHERE id = ?", (int(player_id),)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"player {player_id} not found")
+    if int(gold) < 0 or int(diamond) < 0:
+        raise ValueError(f"negative spend gold {gold} diamond {diamond}")
+    if int(row["gold"]) < int(gold) or int(row["diamond"]) < int(diamond):
+        raise ValueError(
+            f"player {player_id}: gold {row['gold']}/{gold},"
+            f" diamond {row['diamond']}/{diamond}"
+        )
+    conn.execute(
+        "UPDATE players SET gold = gold - ?, diamond = diamond - ? WHERE id = ?",
+        (int(gold), int(diamond), int(player_id)),
+    )
+    conn.commit()
+
+
+def ensure_today(conn: sqlite3.Connection, player_id: int, today_iso: str) -> None:
+    """On the first call of a new day (ISO YYYY-MM-DD), zero the daily purchase
+    counters. Later calls the same day change nothing."""
+    conn.execute(
+        "UPDATE players SET buy_energy_used = 0, buy_gold_used = 0, daily_day = ?"
+        " WHERE id = ? AND daily_day != ?",
+        (str(today_iso), int(player_id), str(today_iso)),
+    )
+    conn.commit()
+
+
+def set_hero_items(conn: sqlite3.Connection, hero_id: int, items: list[int]) -> None:
+    """Write the six gear slots item0..item5 of one heroes row."""
+    values = [int(v) for v in items]
+    if len(values) != 6:
+        raise ValueError(f"a hero has six gear slots, got {len(values)}")
+    conn.execute(
+        "UPDATE heroes SET item0 = ?, item1 = ?, item2 = ?, item3 = ?, item4 = ?,"
+        " item5 = ? WHERE id = ?",
+        (*values, int(hero_id)),
+    )
+    conn.commit()
+
+
+def angels_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            "SELECT * FROM angels WHERE player_id = ? ORDER BY id", (int(player_id),)
+        )
+    )
+
+
+def grant_angel(
+    conn: sqlite3.Connection, player_id: int, entry: int, level: int, star: int
+) -> int:
+    """Insert one angel. The (player_id, angel_entry) index makes a second grant
+    of the same entry raise sqlite3.IntegrityError."""
+    cur = conn.execute(
+        "INSERT INTO angels (player_id, angel_entry, level, exp, star)"
+        " VALUES (?, ?, ?, 0, ?)",
+        (int(player_id), int(entry), int(level), int(star)),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
 
 
 def heroes_of(conn: sqlite3.Connection, player_id: int) -> list[sqlite3.Row]:
