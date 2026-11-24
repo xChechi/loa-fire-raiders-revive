@@ -29,6 +29,25 @@ and signs only, no Chinese. The 71 *num*.png atlases are digit strips.
 | stamps (ui/stamp) | 27 | unchecked | stamp/seal art; some may carry characters |
 | **total in these groups** | **304** | | |
 
+## Stage 1 re-draw (24-11-2026)
+
+113 images are now re-drawn in English by `py -3.14 -m localise.images` from the reviewed table
+`localise/images.toml`, into `data/en/assets/res/assets` (shipped by `client.build_assets`).
+Before/after sheets: `docs/screens/en-images-stage1/`.
+
+| group | re-drawn | left out and why |
+|---|---|---|
+| main city buttons | 31 of 32 | happynewyear.png: the 福 on the lucky bag is decoration, not a label |
+| class badges | 6 of 6 | |
+| word/text images | 10 of 12 | battle_level_up_txt, vip_word_1: already English |
+| title words | 52 of 77 | 25 carry no text (empty ribbons, frames, bars, banners) or are already English (title_double "x2") |
+| stamps | 0 of 27 | none carries Chinese: icons, masks, NEW!, VIP11/12, 1-4 dice faces |
+| seen on screen | 14 | 注销账号, 服务器 plate, 胜利, 联盟EXP, 联盟升级, 挑战, 总览 x3, 无/可/未装备, 可合成, 以下未激活 |
+
+Not in stage 1: hero and angel name images, chapter banners, logo/login art, and the main-city
+activity buttons under `ui/mainSceneImg/activityBtn` (首充, VIP礼包, 开服狂欢, ...), which the name
+rules did not catch either.
+
 ## Files per group
 
 ### hero name images (img/hero/name) (78)
