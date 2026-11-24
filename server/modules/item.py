@@ -2,8 +2,8 @@
 
 Categories are the client's own constants (ClientPlayer.lua:146-186) and are the
 same numbers as drop_base.drop_type: 1 gold, 2 energy, 9 diamond, 11 player xp,
-12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel. The seven this server can
-actually apply are below; any other one raises, because a reward that silently
+12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel, 51 arena coin, 52
+goddess-trial coin. The nine this server can actually apply are below; any other one raises, because a reward that silently
 shrinks is worse than a crash in a log Stefan reads.
 
 There is no ClientItem message in allProtos.pb: an owned item is a ClientStock
@@ -39,13 +39,20 @@ CATEGORY_PLAYER_XP = 11
 CATEGORY_ITEM = 20
 CATEGORY_HERO = 30
 CATEGORY_ANGEL = 40
+CATEGORY_ARENA_COIN = 51
+CATEGORY_ANGEL_TRY_COIN = 52
+
+# The players column (and ClientPlayer / notify field) each coin lands on,
+# ClientPlayer.lua:150-151,652-655.
+COIN_FIELDS = {CATEGORY_ARENA_COIN: "arena_point", CATEGORY_ANGEL_TRY_COIN: "angel_money"}
 
 # mail_info 99999 物品超限提醒; its body has one "|" for the item names.
 OVERFLOW_MAIL = 99999
 
 KNOWN_CATEGORIES = frozenset({
     CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_PLAYER_XP,
-    CATEGORY_ITEM, CATEGORY_HERO, CATEGORY_ANGEL,
+    CATEGORY_ITEM, CATEGORY_HERO, CATEGORY_ANGEL, CATEGORY_ARENA_COIN,
+    CATEGORY_ANGEL_TRY_COIN,
 })
 
 
@@ -135,11 +142,12 @@ def grant_prizes(
     `xp` is db.add_player_xp's before/after/levelled over the whole call, or
     None without player xp; `angels` lists the angel entries granted;
     `converted` the indices into `prizes` of the hero prizes that arrived as
-    soul stones (mark_converted flags them for the client).
+    soul stones (mark_converted flags them for the client); `coins` the new
+    absolute arena_point / angel_money, only for the ones a prize touched.
     """
     out: dict = {
         "gold": 0, "diamond": 0, "energy": 0, "items": [], "heroes": [],
-        "mails": [], "xp": None, "angels": [], "converted": [],
+        "mails": [], "xp": None, "angels": [], "converted": [], "coins": {},
     }
     overflow: dict[int, int] = {}
 
@@ -177,6 +185,13 @@ def grant_prizes(
                 change["before"] = out["xp"]["before"]
                 change["levelled"] = change["after"][0] != change["before"][0]
             out["xp"] = change
+        elif category in COIN_FIELDS:
+            field = COIN_FIELDS[category]
+            conn.execute(
+                f"UPDATE players SET {field} = {field} + ? WHERE id = ?",
+                (amount, int(player_id)),
+            )
+            out["coins"][field] = 0
         elif category == CATEGORY_ANGEL:
             for _ in range(max(1, amount)):
                 owned = conn.execute(
@@ -221,6 +236,8 @@ def grant_prizes(
     out["gold"] = int(row["gold"])
     out["diamond"] = int(row["diamond"])
     out["energy"] = int(row["energy"])
+    for field in out["coins"]:
+        out["coins"][field] = int(row[field])
     return out
 
 
@@ -235,7 +252,7 @@ def mark_converted(entries, out: dict) -> None:
 
 
 def announce(registry: Registry, session: Session, out: dict) -> None:
-    """The client side of grant_prizes' overflow mails and player xp, which
+    """The client side of grant_prizes' overflow mails, player xp and coins, which
     every caller needs; items, heroes and balances stay with the caller.
 
     A granted angel has no push the client listens to: AngelNotify 5_2932 has
@@ -245,6 +262,8 @@ def announce(registry: Registry, session: Session, out: dict) -> None:
     """
     if out["mails"]:
         notify.mail_arrived(registry, session)
+    if out["coins"]:
+        notify.player_changed(registry, session, out["coins"])
     if out["xp"] is not None:
         before, after = out["xp"]["before"], out["xp"]["after"]
         notify.player_changed(registry, session, {

@@ -82,9 +82,22 @@ def test_grant_prizes_returns_exactly_the_keys_callers_read(reg, cfg, conn) -> N
     out = grant_prizes(conn, cfg, pid, [])
     assert set(out) == {
         "gold", "diamond", "energy", "items", "heroes", "mails", "xp", "angels",
-        "converted",
+        "converted", "coins",
     }
     assert out["xp"] is None and out["angels"] == [] and out["converted"] == []
+    assert out["coins"] == {}
+
+
+def test_categories_51_and_52_add_arena_and_goddess_trial_coins(reg, cfg, conn) -> None:
+    """ClientPlayer.lua:150-151,652-655: 51 is arena_point, 52 angel_money.
+    `coins` carries the new absolute value of each one touched."""
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    out = grant_prizes(conn, cfg, pid, [(51, 0, 1000), (52, 0, 300), (52, 0, 700)])
+    row = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    assert (int(row["arena_point"]), int(row["angel_money"])) == (1000, 1000)
+    assert out["coins"] == {"arena_point": 1000, "angel_money": 1000}
+    again = grant_prizes(conn, cfg, pid, [(51, 0, 5)])
+    assert again["coins"] == {"arena_point": 1005}
 
 
 def test_category_11_adds_player_xp(reg, cfg, conn) -> None:
@@ -285,6 +298,19 @@ def test_announce_xp_without_a_level_up_sends_no_level_up(reg, cfg, conn) -> Non
     session = _session()
     item.announce(reg, session, grant_prizes(conn, cfg, pid, [(11, 0, 1)]))
     assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2008)]
+
+
+def test_announce_pushes_the_coins_as_one_player_notify(reg, cfg, conn) -> None:
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    session = _session()
+    item.announce(reg, session, grant_prizes(conn, cfg, pid, [(51, 0, 7), (52, 0, 9)]))
+    assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2008)]
+    msg = session.outbox[0][2]
+    assert msg.flags == notify.flags_for(["angel_money", "arena_point"])
+    # data follows PLAYER_FIELDS order: angel_money (16) before arena_point (17).
+    assert list(msg.data) == [9.0, 7.0]
 
 
 def test_announce_is_silent_for_plain_prizes_and_angels(reg, cfg, conn) -> None:

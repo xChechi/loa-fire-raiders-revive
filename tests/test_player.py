@@ -126,6 +126,16 @@ def test_every_required_daily_stats_field_is_set(reg) -> None:
     assert len([fd for fd in s.DESCRIPTOR.fields if fd.is_required]) == 19
 
 
+def test_arena_and_goddess_trial_coins_come_from_the_stored_row(reg, settings) -> None:
+    """ClientPlayer.lua:360-363 reads both off the login ClientPlayer."""
+    conn = connect(settings.db_path)
+    create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute("UPDATE players SET arena_point = 1000, angel_money = 52")
+    conn.commit()
+    p = player.build_client_player(reg, find_player(conn, "stefan"))
+    assert (p.arena_point, p.angel_money) == (1000, 52)
+
+
 def test_guide_id_comes_from_the_stored_row(reg, settings) -> None:
     conn = connect(settings.db_path)
     create_player(conn, "stefan", "stefan", guide_id=14302)

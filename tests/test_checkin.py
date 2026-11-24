@@ -284,24 +284,38 @@ def test_login_award_unclaimable_refused_330245(reg, cfg, world) -> None:
         "SELECT login_award FROM players WHERE id = ?", (pid,)).fetchone()[0]) == 0b1
 
 
-def test_login_award_every_day_pays_or_raises_explicitly(reg, cfg, world) -> None:
-    """Plan risk 5: roll the real drop ids. Days 3 and 5 carry categories 52
-    and 51, which no task of this plan implements, so grant_prizes raises
-    before any write and the day stays unclaimed."""
+def test_login_award_every_day_pays(reg, cfg, world) -> None:
+    """Plan risk 5: roll the real drop ids. Day 3 (drop 700020) carries 1000
+    of category 52 (goddess-trial coin) and day 5 (drop 700040) 1000 of
+    category 51 (arena coin); both land on the player row and are pushed."""
     conn, pid, handlers, session = world
     conn.execute("UPDATE players SET login_award = ? WHERE id = ?", (0b111_1111, pid))
     conn.commit()
+
+    def coins():
+        r = conn.execute(
+            "SELECT arena_point, angel_money FROM players WHERE id = ?", (pid,)
+        ).fetchone()
+        return int(r["arena_point"]), int(r["angel_money"])
+
     for idx in range(1, 8):
-        if idx in (3, 5):
-            with pytest.raises(ValueError, match=r"\b5[12]\b"):
-                handlers[(5, 2043)](session, _req(reg, "LoginAwardReq", award_index=idx))
-            bits = int(conn.execute(
-                "SELECT login_award FROM players WHERE id = ?", (pid,)).fetchone()[0])
-            assert not bits & (1 << (8 + idx - 1))
+        before = coins()
+        session.outbox.clear()
+        res = handlers[(5, 2043)](session, _req(reg, "LoginAwardReq", award_index=idx))
+        assert res.status == 0, idx
+        assert res.login_award & (1 << (8 + idx - 1))
+        if idx == 3:
+            assert (52, 0, 1000) in [(p.category, p.refer, p.amount) for p in res.awards]
+            assert coins() == (before[0], before[1] + 1000)
+        elif idx == 5:
+            assert (51, 0, 1000) in [(p.category, p.refer, p.amount) for p in res.awards]
+            assert coins() == (before[0] + 1000, before[1])
         else:
-            res = handlers[(5, 2043)](session, _req(reg, "LoginAwardReq", award_index=idx))
-            assert res.status == 0, idx
-            assert res.login_award & (1 << (8 + idx - 1))
+            assert coins() == before
+        if idx in (3, 5):
+            pushes = [m for (s, c, m) in session.outbox if (s, c) == (5, 2008)]
+            assert float(1000) in [v for m in pushes for v in m.data]
+    assert coins() == (1000, 1000)
 
 
 def test_login_award_flags_a_duplicate_hero_and_pushes_xp(reg, cfg, world, monkeypatch) -> None:

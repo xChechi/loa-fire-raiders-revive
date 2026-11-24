@@ -54,6 +54,9 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     msg.last_level = int(row["last_level"])
     # Bits 1-7 claimable, bits 9-15 claimed (RoleData.lua:1699-1713).
     msg.login_award = int(row["login_award"])
+    # ClientPlayer.lua:360-363 sets angel_money only when arena_point is present.
+    msg.arena_point = int(row["arena_point"])
+    msg.angel_money = int(row["angel_money"])
     msg.last_elite = 0
     msg.last_signet = 0
     # Everything else required gets the proto2 zero.

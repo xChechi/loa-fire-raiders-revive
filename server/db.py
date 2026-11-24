@@ -169,6 +169,10 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "daily_day", "TEXT NOT NULL DEFAULT ''"),
     ("players", "buy_energy_used", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "buy_gold_used", "INTEGER NOT NULL DEFAULT 0"),
+    # Prize categories 51 (arena coin) and 52 (goddess-trial coin),
+    # ClientPlayer.lua:35-37,150-151: login gift days 5 and 3 pay them.
+    ("players", "arena_point", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "angel_money", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
