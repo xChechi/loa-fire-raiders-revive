@@ -9,7 +9,7 @@ from pathlib import Path
 
 from server import db
 from server.config import Config
-from server.modules import gacha, guide, level, login, player, team
+from server.modules import angel, gacha, guide, level, login, player, team
 from server.net.registry import Registry
 from server.net.server import Server
 from server.settings import load
@@ -63,6 +63,7 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers.update(gacha.handlers(registry, settings, conn, cfg))
     handlers.update(level.handlers(registry, settings, conn, cfg))
     handlers.update(team.handlers(registry, settings, conn, cfg))
+    handlers.update(angel.handlers(registry, settings, conn, cfg))
     return handlers
 
 
