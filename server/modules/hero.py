@@ -5,6 +5,11 @@ level-1 hero is its prototype npc row verbatim; each level above the first adds
 one hero_growth(hero, star) row. hero_quality maps (hero, quality) to the
 prototype npc entry, and ClientHero:getNpcProperty on the client does the same
 lookup with no nil check, so quality must always be a hero_quality key.
+
+Gear: a hero has six slots, heroes.item0..item5 (0 = empty). `unit` is the
+gear-free stats plus the item_info stats of every equipped item, and
+`base_unit` stays gear-free, because the hero panel shows unit - base_unit as
+the gear bonus (RoleAttrPanel.lua:164-165, GameAttrManager.lua:250-267).
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import logging
 import sqlite3
 
 from server.config import Config
+from server.modules.notify import HERO_FIELDS
 from server.net.registry import Registry
 from server.net.server import fill_required
 
@@ -44,6 +50,8 @@ SPELL_FIELDS = ("skill0", "skill1", "skill2", "skill3", "skill4")
 # player hero, lives in server/modules/team.py where the hero units are built.
 UNIT_TYPE_NPC = 3
 
+GEAR_SLOTS = 6
+
 
 def quality_row_for(cfg: Config, entry: int, quality: int) -> sqlite3.Row:
     """The hero_quality row the client will look up for this hero.
@@ -70,7 +78,8 @@ def prototype_for(cfg: Config, entry: int, quality: int) -> int:
 
 
 def build_client_hero_unit(
-    registry: Registry, cfg: Config, npc_row, growth_row, level: int
+    registry: Registry, cfg: Config, npc_row, growth_row, level: int,
+    bonus: dict | None = None,
 ):
     msg = registry.message_class("ClientHeroUnit")()
     steps = max(0, int(level) - 1)
@@ -78,12 +87,35 @@ def build_client_hero_unit(
         value = float(npc_row[field] or 0)
         if steps and field in GROWTH_FIELDS:
             value += steps * float(growth_row[field] or 0)
+        if bonus:
+            value += bonus.get(field, 0.0)
         if field == "max_hp":
             msg.max_hp = int(value)
         else:
             setattr(msg, field, value)
     fill_required(msg)
     return msg
+
+
+def gear_slots(row: sqlite3.Row) -> list[int]:
+    return [int(row[f"item{i}"]) for i in range(GEAR_SLOTS)]
+
+
+def gear_bonus(cfg: Config, row: sqlite3.Row) -> dict[str, float]:
+    """The item_info stats of every equipped item, summed per NPC_UNIT_FIELDS
+    name that is also an item_info column. item_info stores TEXT."""
+    bonus: dict[str, float] = {}
+    for item_id in gear_slots(row):
+        if not item_id:
+            continue
+        item_row = cfg.item(item_id)
+        if item_row is None:
+            raise KeyError(f"item_info has no row for equipped item {item_id}")
+        columns = item_row.keys()
+        for field in NPC_UNIT_FIELDS:
+            if field in columns:
+                bonus[field] = bonus.get(field, 0.0) + float(item_row[field] or 0)
+    return bonus
 
 
 def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
@@ -118,7 +150,9 @@ def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
         ability=int(npc_row["ability"] or 0),
     )
     msg.unit.CopyFrom(
-        build_client_hero_unit(registry, cfg, npc_row, growth_row, level)
+        build_client_hero_unit(
+            registry, cfg, npc_row, growth_row, level, gear_bonus(cfg, row)
+        )
     )
     msg.base_unit.CopyFrom(
         build_client_hero_unit(registry, cfg, npc_row, growth_row, level)
@@ -127,11 +161,28 @@ def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
         spell = int(npc_row[key] or 0)
         if spell:
             msg.spells.append(spell)
+    msg.items.extend(gear_slots(row))
     msg.model = 0
     msg.awaken = 0
     msg.max_level = level
     fill_required(msg)
     return msg
+
+
+def hero_notify_fields(registry: Registry, cfg: Config, row: sqlite3.Row) -> dict:
+    """The ident-2 field set for one heroes row (ClientHero:updateByFields):
+    the six slots, the unit stats that are HERO_FIELDS names (they go to
+    ClientHero.unit), ability, level, xp, star, quality, prototype, max_level.
+    The values are the ones build_client_hero sends, so the two never drift."""
+    hero = build_client_hero(registry, cfg, row)
+    fields: dict = {f"item{i}": int(v) for i, v in enumerate(hero.items)}
+    for name in NPC_UNIT_FIELDS:
+        if name in HERO_FIELDS:
+            fields[name] = getattr(hero.unit, name)
+    for name in ("ability", "level", "xp", "star", "quality", "prototype",
+                 "max_level"):
+        fields[name] = getattr(hero, name)
+    return fields
 
 
 def build_npc_fight_unit(

@@ -99,3 +99,54 @@ def test_a_hero_with_no_config_rows_fails_loud(reg, cfg, tmp_path) -> None:
     row = _granted(tmp_path, 999999999, 10)
     with pytest.raises(KeyError, match="999999999"):
         build_client_hero(reg, cfg, row)
+
+
+# --- Wave 1: gear slots (ClientHero.lua:153,525,580-584) ---------------------
+def _geared(tmp_path, items):
+    from server.db import set_hero_items
+
+    conn = connect(tmp_path / "g.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    hid = grant_hero(conn, pid, 100000, 10, star=1, level=2)
+    set_hero_items(conn, hid, items)
+    return heroes_of(conn, pid)[0]
+
+
+def test_client_hero_has_six_item_slots(reg, cfg, hero_row) -> None:
+    hero = build_client_hero(reg, cfg, hero_row)
+    assert list(hero.items) == [0, 0, 0, 0, 0, 0]
+
+
+def test_equipped_10000_adds_its_stats_to_unit_not_base_unit(reg, cfg, tmp_path) -> None:
+    hero = build_client_hero(reg, cfg, _geared(tmp_path, [10000, 0, 0, 0, 0, 0]))
+    assert list(hero.items) == [10000, 0, 0, 0, 0, 0]
+    # item_info 10000: max_hp 10, power/defence/magic/magic_defence 2 each.
+    assert hero.unit.max_hp - hero.base_unit.max_hp == 10
+    for field in ("power", "defence", "magic", "magic_defence"):
+        diff = getattr(hero.unit, field) - getattr(hero.base_unit, field)
+        assert round(diff, 6) == 2.0, field
+    assert hero.unit.agility == hero.base_unit.agility
+    assert hero.unit.hit_rate == hero.base_unit.hit_rate
+    hero.SerializeToString()
+
+
+def test_hero_without_gear_unit_equals_base_unit(reg, cfg, tmp_path) -> None:
+    hero = build_client_hero(reg, cfg, _geared(tmp_path, [0] * 6))
+    assert hero.unit == hero.base_unit
+
+
+def test_hero_notify_fields_names_are_all_hero_fields(reg, cfg, tmp_path) -> None:
+    from server.modules.hero import hero_notify_fields
+    from server.modules.notify import HERO_FIELDS
+
+    row = _geared(tmp_path, [10000, 0, 0, 0, 0, 0])
+    fields = hero_notify_fields(reg, cfg, row)
+    assert set(fields) <= set(HERO_FIELDS)
+    for name in ("item0", "item5", "ability", "level", "xp", "star", "quality",
+                 "prototype", "max_level", "max_hp", "power", "resistance_base"):
+        assert name in fields, name
+    hero = build_client_hero(reg, cfg, row)
+    assert fields["item0"] == 10000
+    assert fields["level"] == 2
+    assert fields["max_hp"] == hero.unit.max_hp
+    assert fields["power"] == hero.unit.power
