@@ -1,0 +1,1047 @@
+# English re-draw of the Chinese text baked into client images (stage 1).
+# Read by localise/images.py; see its docstring for every key.
+# Boxes are [x0, y0, x1, y1] in image pixels, x1/y1 exclusive.
+# English comes from the localise glossary/cache where the word exists there;
+# the rest is translated here, short game-UI style. Keep `zh` exactly as drawn.
+
+# --- presets ----------------------------------------------------------------------
+
+[preset.mainbtn]
+# White label with a dark outline drawn over the icon art: only the white
+# glyphs (and their outline) are filled in, the art between them stays.
+group = "main-city-buttons"
+mode = "inpaint"
+mask = "light"
+light = 205
+grow = 5
+fill = ["#ffffff", "#e8e8e8"]
+outline = "#2a1608"
+stroke = 0.16
+lines = 2
+
+# --- main city buttons (ui/mainSceneImg) -----------------------------------------
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnBaoGuo.png"
+zh = "包裹"
+en = "Bag"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnBaoShi.png"
+zh = "宝石"
+en = "Gems"
+erase = [14, 62, 94, 98]
+text = [12, 65, 96, 96]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnChongZhi.png"
+zh = "充值"
+en = "Top Up"
+erase = [8, 48, 74, 78]
+text = [2, 50, 77, 77]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnFuBen.png"
+zh = "探险"
+en = "Adventure"
+erase = [22, 88, 104, 116]
+text = [14, 90, 112, 114]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnFuWen.png"
+zh = "符文"
+en = "Runes"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnFuYou.png"
+zh = "护佑"
+en = "Blessing"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnGongHui.png"
+zh = "公会"
+en = "Guild"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnGuildList.png"
+zh = "其他公会"
+en = "Other Guilds"
+erase = [6, 60, 96, 92]
+text = [8, 54, 94, 93]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnHaoYou.png"
+zh = "好友"
+en = "Friends"
+erase = [8, 46, 74, 78]
+text = [2, 48, 77, 77]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnHuoDong.png"
+zh = "活动"
+en = "Events"
+erase = [4, 48, 68, 84]
+text = [0, 50, 76, 82]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnJingJi.png"
+zh = "竞技"
+en = "Arena"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnNvShen.png"
+zh = "女神"
+en = "Angels"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnQianDao.png"
+zh = "签到"
+en = "Sign In"
+erase = [10, 44, 66, 76]
+text = [2, 46, 77, 76]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnRank.png"
+zh = "排行榜"
+en = "Ranking"
+erase = [2, 50, 79, 80]
+text = [2, 50, 78, 79]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnRenWu.png"
+zh = "任务"
+en = "Quests"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShangDian.png"
+zh = "商店"
+en = "Shop"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShenGe.png"
+zh = "神格"
+en = "Divinity"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShenHun.png"
+zh = "神魂"
+en = "Divine Soul"
+erase = [14, 60, 90, 94]
+text = [9, 54, 93, 93]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShenQi.png"
+zh = "神器"
+en = "Artifact"
+erase = [12, 60, 92, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShenShou.png"
+zh = "神兽"
+en = "Divine Beast"
+erase = [14, 62, 90, 96]
+text = [9, 54, 93, 95]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnShiLian.png"
+zh = "试炼"
+en = "Trial"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnStarHun.png"
+zh = "星魂"
+en = "Star Soul"
+erase = [14, 60, 90, 94]
+text = [9, 54, 93, 93]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnXingChen.png"
+zh = "规则"
+en = "Rules"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnXunLian.png"
+zh = "训练"
+en = "Train"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnYangCheng.png"
+zh = "养成"
+en = "Growth"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnYinJi.png"
+zh = "印记"
+en = "Sigils"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnYinXiong.png"
+zh = "英雄"
+en = "Heroes"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnYingXiong.png"
+zh = "星辰"
+en = "Stars"
+erase = [14, 60, 90, 94]
+text = [12, 62, 90, 92]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnYouJian.png"
+zh = "邮件"
+en = "Mail"
+erase = [12, 46, 70, 78]
+text = [4, 48, 76, 76]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/mainBtnZhanBu.png"
+zh = "抽卡"
+en = "Summon"
+erase = [12, 46, 70, 78]
+text = [0, 48, 79, 77]
+
+[[image]]
+preset = "mainbtn"
+path = "ui/mainSceneImg/platformCenter.png"
+zh = "用户中心"
+en = "Account"
+erase = [4, 74, 102, 104]
+text = [6, 76, 100, 102]
+
+# --- class badges (ui/nslm_rolePanelUI) -------------------------------------------
+
+[preset.badge]
+# Coloured glyphs on the dark inside of the hexagon seal: the bright glyph
+# pixels are filled in from the dark plate.
+group = "class-badges"
+mode = "inpaint"
+mask = "lum"
+light = 55
+grow = 1
+stroke = 0.1
+outline = "#1a0c08"
+lines = 1
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/RoleListCarrerBg1.png"
+zh = "战士"
+en = "Warrior"
+erase = [18, 13, 71, 40]
+text = [15, 12, 67, 39]
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/RoleListCarrerBg2.png"
+zh = "法师"
+en = "Mage"
+erase = [18, 13, 71, 40]
+text = [15, 12, 67, 39]
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/RoleListCarrerBg3.png"
+zh = "射手"
+en = "Marksman"
+erase = [18, 13, 71, 40]
+text = [14, 12, 68, 39]
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/card/roleUICardCarrer1.png"
+zh = "战"
+en = "Warrior"
+erase = [16, 12, 47, 40]
+text = [12, 12, 50, 39]
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/card/roleUICardCarrer2.png"
+zh = "法"
+en = "Mage"
+erase = [16, 12, 47, 40]
+text = [12, 12, 50, 39]
+
+[[image]]
+preset = "badge"
+path = "ui/nslm_rolePanelUI/card/roleUICardCarrer3.png"
+zh = "射"
+en = "Marksman"
+erase = [16, 12, 47, 40]
+text = [11, 12, 51, 39]
+
+# --- word images (ui/) ------------------------------------------------------------
+
+[preset.word]
+# Images that are only text: the glyphs go, the English is drawn on a
+# transparent canvas of the same size.
+group = "word-images"
+mode = "clear"
+mask = "opaque"
+lines = 1
+
+[[image]]
+preset = "word"
+path = "ui/arena_ability_word.png"
+zh = "战力:"
+en = "Power:"
+text = [1, 1, 55, 27]
+
+[[image]]
+preset = "word"
+path = "ui/battle_end_coin_try_txt.png"
+zh = "战斗结束"
+en = "Battle Over"
+text = [28, 30, 293, 100]
+glow = "auto"
+glow_radius = 9
+
+[[image]]
+preset = "word"
+path = "ui/battle_end_pass_level_txt.png"
+zh = "恭喜您过关!"
+en = "Stage Cleared!"
+text = [2, 2, 315, 56]
+
+[[image]]
+preset = "word"
+path = "ui/guildGve/recommand_ability_txt.png"
+zh = "推荐战力:"
+en = "Rec. Power:"
+text = [1, 1, 108, 26]
+
+[[image]]
+preset = "word"
+path = "ui/guild_party_join_txt.png"
+zh = "立即加入"
+en = "Join Now"
+text = [1, 1, 99, 27]
+
+[[image]]
+preset = "word"
+path = "ui/mojunStruck/recomonedHeroTxt.png"
+zh = "推荐英雄:"
+en = "Rec. Heroes:"
+text = [1, 1, 126, 29]
+
+[[image]]
+preset = "word"
+path = "ui/openFundAct/tipTxt.png"
+zh = "购买开服基金 获海量[钻石]返利!"
+en = "Buy the Launch Fund"
+# the diamond (x 405-458) stays, the three text runs around it go
+erase = [[0, 0, 405, 101], [458, 0, 614, 101]]
+text = [4, 22, 244, 82]
+fill = ["#fff4a8", "#ff8c10"]
+outline = "#4a1a00"
+glow = "#ffd030"
+glow_radius = 6
+parts = [
+    {en = "for huge", text = [250, 14, 402, 86], fill = ["#d8ccff", "#6c34e8"], outline = "#2a0a30"},
+    {en = "rebates!", text = [460, 22, 610, 82], fill = ["#d8ccff", "#6c34e8"], outline = "#2a0a30"},
+]
+
+[[image]]
+preset = "word"
+path = "ui/seven_txt_day.png"
+zh = "天"
+# "第 N 天" is "Day N": the word goes on 第 (seven_txt_th), this one is blank.
+en = ""
+
+[[image]]
+preset = "word"
+path = "ui/seven_txt_th.png"
+zh = "第"
+en = "Day"
+text = [0, 2, 30, 26]
+
+[[image]]
+preset = "word"
+path = "ui/train_box_unlock_txt.png"
+zh = "未解锁"
+en = "Locked"
+text = [4, 4, 102, 40]
+stroke = 0
+
+# --- title words (ui/): only text, redrawn on a transparent canvas ------------------
+# The 25 title images without text (empty ribbons, frames, bars, title_double
+# "x2") are not listed; see docs/image-text-inventory.md.
+
+[preset.title_text]
+group = "title-words"
+mode = "clear"
+mask = "opaque"
+lines = 2
+
+[[image]]
+preset = "title_text"
+path = "ui/angelTrainRankTitle.png"
+zh = "名次 名称 积分 最高层数"
+en = "Rank"
+lines = 1
+text = [0, 0, 56, 26]
+parts = [
+    {en = "Name", text = [196, 0, 270, 26]},
+    {en = "Points", text = [386, 0, 460, 26]},
+    {en = "Top Floor", text = [500, 0, 599, 26]},
+]
+
+[[image]]
+preset = "title_text"
+path = "ui/devilTry/devilTryRankTitle.png"
+zh = "名次 名称 最高层数"
+en = "Rank"
+lines = 1
+text = [0, 0, 56, 26]
+parts = [
+    {en = "Name", text = [196, 0, 270, 26]},
+    {en = "Top Floor", text = [500, 0, 599, 26]},
+]
+
+[[image]]
+preset = "title_text"
+path = "ui/angel_circle_fight_title.png"
+zh = "女神战力:"
+en = "Angel Power:"
+lines = 1
+text = [1, 1, 134, 31]
+
+[[image]]
+preset = "title_text"
+path = "ui/angel_skill_icon_title_1.png"
+zh = "技能A"
+en = "Skill A"
+lines = 1
+rotate = 270
+text = [1, 0, 26, 72]
+
+[[image]]
+preset = "title_text"
+path = "ui/angel_skill_icon_title_2.png"
+zh = "技能B"
+en = "Skill B"
+lines = 1
+rotate = 270
+text = [1, 0, 26, 72]
+
+[[image]]
+preset = "title_text"
+path = "ui/arenaMainTitle.png"
+zh = "竞技场"
+en = "Arena"
+text = [2, 2, 113, 40]
+
+[[image]]
+preset = "title_text"
+path = "ui/arena_new_rank_title.png"
+zh = "历史最高"
+en = "Best Rank"
+erase = [0, 46, 365, 160]
+text = [16, 64, 348, 146]
+glow = "auto"
+glow_radius = 8
+
+[[image]]
+preset = "title_text"
+path = "ui/donate/title.png"
+zh = "公益捐献"
+en = "Charity Donation"
+text = [2, 2, 195, 56]
+
+[[image]]
+preset = "title_text"
+path = "ui/flop_title.png"
+zh = "女神翻牌"
+en = "Angel Card Flip"
+text = [2, 2, 206, 57]
+
+[[image]]
+preset = "title_text"
+path = "ui/group_info_headTitle1.png"
+zh = "系统头像"
+en = "System Avatars"
+lines = 1
+# the two side rules stay
+erase = [112, 0, 288, 25]
+text = [114, 1, 286, 24]
+
+[[image]]
+preset = "title_text"
+path = "ui/group_info_headTitle2.png"
+zh = "英雄女神头像"
+en = "Hero & Angel Avatars"
+lines = 1
+erase = [112, 0, 298, 25]
+text = [112, 1, 298, 24]
+
+[[image]]
+preset = "title_text"
+path = "ui/img/item_rank_titleBmp.png"
+zh = "排行榜"
+en = "Leaderboard"
+lines = 1
+text = [1, 2, 110, 37]
+
+[[image]]
+preset = "title_text"
+path = "ui/line_title_txt.png"
+zh = "阵容设置"
+en = "Lineup Settings"
+text = [1, 1, 160, 42]
+
+[[image]]
+preset = "title_text"
+path = "ui/sevenAvtivity/sevenAct_hero_title.png"
+zh = "开服第7天 送3星英雄"
+en = "Launch Day 7"
+lines = 1
+text = [0, 6, 228, 62]
+parts = [
+    {en = "Free 3-Star Hero", text = [234, 4, 463, 62], fill = ["#e0f4ff", "#7a5cff"], outline = "#1a1050"},
+]
+
+[[image]]
+preset = "title_text"
+path = "ui/topArena/top_arena_rank_title_1.png"
+zh = "名次"
+en = "Rank"
+lines = 1
+text = [0, 1, 48, 25]
+
+[[image]]
+preset = "title_text"
+path = "ui/topArena/top_arena_rank_title_2.png"
+zh = "名称"
+en = "Name"
+lines = 1
+text = [0, 1, 48, 25]
+
+[[image]]
+preset = "title_text"
+path = "ui/topArena/top_arena_rank_title_3.png"
+zh = "平均战力"
+en = "Avg. Power"
+lines = 1
+text = [4, 1, 126, 29]
+
+[[image]]
+preset = "title_text"
+path = "ui/vip_gift_text_title.png"
+zh = "专属大礼包"
+en = "Exclusive Pack"
+# the sparkle on the right stays
+erase = [0, 20, 168, 78]
+text = [2, 24, 170, 76]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text1.png"
+zh = "1月 签到奖励"
+en = "January Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text2.png"
+zh = "2月 签到奖励"
+en = "February Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text3.png"
+zh = "3月 签到奖励"
+en = "March Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text4.png"
+zh = "4月 签到奖励"
+en = "April Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text5.png"
+zh = "5月 签到奖励"
+en = "May Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text6.png"
+zh = "6月 签到奖励"
+en = "June Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text7.png"
+zh = "7月 签到奖励"
+en = "July Sign-In Rewards"
+text = [2, 1, 263, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text8.png"
+zh = "8月 签到奖励"
+en = "August Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text9.png"
+zh = "9月 签到奖励"
+en = "September Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text10.png"
+zh = "10月 签到奖励"
+en = "October Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text11.png"
+zh = "11月 签到奖励"
+en = "November Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text12.png"
+zh = "12月 签到奖励"
+en = "December Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+[[image]]
+preset = "title_text"
+path = "ui/sign_title_text_VIP.png"
+zh = "至尊签到奖励"
+en = "VIP Sign-In Rewards"
+text = [2, 1, 295, 65]
+
+# --- title words (ui/): text on a plate, filled in from the plate ----------------
+
+[preset.title_plate]
+group = "title-words"
+mode = "inpaint"
+mask = "all"
+lines = 2
+
+[[image]]
+preset = "title_plate"
+path = "ui/angelAdvance/suc_title.png"
+zh = "传承成功"
+en = "Inherited!"
+lines = 1
+erase = [58, 30, 442, 130]
+text = [60, 34, 432, 126]
+fill = ["#fff6a0", "#ff9a10"]
+outline = "#5a1c00"
+shadow = 3
+
+[[image]]
+preset = "title_plate"
+path = "ui/roleBreak/suc_title.png"
+zh = "突破成功"
+en = "Breakthrough!"
+lines = 1
+erase = [58, 30, 442, 130]
+text = [60, 34, 432, 126]
+fill = ["#fff6a0", "#ff9a10"]
+outline = "#5a1c00"
+shadow = 3
+
+[[image]]
+preset = "title_plate"
+path = "ui/angel_new_title.png"
+zh = "您获得了新的女神!"
+en = "You got a new Angel!"
+lines = 1
+erase = [172, 6, 562, 70]
+text = [176, 10, 558, 66]
+
+[[image]]
+preset = "title_plate"
+path = "ui/bagInfoTitle1.png"
+zh = "装备合成"
+en = "Gear Crafting"
+lines = 1
+erase = [14, 8, 164, 42]
+text = [14, 9, 164, 40]
+fill = ["#ffffff", "#e0e0e0"]
+
+[[image]]
+preset = "title_plate"
+path = "ui/bagInfoTitle2.png"
+zh = "获取途径"
+en = "Sources"
+lines = 1
+erase = [14, 8, 164, 42]
+text = [14, 9, 164, 40]
+
+[[image]]
+preset = "title_plate"
+path = "ui/bagInfoTitle3.png"
+zh = "英雄需求"
+en = "Required Heroes"
+lines = 1
+erase = [14, 8, 164, 42]
+text = [14, 9, 164, 40]
+
+[[image]]
+preset = "title_plate"
+path = "ui/crossServerArena/crossServer_attack_title.png"
+zh = "进攻方"
+en = "Attacker"
+lines = 1
+mask = "light"
+light = 190
+grow = 3
+erase = [64, 18, 246, 62]
+text = [64, 22, 244, 58]
+
+[[image]]
+preset = "title_plate"
+path = "ui/crossServerArena/crossServer_defend_title.png"
+zh = "防守方"
+en = "Defender"
+lines = 1
+mask = "light"
+light = 190
+grow = 3
+erase = [64, 18, 246, 62]
+text = [64, 22, 244, 58]
+
+[[image]]
+preset = "title_plate"
+path = "ui/sociatyBattle/situation/title.png"
+zh = "每日战报"
+en = "Daily Report"
+lines = 1
+erase = [68, 24, 336, 74]
+text = [68, 26, 336, 72]
+
+[[image]]
+preset = "title_plate"
+path = "ui/gve_title.png"
+zh = "章节宝箱"
+en = "Chapter Chest"
+lines = 1
+mask = "light"
+light = 200
+grow = 4
+erase = [132, 42, 358, 112]
+text = [118, 46, 366, 108]
+
+[[image]]
+preset = "title_plate"
+path = "ui/legendsStore/legendsTitleTop.png"
+zh = "神界商店"
+en = "Divine Shop"
+lines = 1
+mask = "light"
+light = 200
+grow = 4
+erase = [306, 68, 524, 122]
+text = [292, 70, 540, 120]
+
+[[image]]
+preset = "title_plate"
+path = "ui/legendsStore/legendstitle.png"
+zh = "神界商店"
+en = "Divine Shop"
+lines = 1
+mask = "light"
+light = 200
+grow = 4
+erase = [384, 58, 592, 122]
+text = [372, 62, 606, 120]
+
+[[image]]
+preset = "title_plate"
+path = "ui/scoreShop/title.png"
+zh = "积分商店"
+en = "Points Shop"
+lines = 1
+mask = "light"
+light = 200
+grow = 4
+erase = [300, 28, 530, 98]
+text = [290, 32, 540, 94]
+
+[[image]]
+preset = "title_plate"
+path = "ui/scoreShop/title_2.png"
+zh = "积分商店"
+en = "Points Shop"
+lines = 1
+mask = "light"
+light = 200
+grow = 4
+erase = [392, 28, 608, 94]
+text = [380, 32, 620, 92]
+
+[[image]]
+preset = "title_plate"
+path = "ui/seven_img_title.png"
+zh = "七日登录"
+en = "7-Day Login"
+lines = 1
+erase = [104, 26, 378, 100]
+text = [106, 30, 376, 96]
+
+[[image]]
+preset = "title_plate"
+path = "ui/sociaty/banneretUpTitle.png"
+zh = "爵位提升"
+en = "Title Up!"
+lines = 1
+erase = [68, 58, 352, 140]
+text = [72, 62, 348, 136]
+
+[preset.rank_plaque]
+# Pale text in the dark bowl of the gold rank banner.
+group = "title-words"
+mode = "inpaint"
+mask = "lum"
+light = 120
+grow = 5
+lines = 2
+erase = [430, 30, 640, 90]
+text = [432, 40, 642, 88]
+fill = ["#fff27a", "#f0c030"]
+outline = "#3a1a08"
+
+[[image]]
+preset = "rank_plaque"
+path = "ui/sociatyBattle/rank/rank_title_1.png"
+zh = "今日排行"
+en = "Today's Ranking"
+
+[[image]]
+preset = "rank_plaque"
+path = "ui/sociay_rank_title1.png"
+zh = "今日排行"
+en = "Today's Ranking"
+
+[[image]]
+preset = "rank_plaque"
+path = "ui/sociay_rank_title2.png"
+zh = "赛季排行"
+en = "Season Ranking"
+
+[[image]]
+preset = "rank_plaque"
+path = "ui/sociay_rank_title3.png"
+zh = "昨日排行"
+en = "Yesterday's Ranking"
+
+[[image]]
+preset = "rank_plaque"
+path = "ui/top/top_title.png"
+zh = "排行榜"
+en = "Leaderboard"
+
+# --- seen on screen, not caught by the inventory's name rules -----------------------
+
+[preset.screen_text]
+group = "on-screen"
+mode = "clear"
+mask = "opaque"
+lines = 1
+
+[preset.screen_plate]
+group = "on-screen"
+mode = "inpaint"
+mask = "light"
+light = 200
+grow = 3
+lines = 1
+
+[[image]]
+preset = "screen_plate"
+path = "ui/gameLogin_btn_logoutgame.png"
+zh = "注销账号"
+en = "Log Out"
+lines = 2
+mask = "all"
+erase = [80, 84, 172, 166]
+text = [74, 84, 178, 166]
+fill = ["#1c3e8c", "#0a2060"]
+outline = "#dcefff"
+stroke = 0.1
+
+[[image]]
+preset = "screen_plate"
+path = "ui/gameLogin/gameLogin_img_4.png"
+zh = "服务器"
+en = "Server"
+mask = "all"
+erase = [88, 86, 198, 136]
+text = [80, 90, 206, 132]
+fill = ["#5c3a28", "#4a2c1c"]
+stroke = 0
+
+[[image]]
+preset = "screen_text"
+path = "ui/battle_win_text.png"
+zh = "胜利"
+en = "Victory"
+text = [20, 26, 168, 98]
+fill = ["#fff4a0", "#ff9a10"]
+outline = "#5a1c00"
+glow = "auto"
+glow_radius = 9
+
+[[image]]
+preset = "screen_text"
+path = "ui/task_exp.png"
+zh = "联盟EXP"
+en = "Alliance EXP"
+text = [0, 1, 103, 27]
+
+[[image]]
+preset = "screen_text"
+path = "ui/player_upgrade_img2.png"
+zh = "联盟升级"
+en = "Alliance Level Up"
+lines = 2
+erase = [0, 46, 365, 160]
+text = [14, 58, 352, 150]
+glow = "auto"
+glow_radius = 8
+
+[[image]]
+preset = "screen_plate"
+path = "ui/des_img_challenge.png"
+zh = "挑战"
+en = "Challenge"
+erase = [44, 60, 118, 106]
+text = [34, 62, 128, 104]
+
+[[image]]
+preset = "screen_plate"
+path = "ui/nslm_rolePanelUI/btnIcon.png"
+zh = "总览"
+en = "Overview"
+erase = [30, 4, 90, 38]
+text = [30, 6, 90, 36]
+
+[[image]]
+preset = "screen_plate"
+path = "ui/nslm_rolePanelUI/btnIconSeleted.png"
+zh = "总览"
+en = "Overview"
+erase = [30, 4, 90, 38]
+text = [30, 6, 90, 36]
+
+[[image]]
+preset = "screen_plate"
+path = "ui/nslm_rolePanelUI/currentIcon.png"
+zh = "总览"
+en = "Overview"
+erase = [50, 4, 108, 38]
+text = [44, 5, 114, 37]
+
+[[image]]
+preset = "screen_text"
+path = "ui/nslm_rolePanelUI/RoleUIEquipState0.png"
+zh = "无装备"
+en = "No Gear"
+text = [0, 1, 79, 28]
+
+[[image]]
+preset = "screen_text"
+path = "ui/nslm_rolePanelUI/RoleUIEquipState1.png"
+zh = "可装备"
+en = "Equippable"
+text = [0, 1, 79, 28]
+
+[[image]]
+preset = "screen_text"
+path = "ui/nslm_rolePanelUI/RoleUIEquipState2.png"
+zh = "未装备"
+en = "Unequipped"
+text = [0, 1, 79, 28]
+
+[[image]]
+preset = "screen_text"
+path = "ui/nslm_rolePanelUI/RoleUIEquipState3.png"
+zh = "可合成"
+en = "Craftable"
+text = [0, 1, 79, 28]
+
+[[image]]
+preset = "screen_text"
+path = "ui/nslm_rolePanelUI/RoleListDieStc.png"
+zh = "以下未激活"
+en = "Not Activated"
+# the two side rules stay
+erase = [112, 0, 266, 25]
+text = [112, 1, 266, 24]

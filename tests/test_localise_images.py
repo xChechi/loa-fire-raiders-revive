@@ -1,0 +1,202 @@
+"""localise/images.py: the mapping table and the re-draw of image text.
+
+The table checks against .stock skip when the stock client is not extracted.
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from localise.extract import CJK
+from localise.images import (
+    FONT,
+    STOCK_ASSETS,
+    TABLE,
+    Entry,
+    _block,
+    _stroke,
+    build,
+    inpaint,
+    layout,
+    load_table,
+    render,
+    text_mask,
+)
+
+STOCK = Path(".stock")
+GROUPS = {"main-city-buttons", "class-badges", "word-images", "title-words", "on-screen"}
+
+
+# --- the table -------------------------------------------------------------------
+
+
+def test_table_loads_with_one_entry_per_image_in_known_groups():
+    entries = load_table()
+    assert len(entries) == len({e.path for e in entries})
+    assert {e.group for e in entries} <= GROUPS
+    counts = {g: sum(e.group == g for e in entries) for g in GROUPS}
+    assert counts["main-city-buttons"] == 31
+    assert counts["class-badges"] == 6
+
+
+def test_every_entry_has_chinese_source_and_english_target():
+    for e in load_table():
+        assert CJK.search(e.zh), e.path
+        for text in [e.en] + [p["en"] for p in e.parts]:
+            assert not CJK.search(text), e.path
+        assert e.en or e.path.endswith("seven_txt_day.png"), e.path
+
+
+def test_class_badges_use_the_glossary_class_names():
+    names = {Path(e.path).name: e.en for e in load_table() if e.group == "class-badges"}
+    assert names["RoleListCarrerBg1.png"] == names["roleUICardCarrer1.png"] == "Warrior"
+    assert names["RoleListCarrerBg2.png"] == names["roleUICardCarrer2.png"] == "Mage"
+    assert names["RoleListCarrerBg3.png"] == names["roleUICardCarrer3.png"] == "Marksman"
+
+
+def test_unknown_key_in_the_table_fails_loudly(tmp_path: Path):
+    t = tmp_path / "t.toml"
+    t.write_text('[[image]]\npath = "a.png"\nzh = "字"\nen = "A"\ngroup = "g"\nbogus = 1\n',
+                 encoding="utf-8")
+    with pytest.raises(ValueError, match="bogus"):
+        load_table(t)
+
+
+def test_font_and_its_licence_are_in_the_repo():
+    assert FONT.is_file()
+    assert "SIL Open Font License" in (FONT.parent / "LilitaOne-OFL.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(not (STOCK / STOCK_ASSETS).is_dir(), reason=".stock not extracted")
+def test_every_table_path_exists_in_stock_and_boxes_lie_inside():
+    for e in load_table():
+        src = STOCK / STOCK_ASSETS / e.path
+        assert src.is_file(), e.path
+        w, h = Image.open(src).size
+        boxes = []
+        if e.erase:
+            boxes += e.erase if isinstance(e.erase[0], list) else [e.erase]
+        boxes += [b for b in [e.text] + [p.get("text") for p in e.parts] if b]
+        for x0, y0, x1, y1 in boxes:
+            assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h, (e.path, (x0, y0, x1, y1), (w, h))
+
+
+# --- erasing ---------------------------------------------------------------------
+
+
+def _plate(w=60, h=30, plate=(40, 80, 160, 255)):
+    a = np.zeros((h, w, 4), np.uint8)
+    a[...] = plate
+    return a
+
+
+def test_light_mask_takes_white_glyphs_and_their_outline_inside_the_box_only():
+    a = _plate()
+    a[10:14, 10:14] = (255, 255, 255, 255)  # inside the box
+    a[10:14, 50:54] = (255, 255, 255, 255)  # outside the box
+    e = Entry(path="x", zh="字", en="A", group="g", mask="light", grow=1, erase=[0, 0, 30, 30])
+    m = text_mask(a, e)
+    assert m[10:14, 10:14].all() and m[9, 9] and m[14, 14]
+    assert not m[10:14, 50:54].any()
+    assert not m[0, 0]
+
+
+def test_several_erase_boxes_are_unioned():
+    a = _plate()
+    e = Entry(path="x", zh="字", en="", group="g", mask="all",
+              erase=[[0, 0, 5, 5], [50, 20, 60, 30]])
+    m = text_mask(a, e)
+    assert m.sum() == 25 + 100
+
+
+def test_inpaint_fills_the_mask_with_the_surrounding_plate():
+    a = _plate()
+    mask = np.zeros(a.shape[:2], bool)
+    a[8:20, 20:40] = (255, 255, 255, 255)
+    mask[8:20, 20:40] = True
+    out = inpaint(a, mask)
+    assert np.abs(out[mask].astype(int) - [40, 80, 160, 255]).max() <= 1
+    assert (out[~mask] == a[~mask]).all()
+
+
+def test_inpaint_keeps_transparent_surroundings_transparent():
+    a = np.zeros((20, 20, 4), np.uint8)
+    mask = np.zeros((20, 20), bool)
+    a[5:15, 5:15] = (255, 255, 255, 255)
+    mask[5:15, 5:15] = True
+    assert inpaint(a, mask)[mask][:, 3].max() == 0
+
+
+# --- drawing ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text,w,h", [("Leaderboard", 76, 28), ("Divine Soul", 80, 36),
+                                      ("You got a new Angel!", 380, 56), ("Day", 30, 24)])
+def test_layout_fits_the_text_block_inside_the_box(text, w, h):
+    e = Entry(path="x", zh="字", en=text, group="g")
+    lines, size = layout(text, e, w, h)
+    bw, bh, _ = _block(lines, size, _stroke(e, size))
+    assert " ".join(lines) == text
+    assert bw <= w and bh <= h
+
+
+def test_layout_splits_two_words_onto_two_lines_when_that_is_larger():
+    e = Entry(path="x", zh="字", en="Divine Soul", group="g")
+    lines, _ = layout("Divine Soul", e, 70, 40)
+    assert lines == ["Divine", "Soul"]
+    one = Entry(path="x", zh="字", en="Divine Soul", group="g", lines=1)
+    assert layout("Divine Soul", one, 70, 40)[0] == ["Divine Soul"]
+
+
+def _write_stock(root: Path, rel: str, arr: np.ndarray, mode="RGBA") -> None:
+    p = root / STOCK_ASSETS / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.fromarray(arr, "RGBA")
+    (img.convert("RGB").quantize(64) if mode == "P" else img).save(p)
+
+
+def test_render_keeps_the_size_and_leaves_pixels_outside_the_box_alone(tmp_path: Path):
+    a = _plate(100, 40)
+    a[10:30, 30:70] = (255, 255, 255, 255)
+    _write_stock(tmp_path, "ui/b.png", a)
+    e = Entry(path="ui/b.png", zh="字", en="Bag", group="g", mask="light", grow=2,
+              erase=[20, 5, 80, 35])
+    out = np.asarray(render(e, tmp_path / STOCK_ASSETS))
+    assert out.shape == a.shape
+    outside = np.ones(a.shape[:2], bool)
+    outside[5:35, 20:80] = False
+    assert (out[outside] == a[outside]).all()
+    assert (out[5:35, 20:80] != a[5:35, 20:80]).any()
+
+
+def test_render_reads_paletted_pngs_and_writes_rgba(tmp_path: Path):
+    a = _plate(40, 20)
+    _write_stock(tmp_path, "ui/p.png", a, mode="P")
+    e = Entry(path="ui/p.png", zh="字", en="Hi", group="g", mode="clear", mask="opaque")
+    img = render(e, tmp_path / STOCK_ASSETS)
+    assert img.mode == "RGBA" and img.size == (40, 20)
+
+
+def test_clear_mode_with_empty_english_leaves_a_transparent_image(tmp_path: Path):
+    _write_stock(tmp_path, "ui/t.png", _plate(30, 28))
+    e = Entry(path="ui/t.png", zh="天", en="", group="g", mode="clear", mask="opaque")
+    assert np.asarray(render(e, tmp_path / STOCK_ASSETS))[..., 3].max() == 0
+
+
+def test_build_mirrors_the_stock_path_under_the_overlay(tmp_path: Path):
+    stock, out = tmp_path / "stock", tmp_path / "en"
+    _write_stock(stock, "ui/sub/w.png", _plate(50, 20))
+    table = tmp_path / "t.toml"
+    table.write_text('[[image]]\npath = "ui/sub/w.png"\nzh = "字"\nen = "Word"\n'
+                     'group = "g"\nmode = "clear"\nmask = "opaque"\n', encoding="utf-8")
+    entries = build(stock, out, table)
+    assert [e.path for e in entries] == ["ui/sub/w.png"]
+    written = out / STOCK_ASSETS / "ui/sub/w.png"
+    assert Image.open(written).size == (50, 20)
+    assert (stock / STOCK_ASSETS / "ui/sub/w.png").is_file()  # stock untouched
+
+
+def test_the_committed_table_is_the_default():
+    assert TABLE.name == "images.toml" and TABLE.is_file()
