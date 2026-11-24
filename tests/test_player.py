@@ -298,3 +298,91 @@ def test_chapters_only_contains_real_chapter_entries(reg, settings, cfg) -> None
     assert [c.chapter for c in res.chapters] == [10000]
     assert res.chapters[0].award == 1
     res.SerializeToString()
+
+
+# --- Plan B2 T6: angels, mail flag, events, login-award bits, daily counters --
+
+def _query(reg, cfg, conn, today=None):
+    res = player.build_query_myself_res(
+        reg, cfg, conn, find_player(conn, "stefan"), today=today
+    )
+    parsed = reg.message_class("QueryMyselfRes")()
+    parsed.ParseFromString(res.SerializeToString())
+    return parsed
+
+
+def test_query_myself_carries_owned_angels(reg, cfg, row) -> None:
+    """AngelManager:parseAngel overlays QueryMyselfRes.angels on its roster,
+    and above level 10 an empty list forces a logout (AngelManager.lua:60-68)."""
+    from server.db import grant_angel
+
+    conn, r = row
+    grant_angel(conn, int(r["id"]), 500000, level=1, star=1)
+    parsed = _query(reg, cfg, conn)
+    assert [(a.angel_entry, a.star, a.level) for a in parsed.angels] == [(500000, 1, 1)]
+    assert list(parsed.angels[0].spells) == [5000000, 5010000]
+    assert len(parsed.angels[0].auras) == 6
+
+
+def test_query_myself_mail_new_only_for_unchecked_unexpired(reg, cfg, row) -> None:
+    import time
+
+    conn, r = row
+    pid, now = int(r["id"]), int(time.time())
+    assert _query(reg, cfg, conn).mail_new == 0
+    conn.execute(
+        "INSERT INTO mails (player_id, entry, created, expires, checked)"
+        " VALUES (?, 99999, ?, ?, 1)", (pid, now, now + 86400),
+    )
+    conn.execute(
+        "INSERT INTO mails (player_id, entry, created, expires, checked)"
+        " VALUES (?, 99999, ?, ?, 0)", (pid, now - 90000, now - 10),
+    )
+    conn.commit()
+    assert _query(reg, cfg, conn).mail_new == 0
+    conn.execute(
+        "INSERT INTO mails (player_id, entry, created, expires, checked)"
+        " VALUES (?, 99999, ?, ?, 0)", (pid, now, now + 86400),
+    )
+    conn.commit()
+    assert _query(reg, cfg, conn).mail_new == 1
+
+
+def test_query_myself_events_exclude_claimed(reg, cfg, row) -> None:
+    conn, r = row
+    pid = int(r["id"])
+    conn.executemany(
+        "INSERT INTO events (player_id, entry, progress, done, claimed)"
+        " VALUES (?, ?, ?, ?, ?)",
+        [(pid, 10270, 3, 0, 0), (pid, 10280, 1, 1, 0), (pid, 10290, 1, 1, 1)],
+    )
+    conn.commit()
+    parsed = _query(reg, cfg, conn)
+    assert [(e.entry, e.cur_progress, e.done) for e in parsed.events] == [
+        (10270, 3, 0), (10280, 1, 1)
+    ]
+
+
+def test_client_player_login_award_from_column(reg, cfg, row) -> None:
+    conn, r = row
+    conn.execute(
+        "UPDATE players SET login_award = ? WHERE id = ?", (0b1_0000_0001, int(r["id"]))
+    )
+    conn.commit()
+    assert _query(reg, cfg, conn).player.login_award == 0b1_0000_0001
+
+
+def test_daily_stats_counters_reset_on_a_new_day(reg, cfg, row) -> None:
+    conn, r = row
+    pid = int(r["id"])
+    conn.execute(
+        "UPDATE players SET buy_energy_used = 2, buy_gold_used = 5,"
+        " daily_day = '2026-11-24' WHERE id = ?", (pid,),
+    )
+    conn.commit()
+    same_day = _query(reg, cfg, conn, today="2026-11-24")
+    assert (same_day.stats.buy_energy, same_day.stats.buy_gold) == (2, 5)
+    next_day = _query(reg, cfg, conn, today="2026-11-25")
+    assert (next_day.stats.buy_energy, next_day.stats.buy_gold) == (0, 0)
+    stored = find_player(conn, "stefan")
+    assert (stored["buy_energy_used"], stored["daily_day"]) == (0, "2026-11-25")

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+import time
+from datetime import date, datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import hero, item
+from server.modules import angel, hero, item
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -51,6 +52,8 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     # stage entry of the last stage cleared and the client computes the unlock
     # frontier from it.
     msg.last_level = int(row["last_level"])
+    # Bits 1-7 claimable, bits 9-15 claimed (RoleData.lua:1699-1713).
+    msg.login_award = int(row["login_award"])
     msg.last_elite = 0
     msg.last_signet = 0
     # Everything else required gets the proto2 zero.
@@ -58,8 +61,13 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     return msg
 
 
-def build_daily_stats(registry: Registry):
+def build_daily_stats(registry: Registry, row: sqlite3.Row | None = None):
+    """`row` is a players row already passed through db.ensure_today, so its
+    purchase counters are today's."""
     msg = registry.message_class("ClientDailyStats")(deadline=_end_of_today())
+    if row is not None:
+        msg.buy_energy = int(row["buy_energy_used"])
+        msg.buy_gold = int(row["buy_gold_used"])
     fill_required(msg)
     return msg
 
@@ -78,11 +86,24 @@ def build_client_level(registry: Registry, row: sqlite3.Row):
 
 
 def build_query_myself_res(
-    registry: Registry, cfg: Config, conn: sqlite3.Connection, row: sqlite3.Row
+    registry: Registry, cfg: Config, conn: sqlite3.Connection, row: sqlite3.Row,
+    today: str | None = None,
 ):
-    msg = registry.message_class("QueryMyselfRes")(status=0, guild=0, mail_new=0)
+    """`today` is the ISO day the daily counters belong to (injectable for
+    tests); it defaults to the server's local date."""
+    player_id = int(row["id"])
+    db.ensure_today(conn, player_id, today or date.today().isoformat())
+    row = conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
+    now = int(time.time())
+    unread = conn.execute(
+        "SELECT 1 FROM mails WHERE player_id = ? AND checked = 0 AND expires > ?"
+        " LIMIT 1", (player_id, now),
+    ).fetchone()
+    msg = registry.message_class("QueryMyselfRes")(
+        status=0, guild=0, mail_new=1 if unread else 0
+    )
     msg.player.CopyFrom(build_client_player(registry, row))
-    msg.stats.CopyFrom(build_daily_stats(registry))
+    msg.stats.CopyFrom(build_daily_stats(registry, row))
     # RoleData:updateData reads d.gold_trails.prize with no nil check, so the
     # sub-message must be present even though both its fields are optional.
     msg.gold_trails.SetInParent()
@@ -90,7 +111,18 @@ def build_query_myself_res(
         msg.heroes.add().CopyFrom(hero.build_client_hero(registry, cfg, hero_row))
     for stock in item.build_inventory(registry, conn, int(row["id"])):
         msg.inventory.add().CopyFrom(stock)
-    player_id = int(row["id"])
+    # AngelManager:parseAngel overlays these on its angel_info roster
+    # (AngelManager.lua:73-108).
+    for angel_row in db.angels_of(conn, player_id):
+        msg.angels.add().CopyFrom(angel.build_client_angel(registry, cfg, angel_row))
+    for event_row in conn.execute(
+        "SELECT entry, progress, done FROM events WHERE player_id = ? AND claimed = 0"
+        " ORDER BY entry", (player_id,),
+    ):
+        event = msg.events.add()
+        event.entry = int(event_row["entry"])
+        event.cur_progress = int(event_row["progress"])
+        event.done = int(event_row["done"])
     for level_row in db.levels_of(conn, player_id):
         msg.levels.add().CopyFrom(build_client_level(registry, level_row))
     for chapter_row in db.chapters_of(conn, player_id):
