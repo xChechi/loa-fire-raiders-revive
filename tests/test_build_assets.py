@@ -425,7 +425,7 @@ def test_patch_24_moves_the_angel_name_left_of_the_locked_and_level_label(assets
 def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     scene = (assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(encoding="utf-8")
-    assert "txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);" in scene
+    assert "txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(30);" in scene
 
 
 def test_patch_17_keeps_the_rebirth_requirement_after_its_label(assets: Path) -> None:
@@ -443,7 +443,7 @@ def test_patch_17_keeps_the_rebirth_requirement_after_its_label(assets: Path) ->
 def test_patch_16_moves_the_consent_checkbox_left_of_the_longer_line(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     scene = (assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(encoding="utf-8")
-    moved = "self.privacyCheckBtn:setPositionX(50 - txt1:getContentSize().width - 22);"
+    moved = "self.privacyCheckBtn:setPositionX(30 - txt1:getContentSize().width - 22);"
     assert moved in scene
     # after both the checkbox and the consent line exist
     assert scene.index("self.privacyCheckBtn:setPosition(ccp(-200,110))") < scene.index(moved)

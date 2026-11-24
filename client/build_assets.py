@@ -425,12 +425,14 @@ PATCHES: tuple[Patch, ...] = (
     #     right-align the line to end at x 50 so a longer English one grows left.
     #     The checkbox (x -200) then sits under the start of the English
     #     line, so it moves to just left of wherever the line starts.
+    #     On the AVD (24-11-2026) the drawn line still ran about one glyph
+    #     past x 50 into "Privacy Policy"; it ends at x 30.
     Patch(SCENE,
           "    txt1:setColor(g_colorManager.C3_WHITE);\n",
           "    txt1:setColor(g_colorManager.C3_WHITE);\n"
           "    txt1:setTextHorizontalAlignment(kCCTextAlignmentRight);"
-          " txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);\n"
-          "    self.privacyCheckBtn:setPositionX(50 - txt1:getContentSize().width - 22);\n"),
+          " txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(30);\n"
+          "    self.privacyCheckBtn:setPositionX(30 - txt1:getContentSize().width - 22);\n"),
     # 17. RoleUIInfoPanel:updateReBirthInfo puts the rebirth requirement
     #     ("Lv.55") back at x 475 on every refresh, which undoes patch 13 and
     #     covers "Rebirth Req:"; same rule as patch 13 there.
