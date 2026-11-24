@@ -19,6 +19,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua",
     "scripts/app/game/view/ui/bag/BagLeftPanel.lua",
     "scripts/app/game/view/ui/LevelDes.lua",
+    "scripts/app/game/framework/MMPlayerUpgradePanel.lua",
 )
 
 
@@ -395,3 +396,14 @@ def test_patch_16_moves_the_consent_checkbox_left_of_the_longer_line(assets: Pat
     # after both the checkbox and the consent line exist
     assert scene.index("self.privacyCheckBtn:setPosition(ccp(-200,110))") < scene.index(moved)
     assert scene.index('createLabel("我已详细阅读并同意"') < scene.index(moved)
+
+
+def test_patch_18_shrinks_long_level_up_labels_to_end_before_the_value(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    panel = (assets / "scripts/app/game/framework/MMPlayerUpgradePanel.lua").read_text(
+        encoding="utf-8"
+    )
+    fit = ("local w = txt1:getContentSize().width; "
+           "if w > 170 then txt1:setScale(170 / w) end")
+    assert fit in panel
+    assert panel.index("box:addNode(txt1);") < panel.index(fit) < panel.index("local txt2")

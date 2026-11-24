@@ -430,6 +430,14 @@ PATCHES: tuple[Patch, ...] = (
           "self.nextReBirthLvTfd:setPosition(ccp(475,360))",
           "self.nextReBirthLvTfd:setPosition(ccp(math.max(475, 364 + "
           "self.descLabel[1]:getContentSize().width),360))"),
+    # 18. MMPlayerUpgradePanel: each row's label starts at x 120 and its old
+    #     value sits at a fixed x 320 (300 without a new value); "Alliance
+    #     Level:" and "Max Stamina:" at size 36 run past it. Scale a label
+    #     wider than 170 down so it ends by x 290.
+    Patch("scripts/app/game/framework/MMPlayerUpgradePanel.lua",
+          "\tbox:addNode(txt1);\n",
+          "\tbox:addNode(txt1);\n"
+          "\tlocal w = txt1:getContentSize().width; if w > 170 then txt1:setScale(170 / w) end\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
