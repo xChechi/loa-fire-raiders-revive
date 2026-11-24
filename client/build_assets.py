@@ -451,7 +451,8 @@ def apply_patches(
 
 
 def overlay_english(english: Path, dest_assets: Path) -> int:
-    """Put the localise.write output over the copied assets; returns files copied.
+    """Put the localise.write and localise.images output over the copied assets;
+    returns files copied.
 
     The English Lua goes in under the Chinese file names. The client loads
     `language.Language_` .. CONFIG_LANAGUE, and CONFIG_LANAGUE = "cn" in
@@ -479,6 +480,14 @@ def overlay_english(english: Path, dest_assets: Path) -> int:
         dst = dest_assets / "scripts" / lua.relative_to(scripts)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(lua, dst)
+        n += 1
+    # Images whose baked-in Chinese text was re-drawn (localise.images),
+    # same relative path as the stock file they replace.
+    images = Path(english) / "assets/res/assets"
+    for png in sorted(images.rglob("*.png")) if images.is_dir() else []:
+        dst = dest_assets / "res/assets" / png.relative_to(images)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(png, dst)
         n += 1
     return n
 

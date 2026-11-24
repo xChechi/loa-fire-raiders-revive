@@ -317,6 +317,28 @@ def test_english_overlay_replaces_the_chinese_language_files_and_dbs(tmp_path: P
     assert not (assets / "res/language/Language_en.lua").exists()
 
 
+def test_english_overlay_ships_the_redrawn_images_over_the_stock_ones(tmp_path: Path) -> None:
+    from client.build_assets import overlay_english
+
+    assets = tmp_path / "assets"
+    (assets / "res/language").mkdir(parents=True)
+    (assets / "res/data/split").mkdir(parents=True)
+    (assets / "res/assets/ui/mainSceneImg").mkdir(parents=True)
+    (assets / "res/assets/ui/mainSceneImg/mainBtnRank.png").write_bytes(b"cn png")
+    (assets / "res/assets/ui/other.png").write_bytes(b"stock png")
+    en = tmp_path / "en"
+    (en / "assets/res/language").mkdir(parents=True)
+    (en / "assets/res/data/split").mkdir(parents=True)
+    (en / "assets/res/language/Language_en.lua").write_text("en", encoding="utf-8")
+    (en / "assets/res/language/Language_start_en.lua").write_text("en", encoding="utf-8")
+    (en / "assets/res/assets/ui/mainSceneImg").mkdir(parents=True)
+    (en / "assets/res/assets/ui/mainSceneImg/mainBtnRank.png").write_bytes(b"en png")
+
+    assert overlay_english(en, assets) == 3
+    assert (assets / "res/assets/ui/mainSceneImg/mainBtnRank.png").read_bytes() == b"en png"
+    assert (assets / "res/assets/ui/other.png").read_bytes() == b"stock png"
+
+
 def test_english_overlay_without_writer_output_fails_loudly(tmp_path: Path) -> None:
     from client.build_assets import overlay_english
 

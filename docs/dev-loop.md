@@ -248,6 +248,7 @@ the server's own logging is the diagnostic channel there.
 
 ```bash
 cd "/c/Users/Stefan.Nasev/Downloads/Claude Cowork/Claude Code/Projects/loa-private-server"
+py -3.14 -m localise.images                         # English images into data/en (after images.toml changes)
 py -3.14 -m client.build_assets                       # only after settings.toml changes (~1 min)
 export JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"
 cd client/android && ./gradlew.bat --no-daemon :app:assembleRelease
