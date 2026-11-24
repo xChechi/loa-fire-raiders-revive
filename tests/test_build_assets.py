@@ -392,7 +392,11 @@ def test_patch_14_right_anchors_the_bag_owned_label(assets: Path) -> None:
 def test_patch_15_keeps_the_stage_story_above_the_drops_panel(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     des = (assets / "scripts/app/game/view/ui/LevelDes.lua").read_text(encoding="utf-8")
-    assert "self.levelInfo.description, 163 - 15, 265, self.widgetBg, cc.size(500, 170)," in des
+    # Fitted to 110 in patch 12's line measure, drawn in 140 (the label clips
+    # to its box and the engine's lines are taller than the measure).
+    assert ("local desc = g_cocoGUI_creator:add_txt_mm(26, self.levelInfo.description, "
+            "163 - 15, 280, self.widgetBg, cc.size(500, 110),") in des
+    assert des.index("cc.size(500, 110),") < des.index("desc:setDimensions(cc.size(500, 140))")
 
 
 def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:

@@ -408,11 +408,18 @@ PATCHES: tuple[Patch, ...] = (
           "    self.stc1:setAnchorPoint(ccp(1, 0.5)); self.stc1:setPositionX(206);\n"),
     # 15. LevelDes: the stage story is centred in a 500 x 300 box that reaches
     #     down behind the stamina / drops panel; three Chinese lines never got
-    #     there, six English ones do. Same top edge (y 350), 170 high, so the
-    #     text shrinks to stay above the panel.
+    #     there, six English ones do. Centred on y 280 - 13 and fitted to 110
+    #     high, then drawn in a 140-high box. Patch 12 measures a line at
+    #     about 0.88 of the advance the engine draws, and the label clips to
+    #     its box: fitted to 170 or 140, five lines at size 26 passed and
+    #     Death Mine ran into the drops panel on the AVD; fitted and drawn at
+    #     85 the fourth line was cut off.
     Patch(LEVEL_DES,
-          "self.levelInfo.description, 163 - 15, 200, self.widgetBg, cc.size(500, 300),",
-          "self.levelInfo.description, 163 - 15, 265, self.widgetBg, cc.size(500, 170),"),
+          "  g_cocoGUI_creator:add_txt_mm(26, self.levelInfo.description, 163 - 15, 200, "
+          "self.widgetBg, cc.size(500, 300), kCCTextAlignmentLeft, kCCVerticalTextAlignmentCenter)\n",
+          "  local desc = g_cocoGUI_creator:add_txt_mm(26, self.levelInfo.description, 163 - 15, 280, "
+          "self.widgetBg, cc.size(500, 110), kCCTextAlignmentLeft, kCCVerticalTextAlignmentCenter)\n"
+          "  desc:setDimensions(cc.size(500, 140))\n"),
     # 16. GameLoginScene: the consent line is centred on x -15 and the green
     #     "Privacy Policy" button starts at x 55, where the Chinese line ends;
     #     right-align the line to end at x 50 so a longer English one grows left.
