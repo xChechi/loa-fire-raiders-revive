@@ -744,3 +744,75 @@ def test_a_fresh_stage_row_carries_today_deadline(reg, cfg, world) -> None:
     assert int(_progress(conn, pid, 10000)["deadline"]) > int(time.time())
     _fight(handlers, session, reg, 10000, star=3)
     assert int(_progress(conn, pid, 10000)["count"]) == 2
+
+
+# --- Wave 1 B7 commit B: the fielded angel gains xp --------------------------
+# Stage 10000 pays angel_xp 20; xp_for_level(1).angel_xp_for_next_level is 20;
+# angel_info 500000 has max_level 40.
+GODDESS = 500000
+
+
+def _angel_notifies(session):
+    return [m for (s, c, m) in session.outbox if (s, c) == (5, 2008) and m.ident == 3]
+
+
+def _angel_fight(handlers, session, reg, star, angel):
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.outbox.clear()
+    req = reg.message_class("LevelOutReq")(level=10000, star=star, angel=angel)
+    return handlers[(5, 2203)](session, req)
+
+
+def test_won_stage_gives_angel_xp_and_levels_angel(reg, cfg, world) -> None:
+    from server.db import grant_angel
+    from server.modules.notify import ANGEL_FIELDS
+
+    conn, pid, handlers, session = world
+    grant_angel(conn, pid, GODDESS, level=1, star=1)
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)
+    assert res.status == 0
+    assert (res.angel.refer, res.angel.level, res.angel.xp) == (GODDESS, 2, 0)
+    row = conn.execute(
+        "SELECT level, exp FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert (int(row["level"]), int(row["exp"])) == (2, 0)
+    notes = _angel_notifies(session)
+    assert len(notes) == 1
+    assert notes[0].refer == GODDESS
+    names = [n for i, n in enumerate(ANGEL_FIELDS) if notes[0].flags & (1 << i)]
+    assert dict(zip(names, notes[0].data)) == {"level": 2.0, "exp": 0.0}
+    res.SerializeToString()
+    notes[0].SerializeToString()
+
+
+def test_angel_at_max_level_does_not_pass_it(reg, cfg, world) -> None:
+    from server.db import grant_angel
+
+    conn, pid, handlers, session = world
+    grant_angel(conn, pid, GODDESS, level=40, star=1)
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)
+    assert res.angel.level == 40
+    row = conn.execute(
+        "SELECT level FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert int(row["level"]) == 40
+
+
+def test_unowned_or_losing_angel_gains_nothing(reg, cfg, world) -> None:
+    from server.db import grant_angel
+
+    conn, pid, handlers, session = world
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)   # not owned
+    assert not res.HasField("angel")
+    assert _angel_notifies(session) == []
+    grant_angel(conn, pid, GODDESS, level=1, star=1)
+    res = _angel_fight(handlers, session, reg, star=0, angel=GODDESS)   # lost
+    assert not res.HasField("angel")
+    assert _angel_notifies(session) == []
+    row = conn.execute(
+        "SELECT level, exp FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert (int(row["level"]), int(row["exp"])) == (1, 0)

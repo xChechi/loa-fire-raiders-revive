@@ -206,6 +206,46 @@ def handlers(
         fill_required(res)
         return res
 
+    def _add_angel_xp(
+        player_id: int, angel_entry: int, amount: int
+    ) -> tuple[int, int] | None:
+        """stage_info.angel_xp for the fielded angel, levelled through
+        xp_for_level.angel_xp_for_next_level and capped at angel_info.max_level.
+        LevelOutReq.angel is the angel_entry (BattleFactoryLevel.lua:361-369),
+        0 when none fought. Returns the new (level, exp), or None for no angel."""
+        if not angel_entry:
+            return None
+        row = conn.execute(
+            "SELECT * FROM angels WHERE player_id = ? AND angel_entry = ?",
+            (player_id, angel_entry),
+        ).fetchone()
+        if row is None:
+            log.warning(
+                "5_2203 names angel %d, which player %d does not own; no angel xp",
+                angel_entry, player_id,
+            )
+            return None
+        info = cfg.angel_by_star(angel_entry, int(row["star"]))
+        if info is None:
+            raise KeyError(
+                f"angel_info has no row for angel {angel_entry} star {row['star']}"
+            )
+        cap = int(info["max_level"])
+        level, exp = int(row["level"]), int(row["exp"]) + int(amount)
+        while level < cap:
+            need_row = cfg.xp_for_level(level)
+            need = int(need_row["angel_xp_for_next_level"] or 0) if need_row else 0
+            if need <= 0 or exp < need:
+                break
+            exp -= need
+            level += 1
+        conn.execute(
+            "UPDATE angels SET level = ?, exp = ? WHERE id = ?",
+            (level, exp, int(row["id"])),
+        )
+        conn.commit()
+        return level, exp
+
     def level_out(session: Session, req):
         lvl = int(req.level)
         row = _player(session)
@@ -233,6 +273,7 @@ def handlers(
 
         granted = {"gold": int(row["gold"]), "diamond": int(row["diamond"]), "items": []}
         hero_xp: list[tuple[int, int, int]] = []
+        angel_xp: tuple[int, int] | None = None
         xp_change = {"before": None, "after": None, "levelled": False}
         prizes: list[tuple[int, int, int]] = []
         if won:
@@ -261,6 +302,9 @@ def handlers(
                 )
                 hero_xp = db.add_hero_xp(
                     conn, cfg, player_id, list(req.heroes), int(stage["unit_xp"] or 0)
+                )
+                angel_xp = _add_angel_xp(
+                    player_id, int(req.angel), int(stage["angel_xp"] or 0)
                 )
                 if lvl == frontier(cfg, row):
                     db.set_last_level(conn, player_id, lvl)
@@ -296,6 +340,11 @@ def handlers(
             client_xp.refer = entry
             client_xp.level = hlevel
             client_xp.xp = hxp
+        if angel_xp is not None:
+            # BattleFactoryLevel:toExpInfo keys the angel by refer = its
+            # angel_entry and BattleEndLayer looks it up by that entry.
+            res.angel.refer = int(req.angel)
+            res.angel.level, res.angel.xp = angel_xp
 
         if won:
             notify.items_changed(registry, session, granted["items"])
@@ -325,6 +374,10 @@ def handlers(
                         registry, session, entry,
                         hero.hero_notify_fields(registry, cfg, hero_row),
                     )
+            if angel_xp is not None:
+                notify.angel_changed(registry, session, int(req.angel), {
+                    "level": angel_xp[0], "exp": angel_xp[1],
+                })
         log.info(
             "stage %d finished by player %d with %d star(s), won=%s", lvl, player_id,
             star, won,
