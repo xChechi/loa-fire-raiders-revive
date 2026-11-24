@@ -243,3 +243,13 @@ def test_key_overrides_replace_the_translation_for_that_key_only(tmp_path: Path)
     write_lua(src, tmp_path / "en.lua", r)
     out = (tmp_path / "en.lua").read_text(encoding="utf-8")
     assert 'z00004 = "Collected"' in out and 'x1 = "Angels Obtained"' in out
+
+
+def test_rebirth_count_unit_reads_rebirths_after_the_number(tmp_path: Path):
+    # h07008 = "转" follows the rebirth count ("0" .. getTxt("h07008")) on the
+    # hero detail and the training cells: "0 Rebirths", not "0 Spin".
+    src = tmp_path / "Language_cn.lua"
+    src.write_bytes('Language = {\n    h07008 = "转",\n};\n'.encode("utf-8"))
+    dst = tmp_path / "Language_en.lua"
+    write_lua(src, dst, Renderer({"转": "Spin"}, set()), (set(), {"h07008"}))
+    assert 'h07008 = " Rebirths",' in dst.read_text(encoding="utf-8")
