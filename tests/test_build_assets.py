@@ -437,7 +437,7 @@ def test_patch_21_shrinks_the_rebirth_count_to_end_before_the_side_tabs(assets: 
     info = (assets / "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua").read_text(
         encoding="utf-8"
     )
-    fit = ("local room = 760 - self.reBirthLvTfd:getPositionX(); "
+    fit = ("local room = 610 - self.reBirthLvTfd:getPositionX(); "
            "local w = self.reBirthLvTfd:getContentSize().width; "
            "self.reBirthLvTfd:setScale(w > room and room / w or 1)")
     assert info.count(fit) == 1

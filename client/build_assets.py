@@ -459,13 +459,13 @@ PATCHES: tuple[Patch, ...] = (
     Patch(GUIDE_TALK, "self.tf:setPosition(ccp(-245,-92));", "self.tf:setPosition(ccp(-245,-82));"),
     # 21. RoleUIInfoPanel: the rebirth count ("0 Rebirths") starts after
     #     "Rebirth Lv:" (patch 13) and runs under the side-tab column, which
-    #     begins near x 765 in the panel (one panel unit is about 0.95 px of
-    #     the 2280 px screen; the labels start at x 364); scale it down to end
-    #     by x 760.
+    #     begins near x 618 in the panel (measured on the AVD: one panel unit
+    #     is about 1.5 px of the 2280 px screen, "Level:" at x 364 is 131 px
+    #     wide); scale it down to end by x 610.
     Patch(ROLE_INFO,
           '    self.reBirthLvTfd:setString(tostring(rebirthLv) .. g_lan:getTxt("h07008"))\n',
           '    self.reBirthLvTfd:setString(tostring(rebirthLv) .. g_lan:getTxt("h07008"))\n'
-          "    local room = 760 - self.reBirthLvTfd:getPositionX(); "
+          "    local room = 610 - self.reBirthLvTfd:getPositionX(); "
           "local w = self.reBirthLvTfd:getContentSize().width; "
           "self.reBirthLvTfd:setScale(w > room and room / w or 1)\n"),
     # 22. DesSweepPanel:addUnlockTxt: the five-part "Alliance Level Reached 8
