@@ -325,3 +325,20 @@ def test_a_missing_first_draw_variable_raises(reg, cfg, world, monkeypatch) -> N
     assert int(row["gold"]) == 1280000
     assert int(row["diamond"]) == 18888
     assert int(row["gold_single_draws"]) == 0
+
+
+def test_a_drawn_duplicate_hero_is_flagged_as_soul_stones(reg, cfg, world, monkeypatch) -> None:
+    """MMAwardDropItem.lua:74 / TavernUtil.lua:22 show the soul-stone
+    conversion only for a prize entry with extra.type == 1."""
+    conn, pid, handlers, session = world
+    from server.db import grant_hero
+    from server.modules import drops as drops_mod
+
+    grant_hero(conn, pid, 101000, 10)
+    monkeypatch.setattr(
+        drops_mod, "roll", lambda cfg_, drop_id, rng=None: [drops_mod.Drop(30, 101000, 1)]
+    )
+    res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=1200000))
+    assert [(e.category, e.refer, e.extra.type) for e in res.items] == [(30, 101000, 1)]
+    assert len(heroes_of(conn, pid)) == 1
+    res.SerializeToString()

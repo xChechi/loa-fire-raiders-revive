@@ -20,14 +20,17 @@ angel_info row (MMAwardDropItem.lua:105-129), which is its star-1 row.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 
 from server import db
 from server.config import Config
-from server.modules import mail
+from server.modules import mail, notify
 from server.net.registry import Registry
-from server.net.server import fill_required
+from server.net.server import Session, fill_required
+
+log = logging.getLogger("loa.item")
 
 CATEGORY_GOLD = 1
 CATEGORY_ENERGY = 2
@@ -130,11 +133,13 @@ def grant_prizes(
     every item touched, the row id of every hero created, and the id of the
     overflow mail if one was sent (the caller queues notify.mail_arrived).
     `xp` is db.add_player_xp's before/after/levelled over the whole call, or
-    None without player xp; `angels` lists the angel entries granted.
+    None without player xp; `angels` lists the angel entries granted;
+    `converted` the indices into `prizes` of the hero prizes that arrived as
+    soul stones (mark_converted flags them for the client).
     """
     out: dict = {
         "gold": 0, "diamond": 0, "energy": 0, "items": [], "heroes": [],
-        "mails": [], "xp": None, "angels": [],
+        "mails": [], "xp": None, "angels": [], "converted": [],
     }
     overflow: dict[int, int] = {}
 
@@ -151,7 +156,7 @@ def grant_prizes(
         if give:
             out["items"].append((refer, db.grant_item(conn, player_id, refer, give)))
 
-    for category, refer, amount in _checked(cfg, prizes):
+    for index, (category, refer, amount) in enumerate(_checked(cfg, prizes)):
         if category == CATEGORY_GOLD:
             conn.execute(
                 "UPDATE players SET gold = gold + ? WHERE id = ?",
@@ -196,6 +201,8 @@ def grant_prizes(
                 ).fetchone()
                 if owned:
                     _item(*_hero_stones(cfg, refer))
+                    if out["converted"][-1:] != [index]:
+                        out["converted"].append(index)
                 else:
                     out["heroes"].append(
                         db.grant_hero(conn, player_id, refer, quality)
@@ -215,3 +222,37 @@ def grant_prizes(
     out["diamond"] = int(row["diamond"])
     out["energy"] = int(row["energy"])
     return out
+
+
+def mark_converted(entries, out: dict) -> None:
+    """Flag the ClientPrizeEntry of every hero prize that arrived as soul
+    stones: MMAwardDropItem.lua:74 (and TavernUtil.lua:22,365, TavernCoin.lua:
+    115,200) show the conversion only when extra.type == 1. `entries` lines up
+    with the prizes list grant_prizes was given."""
+    for index in out["converted"]:
+        if index < len(entries):
+            entries[index].extra.type = 1
+
+
+def announce(registry: Registry, session: Session, out: dict) -> None:
+    """The client side of grant_prizes' overflow mails and player xp, which
+    every caller needs; items, heroes and balances stay with the caller.
+
+    A granted angel has no push the client listens to: AngelNotify 5_2932 has
+    no Lua listener, and ident 3 skips an angel without serverInfo
+    (ClientAngel.lua:131-133). AngelManager:parseAngel picks it up from the
+    next QueryMyselfRes, so it is only logged here.
+    """
+    if out["mails"]:
+        notify.mail_arrived(registry, session)
+    if out["xp"] is not None:
+        before, after = out["xp"]["before"], out["xp"]["after"]
+        notify.player_changed(registry, session, {
+            "level": after[0], "xp": after[1], "energy": out["energy"],
+            "max_energy": after[3],
+        })
+        if out["xp"]["levelled"]:
+            notify.level_up(registry, session, (before[0], before[2], before[3]),
+                            (after[0], after[2], after[3]))
+    for angel_entry in out["angels"]:
+        log.info("angel %d granted; the client sees it at the next login", angel_entry)

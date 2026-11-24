@@ -302,3 +302,20 @@ def test_login_award_every_day_pays_or_raises_explicitly(reg, cfg, world) -> Non
             res = handlers[(5, 2043)](session, _req(reg, "LoginAwardReq", award_index=idx))
             assert res.status == 0, idx
             assert res.login_award & (1 << (8 + idx - 1))
+
+
+def test_login_award_flags_a_duplicate_hero_and_pushes_xp(reg, cfg, world, monkeypatch) -> None:
+    from server.db import grant_hero
+    from server.modules import drops as drops_mod
+
+    conn, pid, handlers, session = world
+    grant_hero(conn, pid, 100000, 10)
+    need = int(cfg.xp_for_level(1)["player_xp_for_next_level"])
+    monkeypatch.setattr(drops_mod, "roll", lambda cfg_, drop_id, rng=None: [
+        drops_mod.Drop(11, 0, need + 1), drops_mod.Drop(30, 100000, 1),
+    ])
+    checkin.record_login(conn, cfg, pid, "2026-11-24")
+    res = handlers[(5, 2043)](session, _req(reg, "LoginAwardReq", award_index=1))
+    assert res.status == 0
+    assert [(p.category, p.extra.type) for p in res.awards] == [(11, 0), (30, 1)]
+    assert (5, 2036) in [(s, c) for (s, c, _m) in session.outbox]

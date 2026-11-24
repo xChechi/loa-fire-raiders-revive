@@ -325,6 +325,7 @@ def handlers(
             gold_entry.category = item.CATEGORY_GOLD
             gold_entry.refer = 0
             gold_entry.amount = int(stage["gold"] or 0)
+            item.mark_converted(res.drop, granted)
 
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (player_id,)
@@ -347,6 +348,8 @@ def handlers(
             res.angel.level, res.angel.xp = angel_xp
 
         if won:
+            # First, so the absolute player values below are the last word.
+            item.announce(registry, session, granted)
             notify.items_changed(registry, session, granted["items"])
             notify.player_changed(registry, session, {
                 "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
@@ -425,6 +428,7 @@ def handlers(
         rolled = drops.roll(cfg, int(info["award0"] or 0), rng=rng)
         granted = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
         db.set_chapter_award(conn, player_id, chapter, 1)
+        item.announce(registry, session, granted)
         notify.items_changed(registry, session, granted["items"])
         notify.player_changed(registry, session, {
             "gold": granted["gold"], "diamond": granted["diamond"],
@@ -514,10 +518,13 @@ def handlers(
             entry = res.drops.add()
             for prize in drops.to_prize_entries(registry, rolled):
                 entry.drop.add().CopyFrom(prize)
+        # prizes is every time's drops in order, then the gold.
+        item.mark_converted([d for e in res.drops for d in e.drop], granted)
 
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (player_id,)
         ).fetchone()
+        item.announce(registry, session, granted)
         notify.items_changed(registry, session, granted["items"])
         notify.player_changed(registry, session, {
             "gold": int(fresh["gold"]), "xp": int(fresh["xp"]),

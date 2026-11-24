@@ -816,3 +816,53 @@ def test_unowned_or_losing_angel_gains_nothing(reg, cfg, world) -> None:
         (pid, GODDESS),
     ).fetchone()
     assert (int(row["level"]), int(row["exp"])) == (1, 0)
+
+
+# --- W1: grant_prizes' mails / xp / converted heroes reach the client --------
+
+
+def test_a_won_stage_flags_a_duplicate_hero_drop(reg, cfg, world, monkeypatch) -> None:
+    from server.db import grant_hero
+
+    conn, pid, handlers, session = world
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+    monkeypatch.setattr(
+        drops, "roll", lambda cfg_, drop_id, rng=None: [drops.Drop(30, 100000, 1)]
+    )
+    res = _fight(handlers, session, reg, 10000, star=3)
+    assert [(d.category, d.extra.type) for d in res.drop if d.category == 30] == [
+        (30, 1), (30, 1)                             # visible + invisible roll
+    ]
+    res.SerializeToString()
+
+
+def test_a_sweep_flags_a_duplicate_hero_drop(reg, cfg, world, monkeypatch) -> None:
+    from server.db import grant_hero
+
+    conn, pid, handlers, session = world
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+    _set_progress(conn, pid, 10000, star=3)
+    monkeypatch.setattr(
+        drops, "roll", lambda cfg_, drop_id, rng=None: [drops.Drop(30, 100000, 1)]
+    )
+    res = _sweep(handlers, session, reg, 10000, 2)
+    assert [d.extra.type for e in res.drops for d in e.drop] == [1, 1, 1, 1]
+
+
+def test_a_chapter_chest_that_overflows_queues_the_mail_notify(
+    reg, cfg, world, monkeypatch
+) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session = world
+    for entry in (10000, 10010, 10012):
+        upsert_level(conn, pid, entry, star=3)
+    grant_item(conn, pid, 10000, int(cfg.item(10000)["stackable"]))
+    monkeypatch.setattr(
+        drops, "roll", lambda cfg_, drop_id, rng=None: [drops.Drop(20, 10000, 2)]
+    )
+    res = handlers[(5, 2209)](
+        session, reg.message_class("LevelChapterPrizeReq")(chapter=10000, prize=0)
+    )
+    assert res.status == 0
+    assert 7 in [m.ident for (_s, c, m) in session.outbox if c == 2008]

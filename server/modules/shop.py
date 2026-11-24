@@ -258,6 +258,7 @@ def handlers(
             [(item.CATEGORY_ITEM, int(merch["item"]), int(merch["amount"]))],
         )
         notify.items_changed(registry, session, granted["items"])
+        item.announce(registry, session, granted)
         slots[index]["buy"] = 1
         conn.execute(
             "UPDATE stores SET slots = ? WHERE player_id = ? AND store = ?",

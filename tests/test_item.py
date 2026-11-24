@@ -77,13 +77,14 @@ def test_grant_prizes_applies_every_category_this_plan_sends(reg, cfg, conn) -> 
 def test_grant_prizes_returns_exactly_the_keys_callers_read(reg, cfg, conn) -> None:
     """Tasks 11, 14 and 15 read these five keys by name off the return value;
     B3 adds the ids of the overflow mails, the player xp change and the
-    angels granted."""
+    angels granted; W1 the indices of the heroes that became soul stones."""
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     out = grant_prizes(conn, cfg, pid, [])
     assert set(out) == {
         "gold", "diamond", "energy", "items", "heroes", "mails", "xp", "angels",
+        "converted",
     }
-    assert out["xp"] is None and out["angels"] == []
+    assert out["xp"] is None and out["angels"] == [] and out["converted"] == []
 
 
 def test_category_11_adds_player_xp(reg, cfg, conn) -> None:
@@ -218,3 +219,81 @@ def test_a_hero_config_does_not_know_raises_with_the_entry(reg, cfg, conn) -> No
     with pytest.raises(KeyError, match="999999"):
         grant_prizes(conn, cfg, pid, [(30, 999999, 1)])
     assert heroes_of(conn, pid) == []
+
+
+# --- W1: the client side of grant_prizes' result ------------------------------
+
+
+def _session():
+    from server.net.server import Session
+
+    return Session(writer=None, peer="t", bound_port=0)
+
+
+def test_grant_prizes_reports_which_hero_prizes_became_soul_stones(reg, cfg, conn) -> None:
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_prizes(conn, cfg, pid, [(30, 100000, 1)])
+    out = grant_prizes(conn, cfg, pid, [(1, 0, 5), (30, 101000, 1), (30, 100000, 1)])
+    assert out["converted"] == [2]
+
+
+def test_mark_converted_sets_extra_type_1_on_those_entries_only(reg, cfg, conn) -> None:
+    """MMAwardDropItem.lua:74 shows the soul-stone conversion of a hero prize
+    only when extra.type == 1; TavernUtil.lua:22,365 and TavernCoin.lua:115,200
+    read the same flag."""
+    from server.modules import item
+
+    cls = reg.message_class("ClientPrizeEntry")
+    entries = [cls(category=1, refer=0, amount=5), cls(category=30, refer=100000, amount=1)]
+    item.mark_converted(entries, {"converted": [1]})
+    assert not entries[0].HasField("extra")
+    assert entries[1].extra.type == 1
+
+
+def test_announce_queues_the_mail_notify_for_an_overflow_mail(reg, cfg, conn) -> None:
+    from server.modules import item
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_item(conn, pid, 10000, int(cfg.item(10000)["stackable"]))
+    out = grant_prizes(conn, cfg, pid, [(20, 10000, 3)])
+    session = _session()
+    item.announce(reg, session, out)
+    assert [(c, m.ident) for (_s, c, m) in session.outbox] == [(2008, 7)]
+
+
+def test_announce_queues_player_xp_and_the_level_up(reg, cfg, conn) -> None:
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    need = int(cfg.xp_for_level(1)["player_xp_for_next_level"])
+    out = grant_prizes(conn, cfg, pid, [(11, 0, need + 1)])
+    session = _session()
+    item.announce(reg, session, out)
+    assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2008), (5, 2036)]
+    player_msg, level_up = session.outbox[0][2], session.outbox[1][2]
+    assert player_msg.ident == 1
+    fields = [n for n in notify.PLAYER_FIELDS if n in ("level", "xp", "energy", "max_energy")]
+    assert player_msg.flags == notify.flags_for(fields)
+    assert dict(zip(fields, map(int, player_msg.data)))["level"] == 2
+    assert (level_up.oldLevel, level_up.newLevel) == (1, 2)
+
+
+def test_announce_xp_without_a_level_up_sends_no_level_up(reg, cfg, conn) -> None:
+    from server.modules import item
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    session = _session()
+    item.announce(reg, session, grant_prizes(conn, cfg, pid, [(11, 0, 1)]))
+    assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2008)]
+
+
+def test_announce_is_silent_for_plain_prizes_and_angels(reg, cfg, conn) -> None:
+    """A new angel has no push the client listens to: AngelNotify 5_2932 has
+    no Lua listener and ident 3 skips an angel without serverInfo
+    (ClientAngel.lua:131-133). It shows up with the next QueryMyselfRes."""
+    from server.modules import item
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    session = _session()
+    item.announce(reg, session, grant_prizes(conn, cfg, pid, [(1, 0, 5), (40, 500000, 1)]))
+    assert session.outbox == []

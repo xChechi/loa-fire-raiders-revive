@@ -191,6 +191,8 @@ def handlers(
         )
         for entry in drops.to_prize_entries(registry, rolled):
             res.items.add().CopyFrom(entry)
+        item.mark_converted(res.items, changed)
+        item.announce(registry, session, changed)
 
         for hero_row_id in changed["heroes"]:
             hero_row = conn.execute(

@@ -215,3 +215,16 @@ def test_unsupported_currency_refused_and_logged(reg, cfg, world, caplog) -> Non
     assert "price_type 51" in caplog.text
     assert _wallet(conn, pid) == before
     assert items_of(conn, pid) == []
+
+
+def test_buy_past_the_stack_limit_queues_the_mail_notify(reg, cfg, world) -> None:
+    """Merchandise 100030 is one hero-soul item 101000; a full stack sends the
+    rest to mail 99999, and the client is told a mail arrived."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session = world
+    _query(reg, handlers, session)
+    _seed_slots(conn, pid, 1, [100030])
+    grant_item(conn, pid, 101000, int(cfg.item(101000)["stackable"]))
+    assert _buy(reg, handlers, session, index=0).status == 0
+    assert 7 in [m.ident for (_s, c, m) in session.outbox if c == 2008]

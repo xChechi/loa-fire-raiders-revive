@@ -132,6 +132,7 @@ def handlers(
         notify.player_changed(registry, session, {
             "gold": out["gold"], "diamond": out["diamond"], "energy": out["energy"],
         })
+        item.announce(registry, session, out)
 
     def receive(session: Session, req):
         pid = _pid(session)

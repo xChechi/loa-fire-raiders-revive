@@ -145,9 +145,10 @@ def handlers(
                 )
         return msg
 
-    def _pay(session: Session, pid: int, triples) -> None:
+    def _pay(session: Session, pid: int, triples) -> dict:
         """grant_prizes vets the whole list before it writes, then the client
-        gets the absolute balances, items and any new hero."""
+        gets the absolute balances, items and any new hero. The result goes
+        back for item.mark_converted."""
         changed = item.grant_prizes(conn, cfg, pid, triples)
         for hero_row_id in changed["heroes"]:
             hero_row = conn.execute(
@@ -162,6 +163,8 @@ def handlers(
             {"gold": changed["gold"], "diamond": changed["diamond"],
              "energy": changed["energy"]},
         )
+        item.announce(registry, session, changed)
+        return changed
 
     def _refused(name: str, status: int, pid: int, why: str):
         log.info("%s for player %d refused %d: %s", name, pid, status, why)
@@ -211,7 +214,7 @@ def handlers(
             amount *= max(1, int(row["times"]))
             vip_flags |= 1 << (position - 1)
         prize = (int(row["refer_type"]), int(row["refer_id"]), amount)
-        _pay(session, pid, [prize])
+        changed = _pay(session, pid, [prize])
         normal |= today_bit
         conn.execute(
             "UPDATE checkins SET normal_flags = ?, vip_flags = ?,"
@@ -227,6 +230,7 @@ def handlers(
             append_times=0, append_cost=0,
         )
         res.awards.add().CopyFrom(_prize(*prize))
+        item.mark_converted(res.awards, changed)
         fill_required(res)
         return res
 
@@ -253,8 +257,7 @@ def handlers(
             )
         extra = int(row["amount"]) * (max(1, int(row["times"])) - 1)
         prize = (int(row["refer_type"]), int(row["refer_id"]), extra)
-        if extra > 0:
-            _pay(session, pid, [prize])
+        changed = _pay(session, pid, [prize]) if extra > 0 else {"converted": []}
         vip_flags |= 1 << (position - 1)
         conn.execute(
             "UPDATE checkins SET vip_flags = ? WHERE player_id = ?", (vip_flags, pid)
@@ -266,6 +269,7 @@ def handlers(
             normal_flags=normal, vip_flags=vip_flags,
         )
         res.awards.add().CopyFrom(_prize(*prize))
+        item.mark_converted(res.awards, changed)
         fill_required(res)
         return res
 
@@ -287,7 +291,7 @@ def handlers(
             (int(row[f"type{n}"]), int(row[f"item{n}"]), int(row[f"amount{n}"]))
             for n in (1, 2, 3)
         ]
-        _pay(session, pid, triples)
+        changed = _pay(session, pid, triples)
         following = int(row["next"])
         conn.execute(
             "UPDATE checkins SET total_award = ? WHERE player_id = ?", (following, pid)
@@ -298,6 +302,7 @@ def handlers(
         res.total_checkin_awards.CopyFrom(_total_awards(following))
         for triple in triples:
             res.awards.add().CopyFrom(_prize(*triple))
+        item.mark_converted(res.awards, changed)
         fill_required(res)
         return res
 
@@ -325,7 +330,7 @@ def handlers(
         rolled = drops.roll(cfg, int(drop_ids[idx - 1]))
         # Raises before any write on a category grant_prizes cannot apply, so
         # the day stays claimable.
-        _pay(session, pid, drops.as_triples(rolled))
+        changed = _pay(session, pid, drops.as_triples(rolled))
         bits |= claimed_bit
         conn.execute("UPDATE players SET login_award = ? WHERE id = ?", (bits, pid))
         conn.commit()
@@ -336,6 +341,7 @@ def handlers(
         res = registry.message_class(name)(status=STATUS_OK, login_award=bits)
         for entry in drops.to_prize_entries(registry, rolled):
             res.awards.add().CopyFrom(entry)
+        item.mark_converted(res.awards, changed)
         fill_required(res)
         return res
 

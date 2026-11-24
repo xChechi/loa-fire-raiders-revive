@@ -137,3 +137,25 @@ def test_check_all_returns_ids(reg, cfg, world) -> None:
     ).fetchone()[0]
     assert unchecked == 0
     res.SerializeToString()
+
+
+def test_an_xp_attachment_pushes_player_xp_and_the_level_up(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    need = int(cfg.xp_for_level(1)["player_xp_for_next_level"])
+    mail_id = mail.deliver(conn, cfg, pid, 99999, [(11, 0, need + 1)], int(time.time()))
+    res = handlers[(5, 2225)](session, reg.message_class("MailCheckReq")(id=mail_id))
+    assert res.status == 0
+    sent = [(s, c) for (s, c, _m) in session.outbox]
+    assert (5, 2036) in sent
+    level_up = next(m for (s, c, m) in session.outbox if c == 2036)
+    assert (level_up.oldLevel, level_up.newLevel) == (1, 2)
+
+
+def test_an_attachment_that_overflows_queues_the_new_mail_notify(reg, cfg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, 10000, int(cfg.item(10000)["stackable"]))
+    mail_id = mail.deliver(conn, cfg, pid, 99999, [(20, 10000, 3)], int(time.time()))
+    handlers[(5, 2225)](session, reg.message_class("MailCheckReq")(id=mail_id))
+    assert 7 in [m.ident for (_s, c, m) in session.outbox if c == 2008]
