@@ -1,5 +1,8 @@
 """Campaign stages: 5_2201 LevelIntoReq, 5_2203 LevelOutReq, the chapter star
-chest 5_2209, and explicit refusals for 5_2205 sweep and 5_2207 reset.
+chest 5_2209, 5_2205 sweep and 5_2207 reset.
+
+Daily counts: a levels row whose deadline has passed starts the day at count 0
+and reset_count 0 (roll_daily_counts), before any handler here reads it.
 
 Wire shape per spec section 4: the server validates the unlock, spends the
 energy, rolls 64 randoms and pre-rolls the drops, and the client fights.
@@ -14,10 +17,12 @@ from __future__ import annotations
 import logging
 import random
 import sqlite3
+import time
 
 from server import db
 from server.config import Config
 from server.modules import drops, hero, item, notify
+from server.modules.player import _end_of_today
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -39,6 +44,11 @@ STATUS_NOT_ENTERED = 328196         # language.db 没有进入关卡
 STATUS_ALREADY_CLAIMED = 328194     # language.db 关卡不可重复刷
 STATUS_NOT_ENOUGH_STARS = 328197    # language.db 星级不够
 STATUS_RESET_LIMIT = 328202         # language.db 达到关卡重置限制
+STATUS_NOT_ENOUGH_DIAMOND = 327938  # language.db 钻石不足
+STATUS_MAX_TIMES = 328195           # language.db 已经达到最大次数
+
+# vip_info 10100 (重置精英关卡次数): resets allowed per stage per day.
+VIP_RESET_ENTRY = 10100
 
 PENDING_KEY = "level_pending"
 
@@ -72,6 +82,30 @@ def chapter_stars(
     return sum(
         int(r["star"]) for r in db.levels_of(conn, player_id)
         if int(r["level"]) in entries
+    )
+
+
+def roll_daily_counts(
+    conn: sqlite3.Connection, player_id: int, now: int | None = None
+) -> None:
+    """Every levels row whose deadline has passed gets count 0, reset_count 0
+    and the end of today as its new deadline."""
+    now = int(time.time()) if now is None else int(now)
+    conn.execute(
+        "UPDATE levels SET count = 0, reset_count = 0, deadline = ?"
+        " WHERE player_id = ? AND deadline < ?",
+        (_end_of_today(), int(player_id), now),
+    )
+    conn.commit()
+
+
+def _ensure_row(conn: sqlite3.Connection, player_id: int, lvl: int) -> None:
+    """A stage's first row carries today's deadline, so the next
+    roll_daily_counts does not zero the play it was created for."""
+    conn.execute(
+        "INSERT INTO levels (player_id, level, deadline) VALUES (?, ?, ?)"
+        " ON CONFLICT(player_id, level) DO NOTHING",
+        (int(player_id), int(lvl), _end_of_today()),
     )
 
 
@@ -115,6 +149,7 @@ def handlers(
             return _refused(FLAG_STAGE_CHANGED)
         session.player_id = int(row["id"])
         row = db.refresh_energy(conn, cfg, row)
+        roll_daily_counts(conn, int(row["id"]))
         progress = db.level_progress(conn, int(row["id"]), lvl)
 
         if not is_unlocked(cfg, conn, row, lvl):
@@ -218,6 +253,7 @@ def handlers(
         # answer to a failure here is an ERROR carrying every fact needed to
         # repair the row by hand, and the exception going up.
         try:
+            _ensure_row(conn, player_id, lvl)
             db.upsert_level(conn, player_id, lvl, star=star, count_delta=1)
             if won:
                 xp_change = db.add_player_xp(
@@ -351,24 +387,163 @@ def handlers(
         return res
 
     def level_clean(session: Session, req):
-        # Sweep is not in Plan B1. LevelCleanRes field 1 is flag, not status, so
-        # this cannot float an error text; flag 2 is the client's own "max
-        # times". The handler exists so the log is honest about the refusal
-        # instead of the zero stub claiming success.
-        log.info("5_2205 sweep of stage %s is not implemented in Plan B1", req.level)
-        res = registry.message_class("LevelCleanRes")(flag=FLAG_MAX_TIMES, times=0)
+        # LevelCleanRes field 1 is flag, not status (B1 settled point 13), so a
+        # refusal cannot float a language text. DesSweepPanel:onReceiveSweepData
+        # knows one refusal, flag 1: it resyncs the stage count from `times` and
+        # floats z00225 (DesSweepPanel.lua:713-727). Every refusal therefore
+        # answers flag 1 with the server's count, and the real code goes to the
+        # log.
+        lvl, times = int(req.level), int(req.times)
+        row = _player(session)
+        stage = cfg.stage(lvl)
+
+        def _refused(code: int, why: str, count: int = 0):
+            log.warning("5_2205 sweep of stage %d x%d refused (%d): %s",
+                        lvl, times, code, why)
+            res = registry.message_class("LevelCleanRes")(
+                flag=FLAG_STAGE_CHANGED, times=count
+            )
+            fill_required(res)
+            return res
+
+        if row is None or stage is None:
+            return _refused(STATUS_STAGE_LOCKED, "no such stage")
+        player_id = int(row["id"])
+        session.player_id = player_id
+        row = db.refresh_energy(conn, cfg, row)
+        roll_daily_counts(conn, player_id)
+        progress = db.level_progress(conn, player_id, lvl)
+        count = 0 if progress is None else int(progress["count"])
+        if times < 1:
+            return _refused(STATUS_STAGE_LOCKED, "times < 1", count)
+        if progress is None or int(progress["star"]) < 3:
+            return _refused(STATUS_NOT_ENOUGH_STARS, "not 3-starred", count)
+        if int(stage["once"] or 0) == 1:
+            # level_into refuses a cleared once-only stage; a sweep must not
+            # replay it either.
+            return _refused(STATUS_STAGE_LOCKED, "once-only stage", count)
+        cost = times * _required(stage, "energy", lvl)
+        if int(row["energy"]) < cost:
+            return _refused(
+                STATUS_NOT_ENOUGH_ENERGY,
+                f"needs {cost} energy, has {int(row['energy'])}", count,
+            )
+        maxcount = int(stage["maxcount"] or 0)
+        if maxcount and count + times > maxcount:
+            return _refused(
+                STATUS_MAX_TIMES, f"count {count} + {times} > maxcount {maxcount}",
+                count,
+            )
+
+        visible_id = _required(stage, "visible_drops", lvl)
+        invisible_id = _required(stage, "invisible_drops", lvl)
+        per_time = [
+            drops.roll(cfg, visible_id, rng=rng) + drops.roll(cfg, invisible_id, rng=rng)
+            for _ in range(times)
+        ]
+        gold = times * int(stage["gold"] or 0)
+        prizes = [t for rolled in per_time for t in drops.as_triples(rolled)]
+        prizes.append((item.CATEGORY_GOLD, 0, gold))
+        # grant_prizes vets the whole list before it writes, so it runs first.
+        granted = item.grant_prizes(conn, cfg, player_id, prizes)
+        db.spend_energy(conn, player_id, cost)
+        _ensure_row(conn, player_id, lvl)
+        new_count = int(
+            db.upsert_level(conn, player_id, lvl, count_delta=times)["count"]
+        )
+        # LevelCleanRes has no field for hero xp, so a sweep pays none.
+        xp_change = db.add_player_xp(
+            conn, cfg, player_id, times * int(stage["player_xp"] or 0)
+        )
+
+        res = registry.message_class("LevelCleanRes")(flag=FLAG_OK, times=new_count)
+        for rolled in per_time:
+            entry = res.drops.add()
+            for prize in drops.to_prize_entries(registry, rolled):
+                entry.drop.add().CopyFrom(prize)
+
+        fresh = conn.execute(
+            "SELECT * FROM players WHERE id = ?", (player_id,)
+        ).fetchone()
+        notify.items_changed(registry, session, granted["items"])
+        notify.player_changed(registry, session, {
+            "gold": int(fresh["gold"]), "xp": int(fresh["xp"]),
+            "level": int(fresh["level"]), "energy": int(fresh["energy"]),
+            "max_energy": int(fresh["max_energy"]),
+        })
+        if xp_change["levelled"]:
+            before, after = xp_change["before"], xp_change["after"]
+            notify.level_up(
+                registry, session,
+                (before[0], before[2], before[3]), (after[0], after[2], after[3]),
+            )
+        log.info(
+            "stage %d swept x%d by player %d: %d energy, %d gold, drops %s",
+            lvl, times, player_id, cost, gold, prizes[:-1],
+        )
         fill_required(res)
         return res
 
     def level_reset(session: Session, req):
-        # Reset is not in Plan B1 either; 328202 floats 达到关卡重置限制 and
-        # DesBuyPanel:onReset ignores the rest.
-        log.info("5_2207 reset of stage %s is not implemented in Plan B1", req.level)
-        res = registry.message_class("LevelResetRes")(
-            status=STATUS_RESET_LIMIT, reset_count=0
+        # DesBuyPanel:onReset reads status and reset_count (DesBuyPanel.lua:
+        # 246-257); a non-zero status floats its language text.
+        lvl = int(req.level)
+        row = _player(session)
+        stage = cfg.stage(lvl)
+
+        def _answer(status: int, reset_count: int = 0):
+            res = registry.message_class("LevelResetRes")(
+                status=status, reset_count=reset_count
+            )
+            fill_required(res)
+            return res
+
+        if row is None or stage is None:
+            log.warning("5_2207 for stage %d: no such stage (%d)", lvl,
+                        STATUS_STAGE_LOCKED)
+            return _answer(STATUS_STAGE_LOCKED)
+        player_id = int(row["id"])
+        session.player_id = player_id
+        roll_daily_counts(conn, player_id)
+        progress = db.level_progress(conn, player_id, lvl)
+        used = 0 if progress is None else int(progress["reset_count"])
+        allowed = int(cfg.vip_value(VIP_RESET_ENTRY, int(row["vip"])) or 0)
+        if used >= allowed:
+            log.info("5_2207 stage %d: reset %d of %d at VIP %d (%d)", lvl, used,
+                     allowed, int(row["vip"]), STATUS_RESET_LIMIT)
+            return _answer(STATUS_RESET_LIMIT, used)
+        # MMTools:getCostNum(LEVEL_RESET_COST, reset_count) (DesBuyPanel.lua:
+        # 203-204): "price|count,..." tiers, the price of the tier that holds
+        # reset number used + 1; past the last tier the client says 0.
+        raw = cfg.variable("LEVEL_RESET_COST")
+        if not raw:
+            raise KeyError("variables.LEVEL_RESET_COST is missing")
+        price, total = 0, 0
+        for part in raw.split(","):
+            tier_price, tier_count = part.split("|")
+            total += int(tier_count)
+            if used + 1 <= total:
+                price = int(tier_price)
+                break
+        if int(row["diamond"]) < price:
+            log.info("5_2207 stage %d: reset costs %d diamonds, player has %d (%d)",
+                     lvl, price, int(row["diamond"]), STATUS_NOT_ENOUGH_DIAMOND)
+            return _answer(STATUS_NOT_ENOUGH_DIAMOND, used)
+
+        db.spend(conn, player_id, diamond=price)
+        _ensure_row(conn, player_id, lvl)
+        conn.execute(
+            "UPDATE levels SET count = 0, reset_count = ? WHERE player_id = ?"
+            " AND level = ?", (used + 1, player_id, lvl),
         )
-        fill_required(res)
-        return res
+        conn.commit()
+        diamond = conn.execute(
+            "SELECT diamond FROM players WHERE id = ?", (player_id,)
+        ).fetchone()["diamond"]
+        notify.player_changed(registry, session, {"diamond": int(diamond)})
+        log.info("stage %d reset by player %d (reset %d today) for %d diamonds",
+                 lvl, player_id, used + 1, price)
+        return _answer(0, used + 1)
 
     return {
         (5, 2201): level_into,
