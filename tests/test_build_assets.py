@@ -385,3 +385,13 @@ def test_patch_17_keeps_the_rebirth_requirement_after_its_label(assets: Path) ->
     assert "self.nextReBirthLvTfd:setPosition(ccp(475,360))" not in panel
     assert ("self.nextReBirthLvTfd:setPosition(ccp(math.max(475, 364 + "
             "self.descLabel[1]:getContentSize().width),360))") in panel
+
+
+def test_patch_16_moves_the_consent_checkbox_left_of_the_longer_line(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    scene = (assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(encoding="utf-8")
+    moved = "self.privacyCheckBtn:setPositionX(50 - txt1:getContentSize().width - 22);"
+    assert moved in scene
+    # after both the checkbox and the consent line exist
+    assert scene.index("self.privacyCheckBtn:setPosition(ccp(-200,110))") < scene.index(moved)
+    assert scene.index('createLabel("我已详细阅读并同意"') < scene.index(moved)
