@@ -438,6 +438,15 @@ PATCHES: tuple[Patch, ...] = (
           "\tbox:addNode(txt1);\n",
           "\tbox:addNode(txt1);\n"
           "\tlocal w = txt1:getContentSize().width; if w > 170 then txt1:setScale(170 / w) end\n"),
+    # 19. RoleUI side tabs: the label box is 33 x 80, which patch 12 turns
+    #     sideways; "Breakthrough" does not fit 80 even at the minimum size,
+    #     so the engine breaks it ("Breakthro|ugh"), and f00380 "Awakening "
+    #     carries a trailing space that wraps too. 96 long (the tabs are 110
+    #     apart) and trimmed.
+    Patch("scripts/app/game/view/ui/RoleUI.lua",
+          "createMMLabel(tempTabTxtAry[k], 24, ccp(-19, -3), CCSize(33, 80), ui.TEXT_ALIGN_LEFT, true);",
+          'createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
+          "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

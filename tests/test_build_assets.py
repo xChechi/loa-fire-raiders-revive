@@ -20,6 +20,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/bag/BagLeftPanel.lua",
     "scripts/app/game/view/ui/LevelDes.lua",
     "scripts/app/game/framework/MMPlayerUpgradePanel.lua",
+    "scripts/app/game/view/ui/RoleUI.lua",
 )
 
 
@@ -407,3 +408,11 @@ def test_patch_18_shrinks_long_level_up_labels_to_end_before_the_value(assets: P
            "if w > 170 then txt1:setScale(170 / w) end")
     assert fit in panel
     assert panel.index("box:addNode(txt1);") < panel.index(fit) < panel.index("local txt2")
+
+
+def test_patch_19_gives_the_hero_side_tabs_a_longer_trimmed_label(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    ui = (assets / "scripts/app/game/view/ui/RoleUI.lua").read_text(encoding="utf-8")
+    assert "CCSize(33, 80)" not in ui
+    assert ('createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
+            "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);") in ui
