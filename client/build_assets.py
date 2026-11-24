@@ -500,6 +500,13 @@ PATCHES: tuple[Patch, ...] = (
           "    self.nameTfd:setString(tempHeroName);\n"
           "    local w = self.nameTfd:getContentSize().width; "
           "self.nameTfd:setScale(w > 142 and 142 / w or 1)\n"),
+    # 24. AngelPreviewDes: the name is right-aligned to end at x 178 and the
+    #     "Locked" / "Lv.N" label on the same line is right-aligned to end at
+    #     250; the English label is wider than 未召唤 and ran into the name
+    #     ("Idol Angel" + "Locked"). The name box moves 24 left.
+    Patch("scripts/app/game/view/ui/angel/AngelPreviewDes.lua",
+          "self.angelInfo.name, 12 - 34, 60 + 30, self.bgImg",
+          "self.angelInfo.name, 12 - 34 - 24, 60 + 30, self.bgImg"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

@@ -24,6 +24,7 @@ TOUCHED = (
     "scripts/app/game/manager/guide/NewGuideTalkPanel.lua",
     "scripts/app/game/view/ui/des/DesSweepPanel.lua",
     "scripts/app/game/view/ui/roleListUI/RoleListRoleRender.lua",
+    "scripts/app/game/view/ui/angel/AngelPreviewDes.lua",
 )
 
 
@@ -411,6 +412,14 @@ def test_patch_23_shrinks_long_hero_list_names_to_end_before_the_class_badge(
            "self.nameTfd:setScale(w > 142 and 142 / w or 1)")
     assert render.count(fit) == 1
     assert render.index("self.nameTfd:setString(tempHeroName);") < render.index(fit)
+
+
+def test_patch_24_moves_the_angel_name_left_of_the_locked_and_level_label(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    des = (assets / "scripts/app/game/view/ui/angel/AngelPreviewDes.lua").read_text(
+        encoding="utf-8"
+    )
+    assert "self.angelInfo.name, 12 - 34 - 24, 60 + 30, self.bgImg" in des
 
 
 def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:
