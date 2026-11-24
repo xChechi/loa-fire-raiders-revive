@@ -58,10 +58,14 @@ def test_class_badges_use_the_glossary_class_names():
     assert names["RoleListCarrerBg3.png"] == names["roleUICardCarrer3.png"] == "Marksman"
 
 
-def test_logo_login_group_leaves_the_logos_stock_and_reads_discounts_as_paid_tenths():
+def test_logo_login_group_draws_league_of_angels_and_reads_discounts_as_paid_tenths():
     entries = {Path(e.path).name: e for e in load_table() if e.group == "logo-login"}
-    assert len(entries) == 15
-    assert not {"gameLogin_Bigbg.png", "nslm_logo.png"} & set(entries)
+    assert len(entries) == 17
+    # Option 1 of docs/screens/en-images-stage3/logo-options.jpg (owner, 24-11-2026).
+    for name in ("gameLogin_Bigbg.png", "nslm_logo.png"):
+        e = entries[name]
+        assert e.en == "LEAGUE OF\nANGELS" and len(e.logo) == 2, name
+    assert entries["gameLogin_Bigbg.png"].logo == [40, 92]
     # n折 = pay n tenths (game text 折扣:%d折 is "Discount: Pay %d0%").
     for n in range(1, 10):
         e = entries[f"discountLogo_{n}.png"]
@@ -231,6 +235,53 @@ def test_build_mirrors_the_stock_path_under_the_overlay(tmp_path: Path):
     written = out / STOCK_ASSETS / "ui/sub/w.png"
     assert Image.open(written).size == (50, 20)
     assert (stock / STOCK_ASSETS / "ui/sub/w.png").is_file()  # stock untouched
+
+
+def test_logo_mask_takes_the_blob_at_the_centre_not_specks_of_the_same_colour():
+    a = _plate(80, 40, plate=(60, 90, 160, 255))
+    a[12:28, 25:55] = (255, 210, 40, 255)  # the gold logo in the middle
+    a[2:5, 72:76] = (255, 210, 40, 255)  # a gold speck of background art
+    e = Entry(path="x", zh="字", en="", group="g", mask="logo", grow=1,
+              erase=[0, 0, 80, 40])
+    m = text_mask(a, e)
+    assert m[12:28, 25:55].all() and m[11, 24]
+    assert not m[2:5, 72:76].any()
+
+
+def test_logo_entry_draws_the_lines_centred_on_the_box_in_the_same_size(tmp_path: Path):
+    a = _plate(300, 140)
+    a[50:90, 100:200] = (255, 210, 40, 255)
+    _write_stock(tmp_path, "ui/logo.png", a)
+    e = Entry(path="ui/logo.png", zh="女神联盟", en="LEAGUE OF\nANGELS", group="g",
+              mask="logo", grow=2, logo=[14, 32], erase=[90, 40, 210, 100],
+              text=[90, 30, 210, 90])
+    out = np.asarray(render(e, tmp_path / STOCK_ASSETS))
+    assert out.shape == a.shape
+    assert (out[:, :20] == a[:, :20]).all() and (out[:, -20:] == a[:, -20:]).all()
+    # gold glyphs left and right of the centre, the old gold block gone round them
+    gold = (out[..., 0] > 220) & (out[..., 1] > 150) & (out[..., 2] < 120)
+    ys, xs = np.nonzero(gold)
+    assert abs((xs.min() + xs.max()) / 2 - 150) <= 3
+    assert xs.max() - xs.min() > 80
+    with pytest.raises(ValueError, match="logo sizes"):
+        render(Entry(path="ui/logo.png", zh="字", en="ONE LINE", group="g", mask="logo",
+                     logo=[14, 32], erase=[90, 40, 210, 100]), tmp_path / STOCK_ASSETS)
+
+
+@pytest.mark.skipif(not (STOCK / STOCK_ASSETS).is_dir(), reason=".stock not extracted")
+def test_login_background_loses_the_chinese_logo_and_its_seal():
+    e = next(x for x in load_table() if x.path == "ui/gameLogin_Bigbg.png")
+    src = Image.open(STOCK / STOCK_ASSETS / e.path)
+    out = render(e, STOCK / STOCK_ASSETS)
+    assert out.size == src.size == (1200, 720)
+    a = np.asarray(out.convert("RGB")).astype(int)
+    s = np.asarray(src.convert("RGB")).astype(int)
+    # the 手游 seal: bright yellow plate right of the word block, now none of it
+    seal = (slice(345, 415), slice(758, 798))
+    yellow = lambda p: ((p[..., 0] > 230) & (p[..., 1] > 170) & (p[..., 2] < 90)).sum()
+    assert yellow(s[seal]) > 300 and yellow(a[seal]) < 20
+    # the art away from the logo is the stock art
+    assert (a[:300] == s[:300]).all() and (a[560:] == s[560:]).all()
 
 
 def test_the_committed_table_is_the_default():

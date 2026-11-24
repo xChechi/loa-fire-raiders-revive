@@ -23,8 +23,17 @@ Which pixels are text ("mask"):
             dark plate);
   "color"   pixels within `tol` of `color` (coloured glyphs);
   "opaque"  pixels with alpha above 0 (pure text images);
+  "logo"    the gold glyphs and flourish and the maroon plate of the stock
+            女神联盟 logo: only the one blob nearest the box centre, so
+            specks of orange background elsewhere in the box stay;
 grown by `grow` pixels so the glyph outline goes too, and by `halo` more
 pixels for dark pixels only (a soft shadow round labels that hang off the art).
+`smooth` is the number of smoothing passes of the inpaint fill.
+
+An entry with `logo` (one font size per line of `en`, lines split on "\n")
+is drawn as a game logo instead of a label: gold gradient glyphs, a dark
+orange rim, a thick maroon plate, a warm glow and a gold flourish under the
+last line, the word block centred on the text box.
 
 The English is drawn with Lilita One (SIL OFL 1.1, localise/fonts), a
 vertical gradient fill, an outline, and an optional glow and drop shadow.
@@ -81,6 +90,8 @@ class Entry:
     max_size: int = 0  # 0 = no cap
     lines: int = 2  # most lines the text may use
     rotate: int = 0  # degrees counter-clockwise (vertical labels)
+    smooth: int = 40  # smoothing passes of the inpaint fill
+    logo: list[int] | None = None  # font size per line: draw a logo, not a label
     # More English pieces in other places of the same image, each a table
     # with `en` and `text` and optionally its own fill/outline/glow/...
     parts: list[dict] = field(default_factory=list)
@@ -188,6 +199,11 @@ def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
     elif e.mask == "color":
         ref = np.array(_hex(e.color))
         core = (np.abs(rgb - ref).max(axis=2) <= e.tol) & (alpha > 128)
+    elif e.mask == "logo":
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        gold = (r > 200) & (g > 70) & (b < 90)
+        maroon = (r > 40) & (r < 150) & (g < 70) & (b < 45) & (r > g + 30)
+        core = (gold | maroon) & (alpha > 128)
     else:
         raise ValueError(f"{e.path}: unknown mask {e.mask!r}")
     inbox = np.zeros((h, w), bool)
@@ -205,6 +221,15 @@ def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
             ImageFilter.MaxFilter(2 * e.halo + 1))
         dark = (_lum(rgb) < 100) & (alpha > 0)
         core |= (np.asarray(m) > 0) & dark & inbox
+    if e.mask == "logo" and core.any():
+        # Only the logo itself: the one blob nearest the box centre, not the
+        # specks of orange background elsewhere in the box.
+        ys, xs = np.nonzero(core)
+        x0, y0, x1, y1 = _box(boxes[0], w, h)
+        i = np.argmin((xs - (x0 + x1) / 2) ** 2 + (ys - (y0 + y1) / 2) ** 2)
+        blob = Image.fromarray(core.astype(np.uint8) * 255).copy()  # writable
+        ImageDraw.floodfill(blob, (int(xs[i]), int(ys[i])), 128)
+        core = np.asarray(blob) == 128
     return core
 
 
@@ -398,6 +423,71 @@ def draw_text(img: Image.Image, e: Entry, style: dict, box) -> Image.Image:
     return out
 
 
+def _solid(mask: Image.Image, rgb) -> Image.Image:
+    return Image.merge("RGBA", (*[Image.new("L", mask.size, c) for c in rgb], mask))
+
+
+def draw_logo(img: Image.Image, e: Entry, box) -> Image.Image:
+    """Draw e.en as a game logo, one line per "\\n" in the sizes of e.logo,
+    the word block centred on box. The flourish is sized for a last line
+    of 92 px and scales with it."""
+    lines = e.en.split("\n")
+    if len(lines) != len(e.logo):
+        raise ValueError(f"{e.path}: {len(lines)} lines of English, {len(e.logo)} logo sizes")
+    k = e.logo[-1] / 92
+    fonts = [_font(s) for s in e.logo]
+    heights = [round(s * 0.95) for s in e.logo]
+    widest = max(f.getbbox(t)[2] for f, t in zip(fonts, lines))
+    W = widest + round(240 * k) + 40
+    H = sum(heights) + round(160 * k) + 40
+    fill_m, rim_m, plate_m = (Image.new("L", (W, H)) for _ in range(3))
+    df, dr, dp = (ImageDraw.Draw(m) for m in (fill_m, rim_m, plate_m))
+    y = (H - sum(heights)) / 2
+    for text, f, size, hgt in zip(lines, fonts, e.logo, heights):
+        yb = y + hgt * 0.88
+        df.text((W / 2, yb), text, font=f, anchor="ms", fill=255)
+        dr.text((W / 2, yb), text, font=f, anchor="ms", fill=255,
+                stroke_width=max(2, size // 22), stroke_fill=255)
+        dp.text((W / 2, yb), text, font=f, anchor="ms", fill=255,
+                stroke_width=max(5, size // 8), stroke_fill=255)
+        y += hgt
+    # flourish: a gold swoosh with a point under the word block, maroon edged
+    bb = fill_m.getbbox()
+    fl = Image.new("L", (W, H))
+    dfl = ImageDraw.Draw(fl)
+    fy = bb[3] + 10 * k
+    dfl.arc((bb[0] - 30 * k, fy - 40 * k, bb[2] + 30 * k, fy + 18 * k), 25, 155,
+            fill=255, width=max(2, round(7 * k)))
+    dfl.polygon([(W / 2 - 16 * k, fy + 6 * k), (W / 2, fy + 30 * k),
+                 (W / 2 + 16 * k, fy + 6 * k)], fill=255)
+    edge = fl.filter(ImageFilter.MaxFilter(2 * max(1, round(4 * k)) + 1))
+    plate_m = Image.fromarray(np.maximum(np.asarray(plate_m), np.asarray(edge)))
+    layer = Image.new("RGBA", (W, H))
+    glow = plate_m.filter(ImageFilter.GaussianBlur(max(2, 9 * k)))
+    layer.alpha_composite(_solid(glow.point(lambda v: min(255, int(v * 1.2))), (255, 120, 20)))
+    layer.alpha_composite(_solid(plate_m, (78, 14, 0)))
+    # the gradient spans the word block plus 135 px (the look of the mock)
+    span = sum(heights) + 135 * k
+    t = np.clip((np.arange(H)[:, None] - (H - span) / 2) / span, 0, 1)
+    stops = [(0, (255, 250, 190)), (0.45, (255, 196, 30)), (1, (232, 104, 8))]
+    grad = np.zeros((H, W, 3))
+    for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+        u = np.clip((t - p0) / (p1 - p0), 0, 1)
+        sel = (t >= p0) & (t <= p1)
+        for ch in range(3):
+            grad[..., ch] = np.where(sel, c0[ch] * (1 - u) + c1[ch] * u, grad[..., ch])
+    gold = Image.fromarray(grad.astype(np.uint8), "RGB").split()
+    layer.alpha_composite(_solid(rim_m, (150, 40, 0)))
+    layer.alpha_composite(Image.merge("RGBA", (*gold, fill_m)))
+    layer.alpha_composite(Image.merge("RGBA", (*gold, fl)))
+    x0, y0, x1, y1 = box
+    full = Image.new("RGBA", img.size)
+    full.paste(layer, (round((x0 + x1) / 2 - W / 2), round((y0 + y1) / 2 - H / 2)))
+    out = img.copy()
+    out.alpha_composite(full)
+    return out
+
+
 def render(e: Entry, stock_assets: Path) -> Image.Image:
     src = Image.open(stock_assets / e.path)
     img = src.convert("RGBA")
@@ -410,7 +500,7 @@ def render(e: Entry, stock_assets: Path) -> Image.Image:
         # A transparent pixel is no glyph: it stays as it is and its
         # transparency feeds the fill, so labels hanging off the art fade out
         # instead of becoming an opaque block.
-        rgba = inpaint(rgba, mask & (rgba[..., 3] > 0))
+        rgba = inpaint(rgba, mask & (rgba[..., 3] > 0), e.smooth)
     else:
         raise ValueError(f"{e.path}: unknown mode {e.mode!r}")
     base = Image.fromarray(rgba, "RGBA")
@@ -419,7 +509,10 @@ def render(e: Entry, stock_assets: Path) -> Image.Image:
     h, w = rgba.shape[:2]
     if e.text is None and e.erase and isinstance(e.erase[0], list):
         raise ValueError(f"{e.path}: several erase boxes need an explicit text box")
-    out = draw_text(base, e, style, _box(e.text or e.erase, w, h))
+    if e.logo:
+        out = draw_logo(base, e, _box(e.text or e.erase, w, h))
+    else:
+        out = draw_text(base, e, style, _box(e.text or e.erase, w, h))
     for part in e.parts:
         pe = replace(e, parts=[], **part)
         out = draw_text(out, pe, style, _box(pe.text, w, h))

@@ -1460,8 +1460,8 @@ sources = [["angel_info", "angel_entry"]]
 alias = {"9010002" = 901000}
 
 # --- stage 3: logo / login group (24-11-2026) --------------------------------------
-# The two logo images (gameLogin_Bigbg.png, nslm_logo.png) stay stock until the
-# owner picks a wording: docs/screens/en-images-stage3/logo-options.jpg.
+# The logo: option 1 "League of Angels" of docs/screens/en-images-stage3/
+# logo-options.jpg, picked by the owner (24-11-2026).
 
 [preset.discount_tag]
 # Yellow glyphs with a dark brown outline on the wooden price tag of the
@@ -1485,6 +1485,35 @@ group = "logo-login"
 mode = "inpaint"
 mask = "all"
 lines = 1
+
+[[image]]
+# Login and loading background (GameLoginScene.lua:113, LoadingManager.lua:69,
+# the upgrade scenes). The 手游 ("mobile game") seal goes without a
+# replacement; its fill stays soft (a mirrored-grain fill was tried and left
+# zig-zag seams, 24-11-2026).
+group = "logo-login"
+path = "ui/gameLogin_Bigbg.png"
+zh = "女神联盟 手游"
+en = "LEAGUE OF\nANGELS"
+logo = [40, 92]
+mode = "inpaint"
+mask = "logo"
+grow = 3
+smooth = 60
+erase = [420, 330, 805, 485]
+text = [446, 345, 766, 465]
+
+[[image]]
+# The logo on its own (no script loads it in this build; shipped so no copy
+# of the Chinese logo is left).
+group = "logo-login"
+path = "ui/nslm_logo.png"
+zh = "女神联盟 手游"
+en = "LEAGUE OF\nANGELS"
+logo = [28, 64]
+mode = "clear"
+mask = "opaque"
+text = [91, 18, 291, 100]
 
 [[image]]
 preset = "discount_tag"
