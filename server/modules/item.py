@@ -9,14 +9,21 @@ shrinks is worse than a crash in a log Stefan reads.
 There is no ClientItem message in allProtos.pb: an owned item is a ClientStock
 (one row per item entry, `amount` absolute), which is what QueryMyselfRes
 carries in its repeated `inventory` field.
+
+A stock never passes item_info.stackable; what does not fit goes into one
+mail 99999 物品超限提醒 per call. A hero the player already owns arrives as
+HERO_DISCOUNT_STAR_{hero_info.star} of hero_info.item, the conversion the
+client itself shows (MMAwardDropItem.lua:70-97).
 """
 
 from __future__ import annotations
 
 import sqlite3
+import time
 
 from server import db
 from server.config import Config
+from server.modules import mail
 from server.net.registry import Registry
 from server.net.server import fill_required
 
@@ -25,6 +32,9 @@ CATEGORY_ENERGY = 2
 CATEGORY_DIAMOND = 9
 CATEGORY_ITEM = 20
 CATEGORY_HERO = 30
+
+# mail_info 99999 物品超限提醒; its body has one "|" for the item names.
+OVERFLOW_MAIL = 99999
 
 KNOWN_CATEGORIES = frozenset(
     {CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_ITEM, CATEGORY_HERO}
@@ -68,8 +78,24 @@ def _checked(cfg: Config, prizes) -> list[tuple[int, int, int]]:
             raise KeyError(f"item_info has no row for item {refer}")
         if category == CATEGORY_HERO and not cfg.hero_qualities(refer):
             raise KeyError(f"hero_quality has no row for hero {refer}")
+        if category == CATEGORY_HERO:
+            _hero_stones(cfg, refer)
         out.append((category, refer, amount))
     return out
+
+
+def _hero_stones(cfg: Config, hero: int) -> tuple[int, int]:
+    """(soul stone item, count) a duplicate of this hero turns into."""
+    info = cfg.hero(hero)
+    if info is None:
+        raise KeyError(f"hero_info has no row for hero {hero}")
+    key = f"HERO_DISCOUNT_STAR_{int(info['star'])}"
+    if cfg.variable(key) in (None, ""):
+        raise KeyError(f"variables.{key} is missing (hero {hero})")
+    stone = int(info["item"])
+    if cfg.item(stone) is None:
+        raise KeyError(f"item_info has no row for item {stone} (hero {hero})")
+    return stone, cfg.variable_int(key, 0)
 
 
 def grant_prizes(
@@ -79,11 +105,28 @@ def grant_prizes(
 
     The return value is what both the persistence and the client notification
     need: the new absolute gold, diamond and energy, the new absolute amount of
-    every item touched, and the row id of every hero created.
+    every item touched, the row id of every hero created, and the id of the
+    overflow mail if one was sent (the caller queues notify.mail_arrived).
     """
     out: dict = {
         "gold": 0, "diamond": 0, "energy": 0, "items": [], "heroes": [],
+        "mails": [],
     }
+    overflow: dict[int, int] = {}
+
+    def _item(refer: int, amount: int) -> None:
+        row = conn.execute(
+            "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+            (int(player_id), refer),
+        ).fetchone()
+        have = int(row["amount"]) if row else 0
+        cap = int(cfg.item(refer)["stackable"] or 0)
+        give = amount if cap <= 0 else max(0, min(amount, cap - have))
+        if amount > give:
+            overflow[refer] = overflow.get(refer, 0) + amount - give
+        if give:
+            out["items"].append((refer, db.grant_item(conn, player_id, refer, give)))
+
     for category, refer, amount in _checked(cfg, prizes):
         if category == CATEGORY_GOLD:
             conn.execute(
@@ -98,16 +141,30 @@ def grant_prizes(
         elif category == CATEGORY_ENERGY:
             db.add_energy(conn, cfg, player_id, amount)
         elif category == CATEGORY_ITEM:
-            out["items"].append((refer, db.grant_item(conn, player_id, refer, amount)))
+            _item(refer, amount)
         else:
             # The lowest hero_quality row is the one a summon starts at, and
             # hero.quality_row_for reads the same row back on the way out.
             quality = int(cfg.hero_qualities(refer)[0]["quality"])
             for _ in range(max(1, amount)):
-                out["heroes"].append(
-                    db.grant_hero(conn, player_id, refer, quality)
-                )
+                owned = conn.execute(
+                    "SELECT 1 FROM heroes WHERE player_id = ? AND entry = ?",
+                    (int(player_id), refer),
+                ).fetchone()
+                if owned:
+                    _item(*_hero_stones(cfg, refer))
+                else:
+                    out["heroes"].append(
+                        db.grant_hero(conn, player_id, refer, quality)
+                    )
     conn.commit()
+    if overflow:
+        names = ", ".join(str(cfg.item(r)["name"]) for r in overflow)
+        out["mails"].append(mail.deliver(
+            conn, cfg, player_id, OVERFLOW_MAIL,
+            [(CATEGORY_ITEM, r, n) for r, n in overflow.items()],
+            int(time.time()), body=names,
+        ))
     row = conn.execute(
         "SELECT * FROM players WHERE id = ?", (int(player_id),)
     ).fetchone()

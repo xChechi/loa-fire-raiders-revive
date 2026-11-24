@@ -1,5 +1,6 @@
 """ClientStock and prize granting (categories from ClientPlayer.lua:146-186)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -72,10 +73,11 @@ def test_grant_prizes_applies_every_category_this_plan_sends(reg, cfg, conn) -> 
 
 
 def test_grant_prizes_returns_exactly_the_keys_callers_read(reg, cfg, conn) -> None:
-    """Tasks 11, 14 and 15 read these five keys by name off the return value."""
+    """Tasks 11, 14 and 15 read these five keys by name off the return value;
+    B3 adds the ids of the overflow mails."""
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     out = grant_prizes(conn, cfg, pid, [])
-    assert set(out) == {"gold", "diamond", "energy", "items", "heroes"}
+    assert set(out) == {"gold", "diamond", "energy", "items", "heroes", "mails"}
 
 
 def test_grant_prizes_adds_energy_through_the_db_helper(reg, cfg, conn) -> None:
@@ -86,13 +88,52 @@ def test_grant_prizes_adds_energy_through_the_db_helper(reg, cfg, conn) -> None:
     assert int(row["energy"]) == 15
 
 
-def test_granting_a_hero_twice_keeps_two_rows(reg, cfg, conn) -> None:
-    """The client keeps a list of heroes and RoleData:getHero inserts each one,
-    so a duplicate summon is a second row, not an error."""
+def test_duplicate_hero_converts_to_soul_stones(reg, cfg, conn) -> None:
+    """MMAwardDropItem.lua:70-97: an owned hero arrives as
+    HERO_DISCOUNT_STAR_{hero_info.star} of hero_info.item (category 20)."""
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     grant_prizes(conn, cfg, pid, [(30, 100000, 1)])
-    grant_prizes(conn, cfg, pid, [(30, 100000, 1)])
-    assert len(heroes_of(conn, pid)) == 2
+    out = grant_prizes(conn, cfg, pid, [(30, 100000, 1)])
+    info = cfg.hero(100000)
+    stones = cfg.variable_int(f"HERO_DISCOUNT_STAR_{int(info['star'])}", 0)
+    assert stones == 8
+    assert len(heroes_of(conn, pid)) == 1
+    assert out["heroes"] == []
+    assert out["items"] == [(int(info["item"]), stones)]
+    assert [(int(r["entry"]), int(r["amount"])) for r in items_of(conn, pid)] == [
+        (int(info["item"]), stones)
+    ]
+
+
+def test_two_of_one_new_hero_in_one_call_is_a_hero_and_stones(reg, cfg, conn) -> None:
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    out = grant_prizes(conn, cfg, pid, [(30, 101000, 2)])
+    assert len(out["heroes"]) == 1
+    assert out["items"] == [(101000, 8)]
+
+
+def test_overflow_beyond_stackable_goes_to_mail_99999(reg, cfg, conn) -> None:
+    """item_info.stackable caps a stock; the rest is mailed under template
+    99999 物品超限提醒, one mail per call, named in the result."""
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    cap = int(cfg.item(10000)["stackable"])
+    assert cap == 9999
+    grant_item(conn, pid, 10000, cap - 9)
+    out = grant_prizes(conn, cfg, pid, [(20, 10000, 20), (20, 1100, 1)])
+    assert out["items"] == [(10000, cap), (1100, 1)]
+    assert len(out["mails"]) == 1
+    row = conn.execute("SELECT * FROM mails WHERE id = ?", (out["mails"][0],)).fetchone()
+    assert int(row["player_id"]) == pid
+    assert int(row["entry"]) == 99999
+    assert json.loads(row["attachments"]) == [[20, 10000, 11]]
+    assert row["body"] == cfg.item(10000)["name"]
+
+
+def test_no_overflow_means_no_mail(reg, cfg, conn) -> None:
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    out = grant_prizes(conn, cfg, pid, [(20, 10000, 5)])
+    assert out["mails"] == []
+    assert conn.execute("SELECT COUNT(*) FROM mails").fetchone()[0] == 0
 
 
 def test_an_unknown_category_raises(reg, cfg, conn) -> None:
