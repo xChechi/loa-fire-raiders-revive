@@ -18,7 +18,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import drops, hero, item, notify
+from server.modules import drops, events, hero, item, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -208,6 +208,7 @@ def handlers(
             registry, session,
             {"gold": changed["gold"], "diamond": changed["diamond"]},
         )
+        events.refresh(conn, cfg, registry, session, player_id)
         log.info(
             "banner %s drawn for player %d: %s", gacha_id, player_id,
             [(d.category, d.refer, d.amount) for d in rolled],

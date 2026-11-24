@@ -19,7 +19,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import notify
+from server.modules import events, notify
 from server.modules.notify import HERO_FIELDS
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
@@ -577,6 +577,7 @@ def handlers(
         notify.hero_added(registry, session, build_client_hero(registry, cfg, new_row))
         notify.items_changed(registry, session, pairs)
         notify.player_changed(registry, session, {"gold": _gold(pid)})
+        events.refresh(conn, cfg, registry, session, pid)
         log.info("hero %d called by player %d for %dx %d and %d gold", entry, pid,
                  stones, stone, gold)
         return _res(name, STATUS_OK)

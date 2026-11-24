@@ -21,7 +21,7 @@ import time
 
 from server import db
 from server.config import Config
-from server.modules import drops, hero, item, notify
+from server.modules import drops, events, hero, item, notify
 from server.modules.player import _end_of_today
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
@@ -385,6 +385,8 @@ def handlers(
             "stage %d finished by player %d with %d star(s), won=%s", lvl, player_id,
             star, won,
         )
+        if won:
+            events.refresh(conn, cfg, registry, session, player_id)
         fill_required(res)
         return res
 

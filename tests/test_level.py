@@ -562,9 +562,10 @@ def test_level_out_hero_notify_carries_new_level_2(reg, cfg, world) -> None:
         assert values["level"] == 2.0
         assert values["xp"] == 0.0
         assert values["max_level"] == 2.0
-    # The notifies follow the stage's own player/item pushes, after the Res.
+    # The notifies follow the stage's own player/item pushes, after the Res
+    # (E1's achievement notifies, ident 6, come after them).
     idents = [m.ident for (s, c, m) in session.outbox if (s, c) == (5, 2008)]
-    assert idents[-3:] == [2, 2, 2]
+    assert [i for i in idents if i != 6][-3:] == [2, 2, 2]
 
 
 def test_lost_fight_pushes_no_hero_notify(reg, cfg, world) -> None:

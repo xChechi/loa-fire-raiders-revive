@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import angel, hero, item
+from server.modules import angel, events, hero, item
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -193,6 +193,7 @@ def handlers(
         # Energy regenerates lazily, so the cap and the recovered amount are
         # recomputed on the way out instead of on a timer.
         row = db.refresh_energy(conn, cfg, row)
+        events.refresh(conn, cfg, registry, None, session.player_id)
         log.info("sending QueryMyselfRes for player id %d", session.player_id)
         return build_query_myself_res(registry, cfg, conn, row)
 

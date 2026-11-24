@@ -198,7 +198,10 @@ def test_a_drawn_hero_is_persisted_and_pushed(reg, cfg, world, monkeypatch) -> N
     res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=1200000))
     assert [(e.category, e.refer) for e in res.items] == [(30, 101000)]
     assert [int(h["entry"]) for h in heroes_of(conn, pid)] == [101000]
-    assert [(s, c) for (s, c, _m) in session.outbox] == [(5, 2012), (5, 2008)]
+    # ident 6 is E1's achievement refresh after the draw.
+    assert [
+        (s, c) for (s, c, m) in session.outbox if not (c == 2008 and m.ident == 6)
+    ] == [(5, 2012), (5, 2008)]
 
 
 def test_a_drawn_item_lands_in_the_bag_and_is_pushed(reg, cfg, world, monkeypatch) -> None:
