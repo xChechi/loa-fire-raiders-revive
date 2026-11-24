@@ -1045,3 +1045,287 @@ en = "Not Activated"
 # the two side rules stay
 erase = [112, 0, 266, 25]
 text = [112, 1, 266, 24]
+
+# --- main city activity buttons (ui/mainSceneImg/activityBtn) ---------------------
+# Same style as the mainBtn icons; not in the inventory's name rules, but on the
+# main city screen. actBtn_3 (抢 on a red badge) is handled separately below.
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10100.png"
+zh = "首充"
+en = "First Top-Up"
+erase = [0, 60, 100, 100]
+text = [1, 56, 99, 99]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10210.png"
+zh = "签到"
+en = "Sign In"
+erase = [0, 47, 79, 78]
+text = [1, 43, 78, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10220.png"
+zh = "VIP礼包"
+en = "VIP Pack"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10360.png"
+zh = "活动"
+en = "Events"
+erase = [0, 52, 85, 86]
+text = [1, 48, 84, 85]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10410.png"
+zh = "礼包"
+en = "Packs"
+erase = [0, 47, 79, 78]
+text = [1, 43, 78, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_10610.png"
+zh = "开服狂欢"
+en = "Launch Carnival"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_60010.png"
+zh = "VIP周礼包"
+en = "VIP Weekly"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_70010.png"
+zh = "开服基金"
+en = "Launch Fund"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_70020.png"
+zh = "特价集市"
+en = "Bargain Market"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90010.png"
+zh = "卡牌大师"
+en = "Card Master"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90020.png"
+zh = "小助手"
+en = "Assistant"
+erase = [0, 47, 79, 78]
+text = [1, 43, 78, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90050.png"
+zh = "周年庆"
+en = "Anniversary"
+erase = [0, 47, 78, 78]
+text = [1, 43, 77, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90060.png"
+zh = "摇钻石"
+en = "Diamond Slots"
+erase = [0, 65, 109, 109]
+text = [1, 61, 108, 108]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90090.png"
+zh = "幸运轮"
+en = "Lucky Wheel"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90200.png"
+zh = "积分商店"
+en = "Points Shop"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90230.png"
+zh = "爱心捐赠"
+en = "Charity Donation"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90250.png"
+zh = "欢度佳节"
+en = "Festival"
+erase = [0, 52, 85, 86]
+text = [1, 48, 84, 85]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90270.png"
+zh = "女神翻牌"
+en = "Angel Card Flip"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90290.png"
+zh = "碰碰碰"
+en = "Bump Bump"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90310.png"
+zh = "实名认证"
+en = "Real-Name Verification"
+erase = [0, 60, 100, 100]
+text = [1, 56, 99, 99]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90320.png"
+zh = "合服狂欢"
+en = "Server Merge Carnival"
+erase = [0, 47, 79, 78]
+text = [1, 43, 78, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90330.png"
+zh = "限时精彩"
+en = "Limited-Time Highlights"
+erase = [0, 47, 79, 78]
+text = [1, 43, 78, 77]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90340.png"
+zh = "竞技榜"
+en = "Arena Ranks"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90360.png"
+zh = "魂匣转盘"
+en = "Soul Box Wheel"
+erase = [0, 52, 86, 86]
+text = [1, 48, 85, 85]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90370.png"
+zh = "女神圣堂"
+en = "Angel Sanctum"
+erase = [0, 52, 86, 86]
+text = [1, 48, 85, 85]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90380.png"
+zh = "超级福利"
+en = "Super Perks"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90390.png"
+zh = "资源阁"
+en = "Resources"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]
+
+[[image]]
+preset = "mainbtn"
+group = "main-city-activity-buttons"
+halo = 5
+path = "ui/mainSceneImg/activityBtn/actBtn_90400.png"
+zh = "超级折扣"
+en = "Super Discount"
+erase = [0, 48, 80, 80]
+text = [1, 44, 79, 79]

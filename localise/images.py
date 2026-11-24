@@ -23,7 +23,8 @@ Which pixels are text ("mask"):
             dark plate);
   "color"   pixels within `tol` of `color` (coloured glyphs);
   "opaque"  pixels with alpha above 0 (pure text images);
-grown by `grow` pixels so the glyph outline goes too.
+grown by `grow` pixels so the glyph outline goes too, and by `halo` more
+pixels for dark pixels only (a soft shadow round labels that hang off the art).
 
 The English is drawn with Lilita One (SIL OFL 1.1, localise/fonts), a
 vertical gradient fill, an outline, and an optional glow and drop shadow.
@@ -69,6 +70,7 @@ class Entry:
     color: str | None = None
     tol: int = 60
     grow: int = 2
+    halo: int = 0  # further growth that takes only dark pixels (a glyph shadow)
     fill: list[str] | None = None  # [top, bottom] of the gradient
     outline: str | None = None
     stroke: float = 0.12  # outline width as a fraction of the font size
@@ -149,6 +151,11 @@ def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
         m = Image.fromarray(core.astype(np.uint8) * 255).filter(
             ImageFilter.MaxFilter(2 * e.grow + 1))
         core = (np.asarray(m) > 0) & inbox
+    if e.halo > 0:
+        m = Image.fromarray(core.astype(np.uint8) * 255).filter(
+            ImageFilter.MaxFilter(2 * e.halo + 1))
+        dark = (_lum(rgb) < 100) & (alpha > 0)
+        core |= (np.asarray(m) > 0) & dark & inbox
     return core
 
 
@@ -351,7 +358,10 @@ def render(e: Entry, stock_assets: Path) -> Image.Image:
     if e.mode == "clear":
         rgba[mask] = 0
     elif e.mode == "inpaint":
-        rgba = inpaint(rgba, mask)
+        # A transparent pixel is no glyph: it stays as it is and its
+        # transparency feeds the fill, so labels hanging off the art fade out
+        # instead of becoming an opaque block.
+        rgba = inpaint(rgba, mask & (rgba[..., 3] > 0))
     else:
         raise ValueError(f"{e.path}: unknown mode {e.mode!r}")
     base = Image.fromarray(rgba, "RGBA")

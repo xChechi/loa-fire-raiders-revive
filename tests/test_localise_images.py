@@ -26,7 +26,8 @@ from localise.images import (
 )
 
 STOCK = Path(".stock")
-GROUPS = {"main-city-buttons", "class-badges", "word-images", "title-words", "on-screen"}
+GROUPS = {"main-city-buttons", "main-city-activity-buttons", "class-badges", "word-images",
+          "title-words", "on-screen"}
 
 
 # --- the table -------------------------------------------------------------------
@@ -169,6 +170,29 @@ def test_render_keeps_the_size_and_leaves_pixels_outside_the_box_alone(tmp_path:
     outside[5:35, 20:80] = False
     assert (out[outside] == a[outside]).all()
     assert (out[5:35, 20:80] != a[5:35, 20:80]).any()
+
+
+def test_inpaint_leaves_transparent_pixels_next_to_a_label_transparent(tmp_path: Path):
+    a = np.zeros((40, 60, 4), np.uint8)
+    a[:20] = (200, 60, 40, 255)  # art above
+    a[22:30, 10:50] = (255, 255, 255, 255)  # label hanging below the art
+    _write_stock(tmp_path, "ui/l.png", a)
+    e = Entry(path="ui/l.png", zh="字", en="", group="g", mask="light", grow=3, halo=2,
+              erase=[0, 20, 60, 40])
+    out = np.asarray(render(e, tmp_path / STOCK_ASSETS))
+    assert out[35:, :, 3].max() == 0  # was transparent, still is
+    assert out[26, 30, 3] < 255  # the label fades instead of turning into a block
+
+
+def test_halo_takes_dark_pixels_round_the_glyph_only():
+    a = _plate(40, 20, plate=(200, 200, 40, 255))
+    a[8:12, 8:12] = (255, 255, 255, 255)
+    a[8:12, 13:15] = (20, 10, 5, 255)  # dark shadow 1-2 px off the glyph
+    a[8:12, 3:5] = (240, 230, 60, 255)  # bright plate, same distance
+    e = Entry(path="x", zh="字", en="", group="g", mask="light", grow=0, halo=3)
+    m = text_mask(a, e)
+    assert m[8:12, 13:15].all()
+    assert not m[8:12, 3:5].any()
 
 
 def test_render_reads_paletted_pngs_and_writes_rgba(tmp_path: Path):
