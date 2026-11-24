@@ -169,6 +169,7 @@ PAD = " 　"
 KEY_OVERRIDES = {
     "h07001": "Rebirth Lv:",   # 转生等级: hero detail, value follows
     "h07002": "Rebirth Req:",  # 转生需求: hero detail, value follows
+    "c00140": "Select",        # 选区: login, under the button at x 250; longer sticks out left
     "h07008": "Rebirths",      # 转: unit after the rebirth count ("0 Rebirths"), not "Spin"
     "z00004": "Collected",     # 已获得女神: angel screen, "0/30" 130 px to the right
     "z00006": "Locked",        # 未召唤: angel screen, right-aligned under the name

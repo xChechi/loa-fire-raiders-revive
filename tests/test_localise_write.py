@@ -253,3 +253,11 @@ def test_rebirth_count_unit_reads_rebirths_after_the_number(tmp_path: Path):
     dst = tmp_path / "Language_en.lua"
     write_lua(src, dst, Renderer({"转": "Spin"}, set()), (set(), {"h07008"}))
     assert 'h07008 = " Rebirths",' in dst.read_text(encoding="utf-8")
+
+
+def test_select_server_hint_is_short_enough_to_hide_under_the_login_button():
+    # c00140 = "选区" sits at x 220, under the 160 px Log In / Start Game
+    # button centred at x 250; "Select Server" stuck out to its left.
+    from localise.write import KEY_OVERRIDES
+
+    assert KEY_OVERRIDES["c00140"] == "Select"
