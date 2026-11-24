@@ -420,6 +420,13 @@ PATCHES: tuple[Patch, ...] = (
           "    txt1:setColor(g_colorManager.C3_WHITE);\n"
           "    txt1:setTextHorizontalAlignment(kCCTextAlignmentRight);"
           " txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);\n"),
+    # 17. RoleUIInfoPanel:updateReBirthInfo puts the rebirth requirement
+    #     ("Lv.55") back at x 475 on every refresh, which undoes patch 13 and
+    #     covers "Rebirth Req:"; same rule as patch 13 there.
+    Patch(ROLE_INFO,
+          "self.nextReBirthLvTfd:setPosition(ccp(475,360))",
+          "self.nextReBirthLvTfd:setPosition(ccp(math.max(475, 364 + "
+          "self.descLabel[1]:getContentSize().width),360))"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

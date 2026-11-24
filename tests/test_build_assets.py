@@ -373,3 +373,15 @@ def test_patch_16_right_aligns_the_consent_line(assets: Path) -> None:
     apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
     scene = (assets / "scripts/app/game/view/scenes/GameLoginScene.lua").read_text(encoding="utf-8")
     assert "txt1:setAnchorPoint(ccp(1, 0.5)); txt1:setPositionX(50);" in scene
+
+
+def test_patch_17_keeps_the_rebirth_requirement_after_its_label(assets: Path) -> None:
+    # updateReBirthInfo moves the "Lv.55" value back to x 475 on every
+    # refresh, over the wider English label; patch 13 alone is undone there.
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    panel = (assets / "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua").read_text(
+        encoding="utf-8"
+    )
+    assert "self.nextReBirthLvTfd:setPosition(ccp(475,360))" not in panel
+    assert ("self.nextReBirthLvTfd:setPosition(ccp(math.max(475, 364 + "
+            "self.descLabel[1]:getContentSize().width),360))") in panel
