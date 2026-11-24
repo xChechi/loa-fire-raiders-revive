@@ -1338,6 +1338,81 @@ en = "Super Discount"
 erase = [0, 48, 80, 80]
 text = [1, 44, 79, 79]
 
+# --- stage 2: leftovers seen on screen ---------------------------------------------
+
+[[image]]
+preset = "mainbtn"
+group = "on-screen"
+path = "ui/mainSceneImg/mainSceneMsgBtn.png"
+zh = "聊天"
+en = "Chat"
+erase = [24, 63, 80, 91]
+text = [16, 62, 86, 92]
+lines = 1
+
+[[image]]
+# 抢 ("grab") in gold on the red envelope of the activity badge.
+group = "main-city-activity-buttons"
+path = "ui/mainSceneImg/activityBtn/actBtn_3.png"
+zh = "抢"
+en = "Grab"
+mode = "inpaint"
+mask = "lum"
+light = 150
+grow = 2
+erase = [32, 42, 70, 78]
+text = [28, 46, 72, 74]
+lines = 1
+fill = ["#fff2a0", "#f0b020"]
+outline = "#6a1000"
+stroke = 0.14
+
+[[image]]
+# The 失败 sprite of the defeat banner armature: frame sucai-ui_eff_battle_lose_4
+# at (17, 0) 149 x 73 in the atlas (ui_eff_battle_lose0.plist); the other
+# frames of the sheet are left alone.
+preset = "screen_text"
+path = "effect/ui_eff_battle_lose/ui_eff_battle_lose0.png"
+zh = "失败"
+en = "Defeat"
+erase = [17, 0, 166, 73]
+text = [18, 4, 165, 70]
+fill = ["#f6f6f6", "#9c9c9c"]
+outline = "#383838"
+stroke = 0.1
+shadow = 2
+
+[preset.lose_tip]
+# The caption under the screenshot of each defeat tip card; the screenshot
+# itself (tiny Chinese UI inside the picture) stays as it is.
+group = "on-screen"
+mode = "clear"
+mask = "opaque"
+lines = 2
+erase = [15, 196, 268, 280]
+text = [22, 200, 262, 270]
+fill = ["#ffec80", "#f2c23a"]
+outline = "#2a1408"
+stroke = 0.14
+
+[[image]]
+preset = "lose_tip"
+path = "ui/battle_end_lost_tip_1.png"
+zh = "训练女神和英雄，可提升等级。"
+en = "Train Angels\nand Heroes to\nraise their level."
+
+[[image]]
+preset = "lose_tip"
+path = "ui/battle_end_lost_tip_2.png"
+zh = "升级光环，全员属性都可得到稳步提升。"
+en = "Upgrade Auras\nto raise every\nunit's stats."
+
+[[image]]
+preset = "lose_tip"
+path = "ui/battle_end_lost_tip_3.png"
+zh = "提升技能等级，技能威力将得到加强。"
+en = "Raise skill levels\nto make skills\nstronger."
+
 # --- hero and angel names (stage 2) ------------------------------------------------
 # Not listed image by image: localise.images.name_entries takes every PNG of the
 # folder, reads the id off the file name and joins it to the `name` of that id
