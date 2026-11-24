@@ -21,6 +21,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/LevelDes.lua",
     "scripts/app/game/framework/MMPlayerUpgradePanel.lua",
     "scripts/app/game/view/ui/RoleUI.lua",
+    "scripts/app/game/manager/guide/NewGuideTalkPanel.lua",
 )
 
 
@@ -416,3 +417,15 @@ def test_patch_19_gives_the_hero_side_tabs_a_longer_trimmed_label(assets: Path) 
     assert "CCSize(33, 80)" not in ui
     assert ('createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
             "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);") in ui
+
+
+def test_patch_20_keeps_the_guide_talk_inside_its_bubble(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    talk = (assets / "scripts/app/game/manager/guide/NewGuideTalkPanel.lua").read_text(
+        encoding="utf-8"
+    )
+    assert 'createMMLabel("", 28, ccp(-50,-107), CCSizeMake(300, 100),nil,false);' in talk
+    # same centre line as the stock 120-high box: bottom 10 higher
+    assert "self.tf:setPosition(ccp(-50,-82));" in talk
+    assert "self.tf:setPosition(ccp(-245,-82));" in talk
+    assert ",-92)" not in talk

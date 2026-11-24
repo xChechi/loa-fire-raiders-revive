@@ -96,6 +96,7 @@ GUI_CREATOR = "scripts/app/game/utils/MMGUICreator.lua"
 ROLE_INFO = "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua"
 BAG_LEFT = "scripts/app/game/view/ui/bag/BagLeftPanel.lua"
 LEVEL_DES = "scripts/app/game/view/ui/LevelDes.lua"
+GUIDE_TALK = "scripts/app/game/manager/guide/NewGuideTalkPanel.lua"
 
 # Patch 12, English text layout. The engine draws every label with its own
 # FreeType code (FTLabelManager in libgame.so), which may break a line after
@@ -447,6 +448,15 @@ PATCHES: tuple[Patch, ...] = (
           "createMMLabel(tempTabTxtAry[k], 24, ccp(-19, -3), CCSize(33, 80), ui.TEXT_ALIGN_LEFT, true);",
           'createMMLabel((tempTabTxtAry[k]:gsub("%s+$", "")), 24, ccp(-19, -3), '
           "CCSize(33, 96), ui.TEXT_ALIGN_LEFT, true);"),
+    # 20. NewGuideTalkPanel: the princess's line is fitted to a 300 x 120 box,
+    #     but the engine's own wrap adds a line, and the vertically centred
+    #     text then runs below the bubble. Fit to 100 high instead, centred on
+    #     the same line (bottom 10 higher in both facing directions).
+    Patch(GUIDE_TALK,
+          'createMMLabel("", 28, ccp(-50,-107), CCSizeMake(300, 120),nil,false);',
+          'createMMLabel("", 28, ccp(-50,-107), CCSizeMake(300, 100),nil,false);'),
+    Patch(GUIDE_TALK, "self.tf:setPosition(ccp(-50,-92));", "self.tf:setPosition(ccp(-50,-82));"),
+    Patch(GUIDE_TALK, "self.tf:setPosition(ccp(-245,-92));", "self.tf:setPosition(ccp(-245,-82));"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
