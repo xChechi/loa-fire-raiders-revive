@@ -3,6 +3,7 @@
 
 import random
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -466,7 +467,7 @@ def test_sweep_and_reset_refuse_in_the_client_own_language(reg, cfg, world) -> N
     clean = handlers[(5, 2205)](
         session, reg.message_class("LevelCleanReq")(level=10000, times=1)
     )
-    assert clean.flag == 2
+    assert clean.flag == 1                          # not 3-starred (B7)
     assert len(clean.drops) == 0 and len(clean.reward) == 0
     clean.SerializeToString()
     reset = handlers[(5, 2207)](
@@ -576,3 +577,242 @@ def test_lost_fight_pushes_no_hero_notify(reg, cfg, world) -> None:
     req.heroes.append(100000)
     handlers[(5, 2203)](session, req)
     assert _hero_notifies(session) == []
+
+
+# --- Wave 1 B7: sweep, reset and the daily stage counts ----------------------
+# Stage 10000 (chapter 1): energy 6, gold 516, player_xp 6, maxcount 0.
+# Stage 110000 (first elite stage): energy 12, maxcount 3.
+FUTURE = 2 ** 31            # a deadline that has not passed yet
+ELITE = 110000
+
+
+def _sweep(handlers, session, reg, lvl, times):
+    return handlers[(5, 2205)](
+        session, reg.message_class("LevelCleanReq")(level=lvl, times=times)
+    )
+
+
+def _set_progress(conn, pid, lvl, star, count=0, reset_count=0, deadline=FUTURE):
+    conn.execute(
+        "INSERT INTO levels (player_id, level, star, count, reset_count, deadline)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (pid, lvl, star, count, reset_count, deadline),
+    )
+    conn.commit()
+
+
+def _progress(conn, pid, lvl):
+    return conn.execute(
+        "SELECT * FROM levels WHERE player_id = ? AND level = ?", (pid, lvl)
+    ).fetchone()
+
+
+def test_sweep_needs_three_stars(reg, cfg, world) -> None:
+    """LevelCleanRes has no status field (B1 settled point 13), so the refusal
+    is flag 1, which DesSweepPanel:onReceiveSweepData answers by resyncing the
+    count from `times`. Nothing is spent."""
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, 10000, star=2, count=1)
+    res = _sweep(handlers, session, reg, 10000, 1)
+    assert res.flag == 1
+    assert res.times == 1
+    assert list(res.drops) == []
+    row = find_player(conn, "stefan")
+    assert (int(row["energy"]), int(row["gold"])) == (60, 1280000)
+    assert int(_progress(conn, pid, 10000)["count"]) == 1
+    assert session.outbox == []
+    res.SerializeToString()
+
+
+def test_sweep_two_times_spends_energy_and_returns_two_drop_entries(
+    reg, cfg, world
+) -> None:
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, 10000, star=3)
+    res = _sweep(handlers, session, reg, 10000, 2)
+    assert res.flag == 0
+    assert len(res.drops) == 2
+    assert list(res.reward) == []
+    assert res.times == 2                            # the new count
+    row = find_player(conn, "stefan")
+    assert int(row["gold"]) == 1280000 + 2 * 516
+    # 2 x player_xp 6 = 12 = xp_for_level(1).player_xp_for_next_level
+    assert int(row["level"]) == 2
+    # 2 x 6 energy spent, then the level-up hands out
+    # xp_for_level(2).levelup_recovery_energy, capped at the new max_energy.
+    recovery = int(cfg.xp_for_level(2)["levelup_recovery_energy"])
+    assert int(row["energy"]) == min(62, 60 - 2 * 6 + recovery)
+    assert int(_progress(conn, pid, 10000)["count"]) == 2
+    rolled = [(d.category, d.refer, d.amount) for e in res.drops for d in e.drop]
+    assert rolled, "visible_drops 10000 is certain"
+    sent = [(s, c) for (s, c, _m) in session.outbox]
+    assert (5, 2008) in sent and (5, 2036) in sent
+    idents = [m.ident for (s, c, m) in session.outbox if (s, c) == (5, 2008)]
+    assert 1 in idents and 4 in idents
+    res.SerializeToString()
+
+
+def test_sweep_past_maxcount_flag_1(reg, cfg, world) -> None:
+    """The plan says flag 2; the client's sweep listener only knows flag 1
+    (DesSweepPanel.lua:713-727: resync count from `times`, float z00225), so
+    flag 1 with the server's count is what the client can act on."""
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3, count=2)
+    res = _sweep(handlers, session, reg, ELITE, 2)
+    assert res.flag == 1
+    assert res.times == 2
+    assert int(find_player(conn, "stefan")["energy"]) == 60
+    assert int(_progress(conn, pid, ELITE)["count"]) == 2
+    assert session.outbox == []
+
+
+def test_sweep_without_the_energy_is_refused(reg, cfg, world, caplog) -> None:
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, 10000, star=3)
+    conn.execute("UPDATE players SET energy = 11, energy_at = ? WHERE id = ?",
+                 (FUTURE, pid))
+    conn.commit()
+    res = _sweep(handlers, session, reg, 10000, 2)  # needs 12
+    assert res.flag == 1
+    assert "327939" in caplog.text
+    assert int(find_player(conn, "stefan")["energy"]) == 11
+    assert session.outbox == []
+
+
+def test_reset_vip0_refused_328202(reg, cfg, world) -> None:
+    """vip_info 10100 (重置精英关卡次数) is 0 at VIP 0."""
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3, count=3)
+    res = handlers[(5, 2207)](session, reg.message_class("LevelResetReq")(level=ELITE))
+    assert res.status == 328202
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert int(_progress(conn, pid, ELITE)["count"]) == 3
+    assert session.outbox == []
+    res.SerializeToString()
+
+
+def test_reset_at_vip10_pays_the_first_tier_and_zeroes_the_count(
+    reg, cfg, world
+) -> None:
+    """LEVEL_RESET_COST 200|1,400|1,...: the first reset of the day costs 200
+    diamonds (MMTools:getCostNum with times = reset_count 0)."""
+    conn, pid, handlers, session = world
+    conn.execute("UPDATE players SET vip = 10 WHERE id = ?", (pid,))
+    conn.commit()
+    _set_progress(conn, pid, ELITE, star=3, count=3)
+    res = handlers[(5, 2207)](session, reg.message_class("LevelResetReq")(level=ELITE))
+    assert res.status == 0
+    assert res.reset_count == 1
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 200
+    prog = _progress(conn, pid, ELITE)
+    assert (int(prog["count"]), int(prog["reset_count"])) == (0, 1)
+    # vip_info 10100 is 1 at VIP 10, so the second reset is refused.
+    again = handlers[(5, 2207)](
+        session, reg.message_class("LevelResetReq")(level=ELITE)
+    )
+    assert again.status == 328202
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 200
+
+
+def test_reset_without_the_diamonds_is_refused_327938(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    conn.execute("UPDATE players SET vip = 10, diamond = 199 WHERE id = ?", (pid,))
+    conn.commit()
+    _set_progress(conn, pid, ELITE, star=3, count=3)
+    res = handlers[(5, 2207)](session, reg.message_class("LevelResetReq")(level=ELITE))
+    assert res.status == 327938                     # language.db 钻石不足
+    assert int(_progress(conn, pid, ELITE)["count"]) == 3
+
+
+def test_counts_reset_after_deadline(reg, cfg, world) -> None:
+    """A row whose deadline has passed starts the day at count 0 and
+    reset_count 0, with the deadline moved to the end of today."""
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3, count=3, reset_count=1, deadline=1)
+    res = handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=ELITE))
+    assert res.flag == 0                             # maxcount 3 no longer reached
+    prog = _progress(conn, pid, ELITE)
+    assert (int(prog["count"]), int(prog["reset_count"])) == (0, 0)
+    assert int(prog["deadline"]) > int(time.time())
+
+
+def test_a_fresh_stage_row_carries_today_deadline(reg, cfg, world) -> None:
+    """The first play of a stage writes a row whose deadline is the end of
+    today, so the next read does not mistake it for an old day's count."""
+    conn, pid, handlers, session = world
+    _fight(handlers, session, reg, 10000, star=3)
+    assert int(_progress(conn, pid, 10000)["deadline"]) > int(time.time())
+    _fight(handlers, session, reg, 10000, star=3)
+    assert int(_progress(conn, pid, 10000)["count"]) == 2
+
+
+# --- Wave 1 B7 commit B: the fielded angel gains xp --------------------------
+# Stage 10000 pays angel_xp 20; xp_for_level(1).angel_xp_for_next_level is 20;
+# angel_info 500000 has max_level 40.
+GODDESS = 500000
+
+
+def _angel_notifies(session):
+    return [m for (s, c, m) in session.outbox if (s, c) == (5, 2008) and m.ident == 3]
+
+
+def _angel_fight(handlers, session, reg, star, angel):
+    handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    session.outbox.clear()
+    req = reg.message_class("LevelOutReq")(level=10000, star=star, angel=angel)
+    return handlers[(5, 2203)](session, req)
+
+
+def test_won_stage_gives_angel_xp_and_levels_angel(reg, cfg, world) -> None:
+    from server.db import grant_angel
+    from server.modules.notify import ANGEL_FIELDS
+
+    conn, pid, handlers, session = world
+    grant_angel(conn, pid, GODDESS, level=1, star=1)
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)
+    assert res.status == 0
+    assert (res.angel.refer, res.angel.level, res.angel.xp) == (GODDESS, 2, 0)
+    row = conn.execute(
+        "SELECT level, exp FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert (int(row["level"]), int(row["exp"])) == (2, 0)
+    notes = _angel_notifies(session)
+    assert len(notes) == 1
+    assert notes[0].refer == GODDESS
+    names = [n for i, n in enumerate(ANGEL_FIELDS) if notes[0].flags & (1 << i)]
+    assert dict(zip(names, notes[0].data)) == {"level": 2.0, "exp": 0.0}
+    res.SerializeToString()
+    notes[0].SerializeToString()
+
+
+def test_angel_at_max_level_does_not_pass_it(reg, cfg, world) -> None:
+    from server.db import grant_angel
+
+    conn, pid, handlers, session = world
+    grant_angel(conn, pid, GODDESS, level=40, star=1)
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)
+    assert res.angel.level == 40
+    row = conn.execute(
+        "SELECT level FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert int(row["level"]) == 40
+
+
+def test_unowned_or_losing_angel_gains_nothing(reg, cfg, world) -> None:
+    from server.db import grant_angel
+
+    conn, pid, handlers, session = world
+    res = _angel_fight(handlers, session, reg, star=3, angel=GODDESS)   # not owned
+    assert not res.HasField("angel")
+    assert _angel_notifies(session) == []
+    grant_angel(conn, pid, GODDESS, level=1, star=1)
+    res = _angel_fight(handlers, session, reg, star=0, angel=GODDESS)   # lost
+    assert not res.HasField("angel")
+    assert _angel_notifies(session) == []
+    row = conn.execute(
+        "SELECT level, exp FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (pid, GODDESS),
+    ).fetchone()
+    assert (int(row["level"]), int(row["exp"])) == (1, 0)

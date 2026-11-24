@@ -172,13 +172,29 @@ def test_an_entry_the_player_does_not_own_is_skipped_and_logged(
 
 
 def test_the_angel_slot_is_not_read_as_a_hero(reg, cfg, world, caplog) -> None:
-    """units[0] is the angel (FunctionType.lua:1117 param[1]), and Plan B1 has
-    no angels, so an entry there is refused rather than built as a hero."""
+    """units[0] is the angel (FunctionType.lua:1117 param[1]); it is never
+    built as a hero, and an angel the player does not own is logged."""
     _conn, _pid, _row_id, handlers, session = world
     with caplog.at_level("WARNING"):
         res = handlers[(5, 2327)](session, _req(reg, [701000, HERO, 0, 0, 0, 0, 0]))
     assert [u.position for u in res.team_base.units] == [1]
     assert "701000" in caplog.text
+
+
+def test_an_owned_angel_in_the_angel_slot_is_accepted_silently(
+    reg, cfg, world, caplog
+) -> None:
+    """The client builds the angel unit itself from QueryMyselfRes.angels
+    (plan B2 settled point 7), so team_base carries heroes only and an owned
+    angel needs no warning."""
+    from server.db import grant_angel
+
+    conn, pid, _row_id, handlers, session = world
+    grant_angel(conn, pid, 500000, level=1, star=1)
+    with caplog.at_level("WARNING"):
+        res = handlers[(5, 2327)](session, _req(reg, [500000, HERO, 0, 0, 0, 0, 0]))
+    assert [u.refer for u in res.team_base.units] == [HERO]
+    assert [r for r in caplog.records if r.levelname == "WARNING"] == []
 
 
 def test_the_refer_of_the_request_is_echoed(reg, cfg, world) -> None:
