@@ -77,7 +77,12 @@ keep their tiny baked-in Chinese UI (it is a picture of the old UI); only the ca
 |---|---|---|
 | logo / login | 11 of 24 | the ten discount-shop tags N折 ("Pay N0%", so 1折 = "90% OFF") and 佣兵 Mercenary (line-up badge). gameLogin_btn_logoutgame was done in stage 1. The other eleven (girl_logo x2, costStone logo_1-5 and logo_bg_1-2, logo_stone_1-2) are art without text; nslm_logo.png is the logo (below) |
 | login plates (not in the 24) | 4 | the 服务器 plate gameLogin_bg and the three login buttons 快速游戏 / 登录账号 / 开始游戏; no Lua loads these four today, re-drawn because they are cheap |
-| the logo | 0 of 2 | gameLogin_Bigbg.png (what the login and loading screens load) and nslm_logo.png (no Lua loads it) stay stock until the owner picks a wording: `docs/screens/en-images-stage3/logo-options.jpg` shows the original, "League of Angels" and the placeholder "Fire Raiders" (mocks only) |
+| the logo (see below) | 0 of 2 | gameLogin_Bigbg.png (what the login and loading screens load) and nslm_logo.png (no Lua loads it) stay stock until the owner picks a wording: `docs/screens/en-images-stage3/logo-options.jpg` shows the original, "League of Angels" and the placeholder "Fire Raiders" (mocks only) |
+
+The story dialogue that stage 2 left out is now translated as a fifth text source
+(`localise/story.py`, 89 of the 90 Story_*.lua files; Story_2001.lua is GBK and never
+compiles). On the emulator: `docs/screens/en-2026-11-24-stage3/` (opening battle and city
+story on a fresh character, Death Mine story, hero list, angels, stage story box).
 
 ## Files per group
 
