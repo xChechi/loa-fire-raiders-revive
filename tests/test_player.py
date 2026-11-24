@@ -386,3 +386,26 @@ def test_daily_stats_counters_reset_on_a_new_day(reg, cfg, row) -> None:
     assert (next_day.stats.buy_energy, next_day.stats.buy_gold) == (0, 0)
     stored = find_player(conn, "stefan")
     assert (stored["buy_energy_used"], stored["daily_day"]) == (0, "2026-11-25")
+
+
+def test_daily_stats_carry_paid_store_refreshes(reg, cfg, row) -> None:
+    """The client counts only paid refreshes in store_refresh_times_<store>
+    (AllShopUI.lua:736-739): refresh_used - free_refresh, never below 0, and 0
+    for a row whose counter belongs to an older day. Store 1 has 4 free
+    refreshes, store 2 none, store 3 one."""
+    from datetime import date
+
+    conn, r = row
+    pid = int(r["id"])
+    today = date.today().isoformat()
+    for store, used, day in ((1, 6, today), (2, 3, today), (3, 1, today), (4, 5, "2000-01-01")):
+        conn.execute(
+            "INSERT INTO stores (player_id, store, lastupdate, slots, refresh_used,"
+            " refresh_day) VALUES (?, ?, 0, '[]', ?, ?)", (pid, store, used, day),
+        )
+    conn.commit()
+    stats = player.build_query_myself_res(reg, cfg, conn, r).stats
+    assert stats.store_refresh_times_1 == 2
+    assert stats.store_refresh_times_2 == 3
+    assert stats.store_refresh_times_3 == 0
+    assert stats.store_refresh_times_4 == 0

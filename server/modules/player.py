@@ -92,7 +92,8 @@ def build_query_myself_res(
     """`today` is the ISO day the daily counters belong to (injectable for
     tests); it defaults to the server's local date."""
     player_id = int(row["id"])
-    db.ensure_today(conn, player_id, today or date.today().isoformat())
+    today = today or date.today().isoformat()
+    db.ensure_today(conn, player_id, today)
     row = conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
     now = int(time.time())
     unread = conn.execute(
@@ -104,6 +105,18 @@ def build_query_myself_res(
     )
     msg.player.CopyFrom(build_client_player(registry, row))
     msg.stats.CopyFrom(build_daily_stats(registry, row))
+    # The client counts only paid shop refreshes here (AllShopUI.lua:736-739);
+    # a stores row from an older day has had no refresh yet today.
+    for store_row in conn.execute(
+        "SELECT store, refresh_used FROM stores WHERE player_id = ? AND refresh_day = ?",
+        (player_id, today),
+    ):
+        store, info = int(store_row["store"]), cfg.store(int(store_row["store"]))
+        field = f"store_refresh_times_{store}"
+        if info is None or field not in msg.stats.DESCRIPTOR.fields_by_name:
+            continue
+        paid = max(0, int(store_row["refresh_used"]) - int(info["free_refresh"]))
+        setattr(msg.stats, field, paid)
     # RoleData:updateData reads d.gold_trails.prize with no nil check, so the
     # sub-message must be present even though both its fields are optional.
     msg.gold_trails.SetInParent()
