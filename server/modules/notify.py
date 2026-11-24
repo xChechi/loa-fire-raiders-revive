@@ -1,5 +1,9 @@
 """Server-to-client pushes: 5_2008, 5_2036, 5_2012.
 
+5_2008 ClientNotification idents (RoleData.lua:21-38): 1 player, 2 hero,
+3 angel, 4 item, 6 task, 7 mail, 9 hero base unit. Idents 1, 2, 3 and 9 share
+the byte-indexed flag mask of flags_for, each over its own field order.
+
 These are notify ids with no paired Req, so they are queued on the session and
 written by the dispatcher through Session.send.
 """
@@ -15,7 +19,11 @@ log = logging.getLogger("loa.notify")
 
 IDENT_PLAYER = 1
 IDENT_HERO = 2
+IDENT_ANGEL = 3
 IDENT_ITEM = 4
+IDENT_TASK = 6
+IDENT_MAIL = 7
+IDENT_BASE = 9
 
 # ClientPlayer.PLAYER_FIELD_DIC, verbatim and in order. The 1-based index into
 # this tuple is the bit RoleData:onPlayerInfoChange tests.
@@ -33,6 +41,44 @@ PLAYER_FIELDS = (
     "realname_check", "pet_money",
 )
 
+# ClientHero.HERO_FIELDS, ClientHero.lua:41-103, verbatim and in order (the
+# two commented-out rune_develop_* lines are not in the list). RoleData:
+# onHeroInfoChange (RoleData.lua:487-525) walks it for ident 2.
+HERO_FIELDS = (
+    "prototype", "quality", "star", "xp", "level", "points",
+    "item0", "item1", "item2", "item3", "item4", "item5",
+    "spell0", "spell1", "spell2", "spell3",
+    "reserved0", "reserved1", "reserved2", "reserved3",
+    "max_hp", "power", "defence", "magic", "magic_defence", "agility",
+    "hit_base", "duck_base", "crit_base", "crit_damage_base", "block_base",
+    "tenacity_base", "spell_damage_add_scale", "treat_damage_add_scale",
+    "hit_rate", "duck_rate", "crit_rate", "crit_damage_rate", "block_rate",
+    "tenacity_rate", "hp_recovery", "rage_recovery",
+    "ability", "spell4", "model", "awaken",
+    "signet0", "signet1", "signet2", "signet3", "singet_set",
+    "transmigrate_level", "signet_ability", "resistance_base", "max_level",
+    "breakthrough_level", "breakthrough_score",
+    "god_soul_ability", "upgrade_soul_idx", "upgrade_soul_level",
+)
+
+# ClientHero.BASE_UNIT, ClientHero.lua:106-130, verbatim and in order. RoleData:
+# onHeroBaseInfoChange (RoleData.lua:591-627) walks it for ident 9.
+BASE_UNIT = (
+    "max_hp", "power", "defence", "magic", "magic_defence", "agility",
+    "hit_base", "duck_base", "crit_base", "crit_damage_base", "block_base",
+    "tenacity_base", "spell_damage_add_scale", "treat_damage_add_scale",
+    "hit_rate", "duck_rate", "crit_rate", "crit_damage_rate", "block_rate",
+    "tenacity_rate", "hp_recovery", "rage_recovery", "resistance_base",
+)
+
+# AngelManager.ANGEL_FIELDS, AngelManager.lua:29-44, verbatim and in order.
+# RoleData:onAngelInfoChange (RoleData.lua:633-695) walks it for ident 3.
+ANGEL_FIELDS = (
+    "entry", "level", "star", "exp",
+    "aura0", "aura1", "aura2", "aura3", "aura4", "aura5",
+    "ability", "spell0", "spell1", "advance_level",
+)
+
 # Open question A of Plan B1, NOT yet settled on the emulator (task 9 step 6,
 # deferred to task 17): flags is a fixed64, but Lua reads it with string.byte,
 # so byte floor((i-1)/8)+1 carries bit 2^((i-1) mod 8) for the 1-based field
@@ -43,10 +89,10 @@ PLAYER_FIELDS = (
 FLAGS_BYTE_ORDER = "little"
 
 
-def flags_for(names) -> int:
+def flags_for(names, order=PLAYER_FIELDS) -> int:
     mask = 0
     for name in names:
-        mask |= 1 << PLAYER_FIELDS.index(name)
+        mask |= 1 << order.index(name)
     if FLAGS_BYTE_ORDER == "big":
         mask = int.from_bytes(mask.to_bytes(8, "little"), "big")
     return mask
@@ -64,6 +110,68 @@ def player_changed(registry: Registry, session: Session, fields: dict) -> None:
     )
     for name in ordered:
         msg.data.append(float(fields[name]))
+    fill_required(msg)
+    session.queue(5, 2008, msg)
+
+
+def _fields_changed(
+    registry: Registry, session: Session, ident: int, order, refer: int,
+    fields: dict,
+) -> None:
+    """Idents 2, 3 and 9: the same walk as player_changed over another field
+    order, with `refer` naming the hero or angel entry."""
+    ordered = [n for n in order if n in fields]
+    unknown = set(fields) - set(order)
+    if unknown:
+        log.warning(
+            "not an ident-%d notify field, dropped: %s", ident, sorted(unknown)
+        )
+    msg = registry.message_class("ClientNotification")(
+        ident=ident, flags=flags_for(ordered, order), refer=int(refer)
+    )
+    for name in ordered:
+        msg.data.append(float(fields[name]))
+    fill_required(msg)
+    session.queue(5, 2008, msg)
+
+
+def hero_changed(registry: Registry, session: Session, entry: int, fields: dict) -> None:
+    """Ident 2; `refer` is the hero entry (RoleData:getHeroByEntry)."""
+    _fields_changed(registry, session, IDENT_HERO, HERO_FIELDS, entry, fields)
+
+
+def hero_base_changed(
+    registry: Registry, session: Session, entry: int, fields: dict
+) -> None:
+    """Ident 9; `refer` is the hero entry, fields are BASE_UNIT names."""
+    _fields_changed(registry, session, IDENT_BASE, BASE_UNIT, entry, fields)
+
+
+def angel_changed(
+    registry: Registry, session: Session, angel_entry: int, fields: dict
+) -> None:
+    """Ident 3; `refer` is the angel entry (AngelManager:getAngelByID)."""
+    _fields_changed(registry, session, IDENT_ANGEL, ANGEL_FIELDS, angel_entry, fields)
+
+
+def task_changed(
+    registry: Registry, session: Session, entry: int, progress: int, done: bool
+) -> None:
+    """Ident 6, RoleData:onTaskInfoChange (RoleData.lua:741-786): bit 2 is a
+    progress change, bit 3 is done, data[1] is the progress. The done bit is
+    only read when the progress bit is clear, so done sends 0b100 alone."""
+    msg = registry.message_class("ClientNotification")(
+        ident=IDENT_TASK, flags=0b100 if done else 0b10, refer=int(entry)
+    )
+    msg.data.append(float(progress))
+    fill_required(msg)
+    session.queue(5, 2008, msg)
+
+
+def mail_arrived(registry: Registry, session: Session) -> None:
+    """Ident 7, RoleData:onEmailInfoChange (RoleData.lua:787-803): bit 1 set
+    means new mail."""
+    msg = registry.message_class("ClientNotification")(ident=IDENT_MAIL, flags=0b1)
     fill_required(msg)
     session.queue(5, 2008, msg)
 

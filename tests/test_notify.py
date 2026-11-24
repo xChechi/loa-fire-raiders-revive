@@ -155,3 +155,100 @@ def test_the_outbox_is_cleared_even_when_a_send_raises(reg, settings) -> None:
     with pytest.raises(AttributeError):
         asyncio.run(server._flush(session))
     assert session.outbox == []
+
+
+# --- Wave 1: idents 2, 3, 6, 7, 9 (RoleData.lua:21-38, 487-803) -------------
+def test_hero_fields_order_matches_client() -> None:
+    """ClientHero.HERO_FIELDS, ClientHero.lua:41-103 (the two commented-out
+    rune_develop_* lines are not part of the list)."""
+    assert len(notify.HERO_FIELDS) == 60
+    assert notify.HERO_FIELDS[0] == "prototype"
+    assert notify.HERO_FIELDS.index("item0") + 1 == 7
+    assert notify.HERO_FIELDS.index("ability") + 1 == 43
+    assert notify.HERO_FIELDS[59] == "upgrade_soul_level"
+    assert len(notify.ANGEL_FIELDS) == 14
+    assert notify.ANGEL_FIELDS[:4] == ("entry", "level", "star", "exp")
+    assert notify.ANGEL_FIELDS[-1] == "advance_level"
+    assert len(notify.BASE_UNIT) == 23
+    assert notify.BASE_UNIT[0] == "max_hp"
+    assert notify.BASE_UNIT[-1] == "resistance_base"
+
+
+def test_hero_changed_item0_sets_bit7_and_one_value(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.hero_changed(reg, session, 100000, {"item0": 10000})
+    (service, cmd, msg) = session.outbox[0]
+    assert (service, cmd) == (5, 2008)
+    assert (msg.ident, msg.refer) == (2, 100000)
+    assert msg.flags == 1 << 6
+    assert list(msg.data) == [10000.0]
+    msg.SerializeToString()
+
+
+def test_hero_changed_orders_by_field_and_drops_unknown(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.hero_changed(
+        reg, session, 100000, {"ability": 300, "level": 2, "chocolate": 1}
+    )
+    (_, _, msg) = session.outbox[0]
+    assert msg.flags == (1 << 4) | (1 << 42)
+    assert list(msg.data) == [2.0, 300.0]
+
+
+def test_hero_base_changed_uses_base_unit_order(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.hero_base_changed(reg, session, 100000, {"power": 12, "max_hp": 200})
+    (_, _, msg) = session.outbox[0]
+    assert (msg.ident, msg.refer) == (9, 100000)
+    assert msg.flags == (1 << 0) | (1 << 1)
+    assert list(msg.data) == [200.0, 12.0]
+    msg.SerializeToString()
+
+
+def test_angel_changed_star_bit3(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.angel_changed(reg, session, 500000, {"star": 2})
+    (_, _, msg) = session.outbox[0]
+    assert (msg.ident, msg.refer) == (3, 500000)
+    assert msg.flags == 1 << 2
+    assert list(msg.data) == [2.0]
+    msg.SerializeToString()
+
+
+def test_task_changed_progress_sets_bit2(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.task_changed(reg, session, 10270, progress=3, done=False)
+    (_, _, msg) = session.outbox[0]
+    assert (msg.ident, msg.refer, msg.flags) == (6, 10270, 0b10)
+    assert list(msg.data) == [3.0]
+
+
+def test_task_changed_done_sets_bit3_with_progress(reg) -> None:
+    """RoleData:onTaskInfoChange reads the done bit only when the progress bit
+    is clear (RoleData.lua:749-767), so done is 0b100 alone."""
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.task_changed(reg, session, 10270, progress=5, done=True)
+    (_, _, msg) = session.outbox[0]
+    assert (msg.ident, msg.refer, msg.flags) == (6, 10270, 0b100)
+    assert list(msg.data) == [5.0]
+    msg.SerializeToString()
+
+
+def test_mail_arrived_bit1(reg) -> None:
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.mail_arrived(reg, session)
+    (service, cmd, msg) = session.outbox[0]
+    assert (service, cmd) == (5, 2008)
+    assert (msg.ident, msg.flags) == (7, 0b1)
+    msg.SerializeToString()
+
+
+def test_hero_mask_fits_fixed64(reg) -> None:
+    mask = notify.flags_for(notify.HERO_FIELDS, notify.HERO_FIELDS)
+    assert mask == (1 << 60) - 1
+    assert mask < 1 << 64
+    session = Session(writer=None, peer="t", bound_port=0)
+    notify.hero_changed(reg, session, 100000, {n: 1 for n in notify.HERO_FIELDS})
+    (_, _, msg) = session.outbox[0]
+    assert len(msg.data) == 60
+    msg.SerializeToString()
