@@ -74,7 +74,16 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       **chapter chest** needs boss stage 10022 (the client counts only `once = 0` stages), which our
       three heroes lose without the support NPC; one stock-client `LUA ERROR` in
       `RoleEquipGetEquipPanel.lua:44` during the guided equip; the chat `11_2006` error (task B1).
-      Phase B and C not started. Ready for your emulator pass, not done.
+      **Status 24-11-2026, later (Phase B, W1, E1 and prize categories 51/52 at `cc2c778`, 594
+      tests; ACC-2 = run 8 in `docs/dev-loop.md` section 7):** sign-in, the 7-day gift (day 1 on
+      the real world, days 3 and 5 with their arena and trial coins on a throwaway copy), the VIP-0
+      purchase refusals, the 6-minute energy timer, mail and the shop pass, and so do relaunch and
+      server restart. Zero `Traceback`, zero `LUA ERROR` (the chat error is gone). Open from that
+      run: boss 10022 lost twice, so achievement kind 2 / guide 10400 and the chapter chest are
+      still unreached; sweep needs level 8. `5_2149` sell-all is unanswered, so the shop's
+      sell-junk box keeps coming back. A lost fight's guide burst can lower `guide_id` until the
+      next relaunch re-saves it. 累计签到礼包 / 已领取 / 已售 are untranslated.
+      Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
 

@@ -577,6 +577,79 @@ Logs and DB copies (not in the repo): `C:/tmp/loa-acc1/server.log`, `server-rest
 `db-post-equipall.db`, `db-before-restart.db`, `db-after-restart.db`. Frames:
 `docs/screens/en-2026-11-24-acc1/01-...` to `27-...` (JPEG q85).
 
+### Run 8 (Plan B2 ACC-2, 24-11-2026): Wave 1 dailies
+
+Same AVD `LOA_API30`, warm, same English APK (versionName 1.0.0.5); server-only changes since run 7,
+so no rebuild. Branch `plan-b2-wave1`, server HEAD `cc2c778` (Phase B, W1, E1, and prize categories
+51/52). The ACC-1 world continues: `data/player.db` was **copied** to `data/player.db.pre-b2-acc2`
+(and `C:/tmp/loa-acc2/db-start.db`). Server banner `24-11-2026 14:48:20 INFO loa.net listening on
+0.0.0.0:8112`. Rows 5 and 7 and the login-gift days 3 and 5 ran on **throwaway copies** in
+`C:/tmp/loa-acc2/` served by `C:/tmp/loa-acc2/throwaway_server.py <db>`. That wrapper replaces
+`Settings.db_path` after `settings.toml` is loaded, so `data/player.db` was never swapped. Its SHA-1
+was `837c9693...` before and after the three throwaway runs.
+
+**Outcome: sign-in, the 7-day gift (day 1 on the real world; days 3 and 5 on a copy), the VIP-0
+purchase refusals, the 6-minute energy timer, mail, the shop and both persistence checks pass. Boss
+stage 10022 was lost twice, so achievement kind 2 / guide 10400 was not reached; sweep is locked
+until level 8.**
+
+| # | Assertion | Result | Evidence |
+|---|---|---|---|
+| 1 | Sign-in opens, day N pays, `checkins` row written | **PASS** | `14:50:20 loa.checkin player 1 signed in day 24, position 1: (20, 30000154, 1)`; the panel turns from "Not Checked In" to "Checked In Today", 累计签到礼包 0/5 → 1/5, reward Top-Up Item 30. DB: `checkins = (1, 202611, 8388608 = bit 23, 0, 0, total_times 1, 0)`, item 30000154 x1 (`02-...`, `03-...`). |
+| 2 | 7-day gift day 1 pays; `login_award` bit 9 set | **PASS** | Login logs `player 1 login day 1 of the 7-day gift (2026-11-24)`; `14:51:01 claimed 7-day gift day 1: [(9, 0, 1000), (1, 0, 40000), (20, 100000, 10), (20, 100, 3)]`; HUD gold 1,260,466 → 1,300,466, diamonds 16,888 → 17,888. DB `login_award = 257` (bit 0 claimable + bit 8, the 9th bit, claimed) (`04-...`, `05-...`). |
+| 3 | Buy energy / buy gold at VIP 0 refused | **PASS (client-side)** | Both "+" buttons open the client's own "Daily use limit reached (Used Today 0/0)" box with "Raise your VIP level". The client refuses **before** sending anything: no 5_2141/5_2147 reached the server. This is the English client's dialog, not a floated 购买次数不足, so O8 closes as "the client never asks at VIP 0" (`06-...`, `07-...`). |
+| 4 | Energy tooltip matches 360 s; 5_2013 gone from the unanswered list | **PASS** | At 53/64 the long-press tooltip reads "Next Stamina in: 00:05:41 / Full Stamina in: 01:05:41 / Stamina Recovery Time: 6 min" (`12-...`). DB `energy_at` 1795525118 is consistent with that countdown. `5_2013` appears 0 times in the "no handler" lines of all five server logs. |
+| 5 | Mail on a throwaway copy: one `QA-DELETE-ME` mail, claim, `items`, delete | **PASS** | `throwaway-mail.db`: inserted mail entry 99999, sender/subject/body `QA-DELETE-ME`, attachment `(20, 100, 1)`. The mailbox lists it (Unread 1); opening it shows the template subject "Item Limit Warning" and the body `The item "QA-DELETE-ME" in your Bag ...`; Claim → Rewards: Divination Crystal. DB: item 100 3 → 4, mail `checked 1, claimed 1`; the row was then deleted (0 mails left). The copy was not used again (`16-...` to `18-...`). |
+| 6 | Chapter 1 (10022) completes achievement kind 2; guide 10400→10420 | **NOT REACHED** | Two attempts with the three level-3 heroes: `14:54:36 stage 10022 finished ... 0 star(s), won=False` and `14:57:49 ... won=False` (`10-...`, `11-...`). Each cost 6 energy (64 → 52). No balance or DB change was made to force a win. |
+| 7 | Shop on a throwaway copy with level 12: store 1 lists 8 slots, one purchase | **PASS** | `throwaway-shop.db`, `players.level = 12`. General Shop lists the soul-stone slots at 280 diamonds; the `stores` row holds **8** slots (`100480, 100450, 100290, 100310, 100230, 100490, 100240, 100250`). `15:14:24 loa.shop player 1 bought merchandise 100480 (store 1 slot 0) for 280 in 9`; diamonds 17,888 → 17,608, slot 0 `buy: 1` and stamped sold, item 304000 x1 (`20-...` to `22-...`). |
+| 8 | Sweep (unlock 8) | **NOT REACHED** | Player level 3; the stage panel says "Alliance Level Reached 8 Lv. or VIP reaches 7 Unlock Sweep", and the map shows "Sweep Ticket (0)" (`09-...`). |
+| 9 | Relaunch and server-restart persistence | **PASS** | Force-stop + relaunch: `15:00:16 login ok`, same balances, the 7-day panel starts at day 2 ("Claim Tomorrow"), sign-in says "Checked In Today" (`13-...` to `15-...`). Server killed and restarted (`15:01:52` banner): `15:02:43 login ok, player id 1`, no `created character` (`server-restart.log`). DB before/after the restart: **every table identical**. |
+| 10 | Both greps = 0; main-city `LUA ERROR` = 0 | **PASS** | `grep -cE "Traceback\|ERROR"` = **0** in all five server logs. Logcat (7 captures, 132,954 lines): `LUA ERROR` **0**, `FATAL` **0**. The run-7 `ChatRoom:1163` (`11_2006`) error is gone. |
+
+**Login gift days 3 and 5.** Days 3 and 5 need real calendar days on the real world, so they were
+not reachable there. On `throwaway-gift.db` (`login_days = 5`, `login_award = 287`), days 2-5 show
+"Claimable" (`23-...`). Results:
+- Day 3: `15:16:31 claimed 7-day gift day 3: [(9, 0, 3000), (1, 0, 2000000), (20, 100000, 40),
+  (52, 0, 1000)]`, rewards panel "Trial Coins 1000" (`24-...`).
+- Day 5: `15:17:02 ... day 5: [..., (20, 202000, 40), (51, 0, 1000)]`, "Arena Coins 1000" (`25-...`).
+
+DB `arena_point = 1000`, `angel_money = 1000`. The client applied both notifies; logcat shows
+`angel_money->changed ... > 1000` at 15:16:30 and `arena_point->changed ... > 1000` at 15:17:00.
+
+**Unanswered ids** (all server logs): `5_2039` (every login), `5_2623`, and **new** `5_2149
+SellAllGoldStockReq`. Runs 2-7 also listed `11_2005`, `11_2009`, `5_2013` and `5_2145`; none of
+them appears now.
+
+Findings for the next tasks:
+
+- **5_2149 sell-all.** Opening the shop pops the client's "The merchant begs you to sell him these
+  treasures" box (Cloth x2, 1000 gold). Clearance sends `5_2149`, which gets a zero stub, so nothing
+  is sold (item 1050 stays 2, gold unchanged) and the box comes back after every purchase (`19-...`,
+  `22-...`).
+- **The guide burst after a defeat.** Three seconds after each lost 10022 the client sends 5_2041
+  for 10160, 10159, 10290, 10330, 10380, 10500, 10540 and 10580. The server saves the ones that
+  have a row, so `guide_id` went 10390 → **10380**. The next relaunch re-saved 10390 (`15:00:43`),
+  so the world ended at 10390. The server could refuse a lower guide id; that is a decision for
+  Stefan, not a run-8 change.
+- **Untranslated / layout.** 累计签到礼包 (sign-in), 已领取 (mail claimed stamp) and 已售 (shop
+  sold stamp) are still Chinese. The mailbox row overlaps its texts ("ThemItem Limit Warning",
+  "Rema7niDays") and prints the date as `2026-11-24` (client-side layout).
+
+Real-world changes from the normal play rows (start → end): gold 1,260,466 → 1,300,466, diamonds
+16,888 → 17,888, energy 49 → 53, `login_award` 0 → 257, `login_days` 0 → 1, `last_login_day`
+`2026-11-24`, the two new coin columns 0. Items 30000154 x1, 100000 x10 and 100 x3 were added. One
+`checkins` row and 9 `events` rows (achievement progress) were added. The `levels` rows got today's
+deadline, and 10022 has count 2. `heroes`, `angels`, `chapters`, `mails` and `stores` are
+unchanged; `guide_id` is 10390.
+
+Logs and DB copies (not in the repo): `C:/tmp/loa-acc2/server.log`, `server-restart.log`,
+`server-throwaway-{mail,shop,gift}.log`, `logcat-part1..4.txt`,
+`logcat-part5-throwaway-mail.txt`, `logcat-part6-throwaway-shop.txt`,
+`logcat-part7-throwaway-gift.txt`, `db-start.db`, `db-after-signin.db`, `db-after-loginaward.db`,
+`db-after-try1.db`, `db-energy.db`, `db-before-restart.db`, `db-after-restart.db`,
+`real-before-throwaway.db`, `throwaway-{mail,shop,gift}.db`. Frames:
+`docs/screens/en-2026-11-24-acc2/01-...` to `25-...` (JPEG q85).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
