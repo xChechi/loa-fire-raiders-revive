@@ -230,11 +230,13 @@ def build_npc_fight_unit(
 STATUS_OK = 0
 STATUS_INTERNAL_ERROR = 327681       # 系统内部错误 (a slot index outside 0..5)
 STATUS_NOT_ENOUGH_GOLD = 327937      # 金币不足
+STATUS_HERO_OWNED = 327940           # 英雄已经存在
 STATUS_NO_HERO = 327941              # 英雄不存在
 STATUS_NOT_ENOUGH_ITEMS = 327942     # 没有足够道具
 STATUS_LEVEL_TOO_LOW = 327944        # 等级不够
 STATUS_ITEM_CAP = 327970             # 物品达到上限
 STATUS_SLOT_FULL = 328961            # 此装备栏位上已经有装备了
+STATUS_TOP_STAR = 328965             # 此英雄已经是最高星级
 STATUS_TOP_QUALITY = 328966          # 英雄已经是最高品质
 STATUS_SLOTS_NOT_FULL = 328967       # 英雄没有穿齐进阶所需装备
 STATUS_NO_COMPOSITE = 328968         # 没有可以合成的装备
@@ -493,10 +495,98 @@ def handlers(
         log.info("hero %d of player %d raised to quality %d", row["entry"], pid, nxt)
         return _res(name, STATUS_OK)
 
+    def star_up(session: Session, req):
+        """Stones are hero_info.item, or break_item from star 5 on; the count
+        is hero_growth(hero, star+1).star_up_cost and the gold
+        HERO_STAR_UP_COST_{star+1} (ClientHero.lua:595-624, RoleUICtr.lua:91).
+        One ident-2 notify follows the Res (settled point 11)."""
+        name = "HeroStarUpRes"
+        player = _player(session)
+        pid = int(player["id"])
+        row = _hero(pid, req.hero)
+        if row is None:
+            return _refused(name, STATUS_NO_HERO, f"hero {req.hero}")
+        entry, star = int(row["entry"]), int(row["star"]) + 1
+        growth = cfg.hero_growth(entry, star)
+        if growth is None:
+            return _refused(name, STATUS_TOP_STAR, f"hero {entry} has no star {star}")
+        info = cfg.hero(entry)
+        if info is None:
+            raise KeyError(f"hero_info has no row for hero {entry}")
+        stone = int(info["break_item"] if star - 1 >= 5 else info["item"])
+        stones = int(growth["star_up_cost"] or 0)
+        gold = cfg.variable_int(f"HERO_STAR_UP_COST_{star}", 0)
+        if _bag(pid).get(stone, 0) < stones:
+            return _refused(name, STATUS_NOT_ENOUGH_ITEMS, f"{stones}x {stone}")
+        if int(player["gold"]) < gold:
+            return _refused(name, STATUS_NOT_ENOUGH_GOLD, f"{gold} gold")
+        pairs = _take_all(pid, {stone: stones})
+        db.spend(conn, pid, gold=gold)
+        conn.execute("UPDATE heroes SET star = ? WHERE id = ?", (star, int(row["id"])))
+        conn.commit()
+        new_row = conn.execute(
+            "SELECT * FROM heroes WHERE id = ?", (int(row["id"]),)
+        ).fetchone()
+        built = build_client_hero(registry, cfg, new_row)
+        notify.items_changed(registry, session, pairs)
+        notify.player_changed(registry, session, {"gold": _gold(pid)})
+        notify.hero_changed(
+            registry, session, entry,
+            _hero_fields(int(row["id"]), {"star", "ability", *STAT_NAMES}),
+        )
+        notify.hero_base_changed(
+            registry, session, entry,
+            {n: getattr(built.base_unit, n) for n in notify.BASE_UNIT},
+        )
+        log.info("hero %d of player %d raised to star %d", entry, pid, star)
+        return _res(name, STATUS_OK)
+
+    def call(session: Session, req):
+        """Summon from soul stones: sum of star_up_cost for star <= hero_info.
+        star in hero_info.item, and sum of HERO_STAR_UP_COST_1..star in gold
+        (RoleListCtr.lua:88-113,194-214)."""
+        name = "HeroCallRes"
+        player = _player(session)
+        pid = int(player["id"])
+        entry = int(req.hero)
+        if _hero(pid, entry) is not None:
+            return _refused(name, STATUS_HERO_OWNED, f"hero {entry}")
+        info = cfg.hero(entry)
+        if info is None or not cfg.hero_qualities(entry):
+            return _refused(name, STATUS_NO_HERO, f"hero {entry} not configured")
+        top = int(info["star"] or 1)
+        stone = int(info["item"])
+        stones = 0
+        for star in range(1, top + 1):
+            growth = cfg.hero_growth(entry, star)
+            stones += int(growth["star_up_cost"] or 0) if growth else 0
+        gold = sum(
+            cfg.variable_int(f"HERO_STAR_UP_COST_{star}", 0) for star in range(1, top + 1)
+        )
+        if _bag(pid).get(stone, 0) < stones:
+            return _refused(name, STATUS_NOT_ENOUGH_ITEMS, f"{stones}x {stone}")
+        if int(player["gold"]) < gold:
+            return _refused(name, STATUS_NOT_ENOUGH_GOLD, f"{gold} gold")
+        pairs = _take_all(pid, {stone: stones})
+        db.spend(conn, pid, gold=gold)
+        quality = int(cfg.hero_qualities(entry)[0]["quality"])
+        hero_id = db.grant_hero(
+            conn, pid, entry, quality, star=top, level=int(info["init_level"] or 1)
+        )
+        new_row = conn.execute("SELECT * FROM heroes WHERE id = ?", (hero_id,)).fetchone()
+        notify.hero_added(registry, session, build_client_hero(registry, cfg, new_row))
+        notify.items_changed(registry, session, pairs)
+        notify.player_changed(registry, session, {"gold": _gold(pid)})
+        log.info("hero %d called by player %d for %dx %d and %d gold", entry, pid,
+                 stones, stone, gold)
+        return _res(name, STATUS_OK)
+
     return {
         (5, 2105): equip,
         (5, 2163): equip_all,
         (5, 2111): composite,
         (5, 2725): composite_all,
         (5, 2109): quality_up,
+        (5, 2107): star_up,
+        (5, 2127): call,
     }
