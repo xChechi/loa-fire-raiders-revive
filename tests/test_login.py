@@ -389,3 +389,26 @@ def test_login_res_carries_blacklist(reg, settings, cfg) -> None:
         assert [(b.entry, b.disabled) for b in res.blacklist] == expected
         assert 10410 not in {b.entry for b in res.blacklist}  # 7-day login visible
         res.SerializeToString()
+
+
+def test_login_rolls_yesterdays_stage_counts(reg, settings, cfg) -> None:
+    """QueryMyselfRes.levels must carry today's counts, so a levels row whose
+    deadline has passed is reset at login, before the client asks 5_2005."""
+    import time
+
+    conn, _ = _login_once(reg, settings, cfg)
+    pid = int(find_player(conn, "stefan")["id"])
+    conn.execute(
+        "INSERT INTO levels (player_id, level, star, count, reset_count, deadline)"
+        " VALUES (?, 10000, 3, 5, 1, 1)", (pid,),
+    )
+    conn.commit()
+    login.handlers(reg, settings, conn, cfg)[(3, 2001)](
+        Session(writer=None, peer="t", bound_port=0),
+        reg.message_class("LoginReq")(username="stefan", token="local"),
+    )
+    row = conn.execute(
+        "SELECT count, reset_count, deadline FROM levels WHERE player_id = ?", (pid,)
+    ).fetchone()
+    assert (int(row["count"]), int(row["reset_count"])) == (0, 0)
+    assert int(row["deadline"]) > int(time.time())

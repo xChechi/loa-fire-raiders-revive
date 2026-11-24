@@ -10,7 +10,7 @@ from datetime import date, datetime
 
 from server import db
 from server.config import Config
-from server.modules import activity, checkin
+from server.modules import activity, checkin, level
 from server.net.registry import Registry
 from server.net.server import Handler, Session
 from server.settings import Settings
@@ -141,17 +141,24 @@ def handlers(
         )
         return player_id
 
+    def _new_login(player_id: int) -> None:
+        # The client asks 5_2005 right after this Res (LoginSocketData.lua:
+        # 300), so the login day and the stage counts are today's before
+        # QueryMyselfRes is built.
+        checkin.record_login(conn, cfg, player_id, date.today().isoformat())
+        level.roll_daily_counts(conn, player_id)
+
     def login(session: Session, req):
         # STATUS_NO_ROLE never reaches the client's gate, so the server creates
         # the character itself rather than wait for a 3_2003 that never comes.
         session.player_id = _player_id(req.username)
-        checkin.record_login(conn, cfg, session.player_id, date.today().isoformat())
+        _new_login(session.player_id)
         log.info("login ok, player id %d", session.player_id)
         return _session_fields("LoginRes", STATUS_OK, req.token)
 
     def gameplay(session: Session, req):
         session.player_id = _player_id(req.username)
-        checkin.record_login(conn, cfg, session.player_id, date.today().isoformat())
+        _new_login(session.player_id)
         return _session_fields("GameplayRes", STATUS_OK, req.token)
 
     def heartbeat(session: Session, req):
