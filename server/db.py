@@ -265,7 +265,9 @@ def take_item(
 ) -> int:
     """Remove `amount` of an item and return the new absolute amount. Raises
     ValueError, writing nothing, when fewer are owned; callers check first and
-    refuse with 327942. The row stays at 0 rather than being deleted."""
+    refuse with 327942. A row that reaches 0 is deleted: the client drops a
+    stock at 0 (RoleData:updateItemNum, RoleData.lua:1275-1287) but would list
+    a 0-amount ClientStock sent at login (RoleData.lua:1021-1024)."""
     row = conn.execute(
         "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
         (int(player_id), int(entry)),
@@ -273,10 +275,16 @@ def take_item(
     have = int(row["amount"]) if row else 0
     if int(amount) < 0 or have < int(amount):
         raise ValueError(f"item {entry}: have {have}, need {amount}")
-    conn.execute(
-        "UPDATE items SET amount = amount - ? WHERE player_id = ? AND entry = ?",
-        (int(amount), int(player_id), int(entry)),
-    )
+    if have == int(amount):
+        conn.execute(
+            "DELETE FROM items WHERE player_id = ? AND entry = ?",
+            (int(player_id), int(entry)),
+        )
+    else:
+        conn.execute(
+            "UPDATE items SET amount = amount - ? WHERE player_id = ? AND entry = ?",
+            (int(amount), int(player_id), int(entry)),
+        )
     conn.commit()
     return have - int(amount)
 

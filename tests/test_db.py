@@ -342,6 +342,22 @@ def test_take_item_refuses_more_than_owned_and_writes_nothing(tmp_path) -> None:
     assert take_item(conn, pid, 500000, 6) == 0
 
 
+def test_take_item_to_zero_removes_the_stock(tmp_path) -> None:
+    """RoleData:updateItemNum drops a stock whose amount reaches 0
+    (RoleData.lua:1275-1287), but the login parse keeps every ClientStock it is
+    sent (RoleData.lua:1021-1024), so a row left at 0 would come back as an
+    empty bag slot after a relaunch."""
+    from server.db import grant_item, items_of, take_item
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_item(conn, pid, 500000, 10)
+    grant_item(conn, pid, 10000, 1)
+    assert take_item(conn, pid, 500000, 10) == 0
+    assert [int(r["entry"]) for r in items_of(conn, pid)] == [10000]
+    assert grant_item(conn, pid, 500000, 3) == 3
+
+
 def test_spend_refuses_and_writes_nothing(tmp_path) -> None:
     import pytest
 
