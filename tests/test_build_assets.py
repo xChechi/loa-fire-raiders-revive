@@ -22,6 +22,7 @@ TOUCHED = (
     "scripts/app/game/framework/MMPlayerUpgradePanel.lua",
     "scripts/app/game/view/ui/RoleUI.lua",
     "scripts/app/game/manager/guide/NewGuideTalkPanel.lua",
+    "scripts/app/game/view/ui/des/DesSweepPanel.lua",
 )
 
 
@@ -441,3 +442,14 @@ def test_patch_21_shrinks_the_rebirth_count_to_end_before_the_side_tabs(assets: 
            "self.reBirthLvTfd:setScale(w > room and room / w or 1)")
     assert info.count(fit) == 1
     assert info.index("self.reBirthLvTfd:setString(tostring(rebirthLv)") < info.index(fit)
+
+
+def test_patch_22_shrinks_the_sweep_unlock_line_to_end_before_the_challenge_button(
+    assets: Path,
+) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    sweep = (assets / "scripts/app/game/view/ui/des/DesSweepPanel.lua").read_text(
+        encoding="utf-8"
+    )
+    assert "local txt_node, txt_w = g_gameUI_Tools:createContentNode(txtTable)" in sweep
+    assert "if txt_w and txt_w > 430 then txt_node:setScale(430 / txt_w) end" in sweep

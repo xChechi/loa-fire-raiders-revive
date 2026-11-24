@@ -466,6 +466,16 @@ PATCHES: tuple[Patch, ...] = (
           "    local room = 528 - self.reBirthLvTfd:getPositionX(); "
           "local w = self.reBirthLvTfd:getContentSize().width; "
           "self.reBirthLvTfd:setScale(w > room and room / w or 1)\n"),
+    # 22. DesSweepPanel:addUnlockTxt: the five-part "Alliance Level Reached 8
+    #     Lv. or VIP 1 Unlock Sweep" line starts at x -278 of btnBg and the
+    #     Challenge button's left edge is at x 169 there (405 - 80 - 156);
+    #     scale the line down to 430 wide so it ends before the button.
+    Patch("scripts/app/game/view/ui/des/DesSweepPanel.lua",
+          "  local txt_node = g_gameUI_Tools:createContentNode(txtTable)\n"
+          "  txt_node:setPosition(ccp(-228 - 50, 0))\n",
+          "  local txt_node, txt_w = g_gameUI_Tools:createContentNode(txtTable)\n"
+          "  txt_node:setPosition(ccp(-228 - 50, 0))\n"
+          "  if txt_w and txt_w > 430 then txt_node:setScale(430 / txt_w) end\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
