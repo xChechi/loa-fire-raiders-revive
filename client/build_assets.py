@@ -457,6 +457,15 @@ PATCHES: tuple[Patch, ...] = (
           'createMMLabel("", 28, ccp(-50,-107), CCSizeMake(300, 100),nil,false);'),
     Patch(GUIDE_TALK, "self.tf:setPosition(ccp(-50,-92));", "self.tf:setPosition(ccp(-50,-82));"),
     Patch(GUIDE_TALK, "self.tf:setPosition(ccp(-245,-92));", "self.tf:setPosition(ccp(-245,-82));"),
+    # 21. RoleUIInfoPanel: the rebirth count ("0 Rebirths") starts after
+    #     "Rebirth Lv:" (patch 13) and runs under the side-tab column, which
+    #     begins near x 535 in the panel; scale it down to end by x 528.
+    Patch(ROLE_INFO,
+          '    self.reBirthLvTfd:setString(tostring(rebirthLv) .. g_lan:getTxt("h07008"))\n',
+          '    self.reBirthLvTfd:setString(tostring(rebirthLv) .. g_lan:getTxt("h07008"))\n'
+          "    local room = 528 - self.reBirthLvTfd:getPositionX(); "
+          "local w = self.reBirthLvTfd:getContentSize().width; "
+          "self.reBirthLvTfd:setScale(w > room and room / w or 1)\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

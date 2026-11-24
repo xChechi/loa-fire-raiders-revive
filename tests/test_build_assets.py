@@ -429,3 +429,15 @@ def test_patch_20_keeps_the_guide_talk_inside_its_bubble(assets: Path) -> None:
     assert "self.tf:setPosition(ccp(-50,-82));" in talk
     assert "self.tf:setPosition(ccp(-245,-82));" in talk
     assert ",-92)" not in talk
+
+
+def test_patch_21_shrinks_the_rebirth_count_to_end_before_the_side_tabs(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    info = (assets / "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua").read_text(
+        encoding="utf-8"
+    )
+    fit = ("local room = 528 - self.reBirthLvTfd:getPositionX(); "
+           "local w = self.reBirthLvTfd:getContentSize().width; "
+           "self.reBirthLvTfd:setScale(w > room and room / w or 1)")
+    assert info.count(fit) == 1
+    assert info.index("self.reBirthLvTfd:setString(tostring(rebirthLv)") < info.index(fit)
