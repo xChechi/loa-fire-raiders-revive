@@ -50,6 +50,7 @@ HERE = Path(__file__).resolve().parent
 TABLE = HERE / "images.toml"
 FONT = HERE / "fonts/LilitaOne-Regular.ttf"
 STOCK_ASSETS = Path("assets/res/assets")
+SPLIT = Path("assets/res/data/split")  # the game tables, stock and translated
 EN_DIR = Path("data/en")
 MIN_SIZE = 7
 SHEET_PAGE = 24
@@ -94,7 +95,7 @@ def load_table(path: Path = TABLE) -> list[Entry]:
     presets = cfg.get("preset", {})
     known = set(Entry.__dataclass_fields__)
     out = []
-    for raw in cfg["image"]:
+    for raw in cfg.get("image", []):
         merged = dict(presets.get(raw.get("preset", ""), {}))
         merged.update({k: v for k, v in raw.items() if k != "preset"})
         unknown = set(merged) - known
@@ -105,6 +106,54 @@ def load_table(path: Path = TABLE) -> list[Entry]:
     dupes = {p for p in paths if paths.count(p) > 1}
     if dupes:
         raise ValueError(f"duplicate paths in the table: {sorted(dupes)}")
+    return out
+
+
+def name_entries(stock: Path, en: Path, table: Path = TABLE) -> list[Entry]:
+    """Entries for the name images, one per PNG of each [[names]] folder.
+
+    The file name is an id; the Chinese and the English are the `name` of
+    that id's row in the stock and in the translated game tables (the first
+    source table that has it), so the image says what the game text says.
+    `alias` maps an image id to the id whose name it carries. An id with no
+    row, or with two different names, is an error.
+    """
+    import sqlite3
+
+    cfg = tomllib.loads(Path(table).read_text(encoding="utf-8"))
+    presets = cfg.get("preset", {})
+    out = []
+    for spec in cfg.get("names", []):
+        mx, my = spec.get("margin", [0, 0])
+        alias = {int(k): v for k, v in spec.get("alias", {}).items()}
+        folder = Path(stock) / STOCK_ASSETS / spec["folder"]
+        for png in sorted(folder.glob("*.png")):
+            ident = alias.get(int(png.stem), int(png.stem))
+            pairs: set[tuple[str, str]] = set()
+            for tname, col in spec["sources"]:
+                rows = []
+                for root in (stock, en):
+                    db = Path(root) / SPLIT / f"{tname}.db"
+                    if not db.is_file():
+                        raise ValueError(f"{db} missing (run localise.write first)")
+                    c = sqlite3.connect(db)
+                    key = c.execute(f'pragma table_info("{tname}")').fetchone()[1]
+                    rows.append(dict(c.execute(
+                        f'select "{key}", name from "{tname}" where cast("{col}" as text) = ?',
+                        (str(ident),))))
+                    c.close()
+                pairs = {(rows[0][k], rows[1][k]) for k in rows[0] if k in rows[1]}
+                if pairs:
+                    break
+            if len(pairs) != 1:
+                raise ValueError(f"{png.name}: id {ident} has "
+                                 f"{'no name' if not pairs else sorted(pairs)} in {spec['sources']}")
+            (zh, en_name), = pairs
+            w, h = Image.open(png).size
+            merged = dict(presets.get(spec["preset"], {}))
+            merged.update(path=f"{spec['folder']}/{png.name}", zh=zh, en=en_name,
+                          text=[mx, my, w - mx, h - my])
+            out.append(Entry(**merged))
     return out
 
 
@@ -380,7 +429,7 @@ def render(e: Entry, stock_assets: Path) -> Image.Image:
 
 
 def build(stock: Path, out: Path = EN_DIR, table: Path = TABLE) -> list[Entry]:
-    entries = load_table(table)
+    entries = load_table(table) + name_entries(stock, out, table)
     src_root = Path(stock) / STOCK_ASSETS
     dst_root = Path(out) / STOCK_ASSETS
     for e in entries:

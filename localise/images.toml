@@ -1337,3 +1337,49 @@ zh = "超级折扣"
 en = "Super Discount"
 erase = [0, 48, 80, 80]
 text = [1, 44, 79, 79]
+
+# --- hero and angel names (stage 2) ------------------------------------------------
+# Not listed image by image: localise.images.name_entries takes every PNG of the
+# folder, reads the id off the file name and joins it to the `name` of that id
+# in the stock and in the translated game tables (data/en), so the image says
+# exactly what the game text says. `margin` = [x, y] of the text box inside the
+# image (the glow lives in the margin).
+
+[preset.hero_name]
+# Gold title type on a transparent canvas: pale-to-orange fill, dark red
+# outline, orange glow. The glyphs go, the English is drawn in their place.
+group = "hero-names"
+mode = "clear"
+mask = "opaque"
+lines = 2
+fill = ["#fffbe4", "#f29a1c"]
+outline = "#880000"
+stroke = 0.11
+glow = "#ff6410"
+glow_radius = 4
+
+[preset.angel_name]
+group = "angel-names"
+mode = "clear"
+mask = "opaque"
+lines = 2
+fill = ["#fffbe4", "#f29a1c"]
+outline = "#880000"
+stroke = 0.11
+glow = "#ff6410"
+glow_radius = 4
+
+[[names]]
+folder = "img/hero/name"
+preset = "hero_name"
+margin = [7, 6]
+# 346000 珍宝公主 has no hero_info row; awaken_info carries its name.
+sources = [["hero_info", "entry"], ["awaken_info", "entry"]]
+
+[[names]]
+folder = "img/angel/name"
+preset = "angel_name"
+margin = [7, 6]
+sources = [["angel_info", "angel_entry"]]
+# 9010002 is the Chinese New Year skin of angel 901000 (SqlManager.lua:485).
+alias = {"9010002" = 901000}

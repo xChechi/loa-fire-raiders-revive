@@ -21,6 +21,7 @@ from localise.images import (
     inpaint,
     layout,
     load_table,
+    name_entries,
     render,
     text_mask,
 )
@@ -224,3 +225,100 @@ def test_build_mirrors_the_stock_path_under_the_overlay(tmp_path: Path):
 
 def test_the_committed_table_is_the_default():
     assert TABLE.name == "images.toml" and TABLE.is_file()
+
+
+# --- hero and angel names: image -> id -> the translated game text ---------------
+
+SPLIT = Path("assets/res/data/split")
+
+
+def _db(root: Path, table: str, rows: list[tuple], cols=("entry", "name")) -> None:
+    import sqlite3
+
+    p = root / SPLIT / f"{table}.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(p)
+    c.execute(f"create table {table} ({', '.join(cols)})")
+    c.executemany(f"insert into {table} values ({', '.join('?' * len(cols))})", rows)
+    c.commit()
+    c.close()
+
+
+def _names_world(tmp_path: Path):
+    stock, en = tmp_path / "stock", tmp_path / "en"
+    for i in (100000, 346000):
+        _write_stock(stock, f"img/hero/name/{i}.png", _plate(160, 55))
+    for i in (901000, 9010002):
+        _write_stock(stock, f"img/angel/name/{i}.png", _plate(160, 55))
+    _db(stock, "hero_info", [(100000, "玫瑰骑士")])
+    _db(en, "hero_info", [(100000, "Rose Knight")])
+    _db(stock, "awaken_info", [("346000", "珍宝公主")])
+    _db(en, "awaken_info", [("346000", "Treasure Princess")])
+    cols = ("entry", "angel_entry", "name")
+    _db(stock, "angel_info", [(1, 901000, "烈焰女神"), (2, 901000, "烈焰女神")], cols)
+    _db(en, "angel_info", [(1, 901000, "Angel of Flames"), (2, 901000, "Angel of Flames")], cols)
+    table = tmp_path / "t.toml"
+    table.write_text(
+        '[preset.hero_name]\ngroup = "hero-names"\nmode = "clear"\nmask = "opaque"\n'
+        '[preset.angel_name]\ngroup = "angel-names"\nmode = "clear"\nmask = "opaque"\n'
+        '[[names]]\nfolder = "img/hero/name"\npreset = "hero_name"\nmargin = [4, 3]\n'
+        'sources = [["hero_info", "entry"], ["awaken_info", "entry"]]\n'
+        '[[names]]\nfolder = "img/angel/name"\npreset = "angel_name"\nmargin = [4, 3]\n'
+        'sources = [["angel_info", "angel_entry"]]\nalias = {"9010002" = 901000}\n',
+        encoding="utf-8")
+    return stock, en, table
+
+
+def test_name_images_take_the_english_of_the_game_tables_by_id(tmp_path: Path):
+    stock, en, table = _names_world(tmp_path)
+    got = {Path(e.path).name: (e.zh, e.en, e.group, e.text) for e in name_entries(stock, en, table)}
+    assert got["100000.png"] == ("玫瑰骑士", "Rose Knight", "hero-names", [4, 3, 156, 52])
+    # not in hero_info: the next source (awaken_info, text ids) answers
+    assert got["346000.png"][:2] == ("珍宝公主", "Treasure Princess")
+    # several angel_info rows share one angel_entry and one name
+    assert got["901000.png"][:2] == ("烈焰女神", "Angel of Flames")
+    # the festival skin 9010002 is angel 901000 (SqlManager.lua)
+    assert got["9010002.png"][:2] == ("烈焰女神", "Angel of Flames")
+
+
+def test_a_name_image_with_no_row_or_two_names_fails_loudly(tmp_path: Path):
+    stock, en, table = _names_world(tmp_path)
+    _write_stock(stock, "img/hero/name/555000.png", _plate(160, 55))
+    with pytest.raises(ValueError, match="555000"):
+        name_entries(stock, en, table)
+    (stock / STOCK_ASSETS / "img/hero/name/555000.png").unlink()
+    import sqlite3
+
+    c = sqlite3.connect(en / SPLIT / "angel_info.db")
+    c.execute("update angel_info set name = 'Flame Angel' where entry = 2")
+    c.commit()
+    c.close()
+    with pytest.raises(ValueError, match="901000"):
+        name_entries(stock, en, table)
+
+
+def test_build_renders_the_name_images_too(tmp_path: Path):
+    stock, en, table = _names_world(tmp_path)
+    out = tmp_path / "out"
+    _db(out, "hero_info", [(100000, "Rose Knight")])
+    _db(out, "awaken_info", [("346000", "Treasure Princess")])
+    _db(out, "angel_info", [(1, 901000, "Angel of Flames"), (2, 901000, "Angel of Flames")],
+        ("entry", "angel_entry", "name"))
+    entries = build(stock, out, table)
+    assert len(entries) == 4
+    assert Image.open(out / STOCK_ASSETS / "img/hero/name/346000.png").size == (160, 55)
+
+
+@pytest.mark.skipif(not (STOCK / STOCK_ASSETS).is_dir() or not (Path("data/en") / SPLIT).is_dir(),
+                    reason=".stock or data/en not built")
+def test_real_name_images_use_the_translated_game_names():
+    es = name_entries(STOCK, Path("data/en"))
+    by = {Path(e.path).stem: e for e in es}
+    assert sum(e.group == "hero-names" for e in es) == 78
+    assert sum(e.group == "angel-names" for e in es) == 31
+    assert (by["100000"].zh, by["100000"].en) == ("玫瑰骑士", "Rose Knight")
+    assert by["104000"].en == "Mage"
+    assert by["346000"].en == "Treasure Princess"
+    assert by["9010002"].en == by["901000"].en == "Angel of Flames"
+    for e in es:
+        assert CJK.search(e.zh) and e.en and not CJK.search(e.en), e.path
