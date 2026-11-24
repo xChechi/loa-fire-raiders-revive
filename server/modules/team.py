@@ -183,10 +183,14 @@ def build_self_team_res(
         if entry == 0:
             continue
         if slot == ANGEL_SLOT:
-            log.warning(
-                "5_2327 asks for angel %d in the angel slot; angels are not in "
-                "Plan B1, the fight runs without it", entry,
-            )
+            # The client builds the angel unit itself from QueryMyselfRes.angels
+            # (plan B2 settled point 7), so team_base carries heroes only and
+            # an owned angel needs nothing here.
+            if all(int(a["angel_entry"]) != entry for a in db.angels_of(conn, player_id)):
+                log.warning(
+                    "5_2327 asks for angel %d in the angel slot, which player %d "
+                    "does not own", entry, player_id,
+                )
             continue
         hero_row = owned.get(entry)
         if hero_row is None:
