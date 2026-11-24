@@ -119,6 +119,102 @@ class Config:
     def npc(self, entry: int):
         return self._one("npc_info", "npc_info", "entry", int(entry))
 
+    def hero_quality_row(self, hero: int, quality: int):
+        """None when the (hero, quality) row is missing; hero.quality_row_for
+        keeps its own fallback to the lowest quality."""
+        rows = self._all(
+            "hero_quality", "hero_quality", "WHERE hero = ? AND quality = ?",
+            (int(hero), int(quality)),
+        )
+        return rows[0] if rows else None
+
+    # --- angels -------------------------------------------------------------
+    # AngelManager.lua:79,295 only ever count angel_info rows whose
+    # activation_item_num is not 0, so the same filter applies here.
+    def angel_by_star(self, angel_entry: int, star: int):
+        rows = self._all(
+            "angel_info", "angel_info",
+            "WHERE angel_entry = ? AND star = ? AND activation_item_num != 0"
+            " ORDER BY entry",
+            (int(angel_entry), int(star)),
+        )
+        return rows[0] if rows else None
+
+    def angel_star1_rows(self) -> list:
+        """The roster AngelManager:parseAngel builds (AngelManager.lua:75-84)."""
+        return self._all(
+            "angel_info", "angel_info",
+            "WHERE star = 1 AND activation_item_num != 0 ORDER BY entry", (),
+        )
+
+    # --- gear crafting ------------------------------------------------------
+    def item_composite(self, item_id: int):
+        return self._one("item_composite", "item_composite", "item_id", int(item_id))
+
+    # --- achievements -------------------------------------------------------
+    def events_catalog(self, catalog: int) -> list:
+        return self._all(
+            "event_info", "event_info", "WHERE catalog = ? ORDER BY entry",
+            (int(catalog),),
+        )
+
+    def event(self, entry: int):
+        return self._one("event_info", "event_info", "entry", int(entry))
+
+    def event_children(self, parent: int) -> list:
+        return self._all(
+            "event_info", "event_info", "WHERE parent = ? ORDER BY entry",
+            (int(parent),),
+        )
+
+    # --- sign-in ------------------------------------------------------------
+    def checkin_months(self) -> list[int]:
+        return [
+            int(r["month"])
+            for r in self.conn("checkin").execute(
+                "SELECT DISTINCT month FROM checkin ORDER BY month"
+            )
+        ]
+
+    def checkin_rows(self, month: int) -> list:
+        return self._all(
+            "checkin", "checkin", "WHERE month = ? ORDER BY idx", (int(month),)
+        )
+
+    def check_award(self, award_id: int):
+        # check_award stores every column as TEXT.
+        return self._one("check_award", "check_award", "id", str(int(award_id)))
+
+    def checkin_extreme(self, day: int):
+        return self._one(
+            "checkin_extreme_info", "checkin_extreme_info", "day", int(day)
+        )
+
+    # --- mail, stores, purchases --------------------------------------------
+    def mail_template(self, entry: int):
+        return self._one("mail_info", "mail_info", "entry", int(entry))
+
+    def store(self, entry: int):
+        return self._one("store_info", "store_info", "entry", int(entry))
+
+    def merchandise(self, store: int) -> list:
+        return self._all(
+            "merchandise_info", "merchandise_info", "WHERE store = ? ORDER BY entry",
+            (int(store),),
+        )
+
+    def buy_gold_cost(self, times: int) -> int | None:
+        row = self._one("buy_gold_cost", "buy_gold_cost", "times", int(times))
+        return None if row is None else int(row["cost"])
+
+    def vip_value(self, entry: int, vip: int) -> str | None:
+        """vip_info stores each VIP level in its own TEXT column vip0..vipN."""
+        row = self._one("vip_info", "vip_info", "entry", int(entry))
+        return None if row is None else str(row[f"vip{int(vip)}"])
+
+    def item_buy(self, refer: int):
+        return self._one("item_buy_info", "item_buy_info", "refer", int(refer))
+
     # --- items, levels, variables, text -------------------------------------
     def item(self, entry: int):
         # item_info stores every column as TEXT.

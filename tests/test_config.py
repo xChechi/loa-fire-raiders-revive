@@ -181,3 +181,87 @@ def test_the_stock_tree_cannot_be_written_to(cfg: Config) -> None:
     import sqlite3
     with pytest.raises(sqlite3.OperationalError):
         cfg.conn("variables").execute("UPDATE variables SET value = 1")
+
+
+# --- Wave 1 lookups (read out of .stock on 24-11-2026) -----------------------
+def test_angel_500000_star1_costs_ten_stones(cfg: Config) -> None:
+    row = cfg.angel_by_star(500000, 1)
+    assert int(row["activation_item"]) == 500000
+    assert int(row["activation_item_num"]) == 10
+    assert int(row["min_level"]) == 1
+    assert int(row["spell0"]) == 5000000
+    assert int(row["aura0"]) == 5020000
+    star1 = cfg.angel_star1_rows()
+    assert 500000 in {int(r["angel_entry"]) for r in star1}
+    assert all(int(r["star"]) == 1 and int(r["activation_item_num"]) != 0 for r in star1)
+
+
+def test_angel_500000_star2_costs_twenty(cfg: Config) -> None:
+    assert int(cfg.angel_by_star(500000, 2)["activation_item_num"]) == 20
+    assert cfg.angel_by_star(500000, 99) is None
+
+
+def test_item_composite_30000_needs_five_31000_and_1500_gold(cfg: Config) -> None:
+    row = cfg.item_composite(30000)
+    assert (int(row["item0"]), int(row["amount0"])) == (31000, 5)
+    assert int(row["item1"]) == 0
+    assert int(row["cost"]) == 1500
+    assert cfg.item_composite(999999999) is None
+
+
+def test_hero_quality_100000_q10_slots(cfg: Config) -> None:
+    row = cfg.hero_quality_row(100000, 10)
+    assert [int(row[f"item{i}"]) for i in range(6)] == [
+        10000, 11010, 11120, 11040, 11020, 11170
+    ]
+    assert int(row["next"]) == 20
+    assert cfg.hero_quality_row(100000, 0) is None
+
+
+def test_event_10270_is_kind1_arg5_drop150260(cfg: Config) -> None:
+    row = cfg.event(10270)
+    assert (int(row["catalog"]), int(row["kind"]), int(row["arg0"])) == (0, 1, 5)
+    assert int(row["drops"]) == 150260
+    assert 10270 in {int(r["entry"]) for r in cfg.events_catalog(0)}
+    assert all(int(r["parent"]) == 10270 for r in cfg.event_children(10270))
+
+
+def test_checkin_months_end_at_202312(cfg: Config) -> None:
+    months = cfg.checkin_months()
+    assert months[0] == 201406
+    assert months[-1] == 202312
+    assert months == sorted(months)
+    rows = cfg.checkin_rows(202311)
+    assert [int(r["idx"]) for r in rows] == sorted(int(r["idx"]) for r in rows)
+    assert (int(rows[0]["refer_type"]), int(rows[0]["refer_id"])) == (20, 30000154)
+    assert int(cfg.checkin_extreme(1)["drops"]) == 1700000
+
+
+def test_check_award_10001_times5(cfg: Config) -> None:
+    row = cfg.check_award(10001)
+    assert int(row["times"]) == 5
+    assert int(row["next"]) == 10002
+
+
+def test_vip_value_energy_buys_vip0_is_0_vip1_is_3(cfg: Config) -> None:
+    assert cfg.vip_value(10000, 0) == "0"
+    assert cfg.vip_value(10000, 1) == "3"
+
+
+def test_buy_gold_cost_first_is_50(cfg: Config) -> None:
+    assert cfg.buy_gold_cost(1) == 50
+    assert cfg.buy_gold_cost(301) is None
+
+
+def test_store_1_free_refresh_4_amount_8(cfg: Config) -> None:
+    row = cfg.store(1)
+    assert (int(row["free_refresh"]), int(row["merchandise_amount"])) == (4, 8)
+    goods = cfg.merchandise(1)
+    assert len(goods) == 244
+    assert all(int(r["store"]) == 1 for r in goods)
+
+
+def test_mail_template_and_item_buy(cfg: Config) -> None:
+    assert int(cfg.mail_template(99999)["entry"]) == 99999
+    row = cfg.item_buy(1210800)
+    assert (int(row["category"]), int(row["rate"])) == (20, 500)
