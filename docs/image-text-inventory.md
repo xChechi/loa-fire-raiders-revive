@@ -69,6 +69,16 @@ localise step reads that folder yet, so the whole story dialogue is still Chines
 new text source with translation; it was left out of this image stage. The tip cards' screenshots
 keep their tiny baked-in Chinese UI (it is a picture of the old UI); only the captions changed.
 
+## Stage 3 re-draw (24-11-2026)
+
+15 more images, 272 in all. Before/after: `docs/screens/en-images-stage3/logo-login.jpg`.
+
+| group | re-drawn | how / left out and why |
+|---|---|---|
+| logo / login | 11 of 24 | the ten discount-shop tags N折 ("Pay N0%", so 1折 = "90% OFF") and 佣兵 Mercenary (line-up badge). gameLogin_btn_logoutgame was done in stage 1. The other eleven (girl_logo x2, costStone logo_1-5 and logo_bg_1-2, logo_stone_1-2) are art without text; nslm_logo.png is the logo (below) |
+| login plates (not in the 24) | 4 | the 服务器 plate gameLogin_bg and the three login buttons 快速游戏 / 登录账号 / 开始游戏; no Lua loads these four today, re-drawn because they are cheap |
+| the logo | 0 of 2 | gameLogin_Bigbg.png (what the login and loading screens load) and nslm_logo.png (no Lua loads it) stay stock until the owner picks a wording: `docs/screens/en-images-stage3/logo-options.jpg` shows the original, "League of Angels" and the placeholder "Fire Raiders" (mocks only) |
+
 ## Files per group
 
 ### hero name images (img/hero/name) (78)

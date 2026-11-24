@@ -1458,3 +1458,174 @@ margin = [7, 6]
 sources = [["angel_info", "angel_entry"]]
 # 9010002 is the Chinese New Year skin of angel 901000 (SqlManager.lua:485).
 alias = {"9010002" = 901000}
+
+# --- stage 3: logo / login group (24-11-2026) --------------------------------------
+# The two logo images (gameLogin_Bigbg.png, nslm_logo.png) stay stock until the
+# owner picks a wording: docs/screens/en-images-stage3/logo-options.jpg.
+
+[preset.discount_tag]
+# Yellow glyphs with a dark brown outline on the wooden price tag of the
+# discount shop (DiscountShopItem.lua: discountLogo_<n> for n折). n折 means the
+# player pays n tenths, the same rule as the game text 折扣:%d折 ("Pay %d0%").
+group = "logo-login"
+mode = "inpaint"
+mask = "lum"
+light = 175
+grow = 1
+halo = 3
+lines = 1
+fill = ["#fffca0", "#f2d22a"]
+outline = "#3a1a08"
+stroke = 0.14
+rotate = -9
+
+[preset.login_plate]
+# Text on the login plates and buttons: the box is filled in from the plate.
+group = "logo-login"
+mode = "inpaint"
+mask = "all"
+lines = 1
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo.png"
+zh = "5折!"
+en = "50% OFF"
+erase = [18, 8, 80, 46]
+text = [22, 10, 82, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_1.png"
+zh = "1折!"
+en = "90% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_2.png"
+zh = "2折!"
+en = "80% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_3.png"
+zh = "3折!"
+en = "70% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_4.png"
+zh = "4折!"
+en = "60% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_5.png"
+zh = "5折!"
+en = "50% OFF"
+# 91 x 49 like discountLogo.png: the glyphs start further left.
+erase = [18, 8, 80, 46]
+text = [22, 10, 82, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_6.png"
+zh = "6折!"
+en = "40% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_7.png"
+zh = "7折!"
+en = "30% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_8.png"
+zh = "8折!"
+en = "20% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+preset = "discount_tag"
+path = "ui/discountshop/discountLogo_9.png"
+zh = "9折!"
+en = "10% OFF"
+erase = [24, 8, 82, 46]
+text = [24, 10, 84, 44]
+
+[[image]]
+# Line-up badge of a hired hero (LineHeroCoin.lua:344); 佣兵合同 is
+# "Mercenary Contract" in the game text.
+group = "logo-login"
+path = "ui/kf_soldier_logo.png"
+zh = "佣兵"
+en = "Mercenary"
+mode = "inpaint"
+mask = "lum"
+light = 150
+grow = 2
+halo = 2
+lines = 1
+erase = [32, 24, 80, 57]
+text = [12, 32, 74, 54]
+fill = ["#ffffff", "#e6f0e0"]
+outline = "#143a08"
+stroke = 0.14
+
+[[image]]
+# Same plate as gameLogin/gameLogin_img_4.png (stage 1, "Server").
+preset = "login_plate"
+path = "ui/gameLogin_bg.png"
+zh = "服务器"
+en = "Server"
+erase = [78, 26, 166, 62]
+text = [70, 28, 172, 60]
+fill = ["#5c3a28", "#4a2c1c"]
+stroke = 0
+
+[[image]]
+preset = "login_plate"
+path = "ui/gameLogin_btn_quickLogin.png"
+zh = "快速游戏"
+en = "Quick Play"
+erase = [50, 13, 162, 46]
+text = [40, 14, 172, 45]
+fill = ["#1c3f73", "#0f2a55"]
+outline = "#eaf5ff"
+stroke = 0.1
+
+[[image]]
+preset = "login_plate"
+path = "ui/gameLogin_btn_showLogin.png"
+zh = "登录账号"
+en = "Log In"
+erase = [166, 14, 282, 52]
+text = [150, 16, 290, 50]
+fill = ["#6e3a22", "#4c2212"]
+outline = "#fbeee0"
+stroke = 0.1
+
+[[image]]
+preset = "login_plate"
+path = "ui/gameLogin_btn_start.png"
+zh = "开始游戏"
+en = "Start Game"
+erase = [166, 14, 282, 52]
+text = [130, 16, 310, 50]
+fill = ["#6e3a22", "#4c2212"]
+outline = "#fbeee0"
+stroke = 0.1

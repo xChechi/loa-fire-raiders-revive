@@ -28,7 +28,7 @@ from localise.images import (
 
 STOCK = Path(".stock")
 GROUPS = {"main-city-buttons", "main-city-activity-buttons", "class-badges", "word-images",
-          "title-words", "on-screen"}
+          "title-words", "on-screen", "logo-login"}
 
 
 # --- the table -------------------------------------------------------------------
@@ -56,6 +56,16 @@ def test_class_badges_use_the_glossary_class_names():
     assert names["RoleListCarrerBg1.png"] == names["roleUICardCarrer1.png"] == "Warrior"
     assert names["RoleListCarrerBg2.png"] == names["roleUICardCarrer2.png"] == "Mage"
     assert names["RoleListCarrerBg3.png"] == names["roleUICardCarrer3.png"] == "Marksman"
+
+
+def test_logo_login_group_leaves_the_logos_stock_and_reads_discounts_as_paid_tenths():
+    entries = {Path(e.path).name: e for e in load_table() if e.group == "logo-login"}
+    assert len(entries) == 15
+    assert not {"gameLogin_Bigbg.png", "nslm_logo.png"} & set(entries)
+    # n折 = pay n tenths (game text 折扣:%d折 is "Discount: Pay %d0%").
+    for n in range(1, 10):
+        e = entries[f"discountLogo_{n}.png"]
+        assert e.zh == f"{n}折!" and e.en == f"{100 - 10 * n}% OFF"
 
 
 def test_unknown_key_in_the_table_fails_loudly(tmp_path: Path):
