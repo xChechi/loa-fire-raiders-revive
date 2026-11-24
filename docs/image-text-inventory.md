@@ -47,6 +47,28 @@ Before/after sheets: `docs/screens/en-images-stage1/`.
 
 Not in stage 1: hero and angel name images, chapter banners, logo/login art.
 
+## Stage 2 re-draw (24-11-2026)
+
+115 more images, 257 in all. Before/after sheets: `docs/screens/en-images-stage2/`; on the
+emulator: `docs/screens/en-2026-11-24-images2/`.
+
+| group | re-drawn | how / left out and why |
+|---|---|---|
+| hero name images | 78 of 78 | not listed one by one: `localise.images.name_entries` joins the file's id to `hero_info.name` (346000 to `awaken_info.name`), stock and data/en, so the image says what the game text says |
+| angel name images | 31 of 31 | same join on `angel_info.angel_entry`; 9010002 is the Chinese New Year skin of 901000 (SqlManager.lua:485) |
+| chapter banners (img/chapter) | 0 of 17 | no text in them: they are the background art of the trial chapter rows (`RecallLevelItem.lua:60`); the name over them is a Lua label from `chapter_info` |
+| leftovers seen on screen | 6 | 聊天 Chat (mainSceneMsgBtn), 抢 Grab (actBtn_3), 失败 Defeat (frame 4 of the `ui_eff_battle_lose0` atlas), the captions of battle_end_lost_tip_1-3 |
+
+Where the image and the game table disagree, the English follows the table: 340000 image 主宰,
+table 主宰者 (Dominator); 503000 image 潘多拉, table 潘多拉女神 (Pandora). 501000 极寒女神 and
+702000 冰霜女神 are both "Frost Goddess" in the translated table, so their images read the same.
+
+Not done: the story speaker 魔法师 is Lua text, not an image. It lives in
+`res/assets/story/Story_*.lua` (90 files, 572 `talk=` lines plus their `name=` speakers), and no
+localise step reads that folder yet, so the whole story dialogue is still Chinese. That needs a
+new text source with translation; it was left out of this image stage. The tip cards' screenshots
+keep their tiny baked-in Chinese UI (it is a picture of the old UI); only the captions changed.
+
 ## Files per group
 
 ### hero name images (img/hero/name) (78)
