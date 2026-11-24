@@ -17,10 +17,13 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+from server import db
 from server.config import Config
+from server.modules import notify
 from server.modules.notify import HERO_FIELDS
 from server.net.registry import Registry
-from server.net.server import fill_required
+from server.net.server import Handler, Session, fill_required
+from server.settings import Settings
 
 log = logging.getLogger("loa.hero")
 
@@ -220,3 +223,280 @@ def build_npc_fight_unit(
     unit.unit.CopyFrom(build_client_hero_unit(registry, cfg, npc_row, None, 1))
     fill_required(unit)
     return unit
+
+
+# --- Gear, crafting, quality-up (plan B2 T7) ----------------------------------
+# Status codes are language.db ids.
+STATUS_OK = 0
+STATUS_INTERNAL_ERROR = 327681       # 系统内部错误 (a slot index outside 0..5)
+STATUS_NOT_ENOUGH_GOLD = 327937      # 金币不足
+STATUS_NO_HERO = 327941              # 英雄不存在
+STATUS_NOT_ENOUGH_ITEMS = 327942     # 没有足够道具
+STATUS_LEVEL_TOO_LOW = 327944        # 等级不够
+STATUS_ITEM_CAP = 327970             # 物品达到上限
+STATUS_SLOT_FULL = 328961            # 此装备栏位上已经有装备了
+STATUS_TOP_QUALITY = 328966          # 英雄已经是最高品质
+STATUS_SLOTS_NOT_FULL = 328967       # 英雄没有穿齐进阶所需装备
+STATUS_NO_COMPOSITE = 328968         # 没有可以合成的装备
+
+# The unit stats ClientHero:updateByFields copies into ClientHero.unit.
+STAT_NAMES = tuple(n for n in NPC_UNIT_FIELDS if n in HERO_FIELDS)
+COMPOSITE_PARTS = 4                  # item_composite item0..item3 / amount0..amount3
+
+
+def composite_parts(row) -> list[tuple[int, int]]:
+    """(material, amount) pairs of one item_composite row, empty pairs dropped."""
+    parts = []
+    for i in range(COMPOSITE_PARTS):
+        material, amount = int(row[f"item{i}"] or 0), int(row[f"amount{i}"] or 0)
+        if material and amount:
+            parts.append((material, amount))
+    return parts
+
+
+def handlers(
+    registry: Registry, settings: Settings, conn: sqlite3.Connection, cfg: Config
+) -> dict[tuple[int, int], Handler]:
+    def _player(session: Session):
+        if session.player_id is not None:
+            return conn.execute(
+                "SELECT * FROM players WHERE id = ?", (session.player_id,)
+            ).fetchone()
+        return db.find_player(conn, settings.username)
+
+    def _hero(pid: int, entry: int):
+        """Every hero field on the wire is a hero entry, not a heroes.id
+        (RoleUICtr.lua:116,153,179,267; RoleListCtr.lua:214)."""
+        return conn.execute(
+            "SELECT * FROM heroes WHERE player_id = ? AND entry = ? ORDER BY id",
+            (pid, int(entry)),
+        ).fetchone()
+
+    def _bag(pid: int) -> dict[int, int]:
+        return {int(r["entry"]): int(r["amount"]) for r in db.items_of(conn, pid)}
+
+    def _gold(pid: int) -> int:
+        return int(conn.execute(
+            "SELECT gold FROM players WHERE id = ?", (pid,)
+        ).fetchone()["gold"])
+
+    def _res(name: str, status: int | None = None, **fields):
+        res = registry.message_class(name)(**fields)
+        if status is not None:
+            res.status = status
+        fill_required(res)
+        return res
+
+    def _refused(name: str, status: int, why: str, **fields):
+        log.info("%s refused %d: %s", name, status, why)
+        return _res(name, status, **fields)
+
+    def _hero_fields(hero_id: int, names) -> dict:
+        row = conn.execute("SELECT * FROM heroes WHERE id = ?", (hero_id,)).fetchone()
+        full = hero_notify_fields(registry, cfg, row)
+        return {k: v for k, v in full.items() if k in names}
+
+    def _take_all(pid: int, costs: dict[int, int]) -> list[tuple[int, int]]:
+        """Remove already-checked amounts; return (entry, new amount) pairs."""
+        return [
+            (entry, db.take_item(conn, pid, entry, amount))
+            for entry, amount in costs.items() if amount
+        ]
+
+    def equip(session: Session, req):
+        name = "HeroEquipRes"
+        pid = int(_player(session)["id"])
+        index = int(req.index)
+        row = _hero(pid, req.hero)
+        if row is None:
+            return _refused(name, STATUS_NO_HERO, f"hero {req.hero}", index=index)
+        if not 0 <= index < GEAR_SLOTS:
+            return _refused(name, STATUS_INTERNAL_ERROR, f"slot {index}", index=index)
+        if int(row[f"item{index}"]):
+            return _refused(name, STATUS_SLOT_FULL, f"slot {index} full", index=index)
+        quality_row = quality_row_for(cfg, int(row["entry"]), int(row["quality"]))
+        target = int(quality_row[f"item{index}"] or 0)
+        if not target or _bag(pid).get(target, 0) < 1:
+            return _refused(name, STATUS_NOT_ENOUGH_ITEMS, f"item {target}", index=index)
+        item_row = cfg.item(target)
+        if item_row is None:
+            raise KeyError(f"item_info has no row for gear item {target}")
+        if int(item_row["required_level"] or 0) > int(row["level"]):
+            return _refused(
+                name, STATUS_LEVEL_TOO_LOW,
+                f"item {target} needs level {item_row['required_level']}", index=index,
+            )
+        left = db.take_item(conn, pid, target, 1)
+        slots = gear_slots(row)
+        slots[index] = target
+        db.set_hero_items(conn, int(row["id"]), slots)
+        notify.items_changed(registry, session, [(target, left)])
+        notify.hero_changed(
+            registry, session, int(row["entry"]),
+            _hero_fields(int(row["id"]), {f"item{index}", "ability", *STAT_NAMES}),
+        )
+        log.info("hero %d of player %d equips %d in slot %d", row["entry"], pid,
+                 target, index)
+        return _res(name, STATUS_OK, index=index)
+
+    def equip_all(session: Session, req):
+        """HeroEquipAllRes has no status (the header supplies 0), so this
+        cannot refuse: when nothing applies it changes nothing and logs."""
+        name = "HeroEquipAllRes"
+        pid = int(_player(session)["id"])
+        row = _hero(pid, req.hero)
+        if row is None:
+            log.warning("5_2163 for hero %s the player does not own", req.hero)
+            return _res(name)
+        quality_row = quality_row_for(cfg, int(row["entry"]), int(row["quality"]))
+        bag, gold = _bag(pid), _gold(pid)
+        costs: dict[int, int] = {}
+        gold_cost = 0
+        slots = gear_slots(row)
+        changed: list[int] = []
+        # Validate the whole plan against a simulated bag before any write.
+        for index in range(GEAR_SLOTS):
+            target = int(quality_row[f"item{index}"] or 0)
+            if slots[index] or not target:
+                continue
+            item_row = cfg.item(target)
+            if item_row is None or int(item_row["required_level"] or 0) > int(row["level"]):
+                continue
+            if bag.get(target, 0) - costs.get(target, 0) >= 1:
+                costs[target] = costs.get(target, 0) + 1
+            else:
+                # One composite level only (plan O7: getOneEquipStatus == 2).
+                comp = cfg.item_composite(target)
+                if comp is None:
+                    continue
+                parts = composite_parts(comp)
+                cost = int(comp["cost"] or 0)
+                if not parts or gold - gold_cost < cost or any(
+                    bag.get(m, 0) - costs.get(m, 0) < n for m, n in parts
+                ):
+                    continue
+                for m, n in parts:
+                    costs[m] = costs.get(m, 0) + n
+                gold_cost += cost
+            slots[index] = target
+            changed.append(index)
+        if not changed:
+            log.warning("5_2163 for hero %d: nothing to equip or craft", row["entry"])
+            return _res(name)
+        pairs = _take_all(pid, costs)
+        db.spend(conn, pid, gold=gold_cost)
+        db.set_hero_items(conn, int(row["id"]), slots)
+        notify.items_changed(registry, session, pairs)
+        notify.player_changed(registry, session, {"gold": _gold(pid)})
+        notify.hero_changed(
+            registry, session, int(row["entry"]),
+            _hero_fields(
+                int(row["id"]),
+                {*(f"item{i}" for i in changed), "ability", *STAT_NAMES},
+            ),
+        )
+        log.info("hero %d of player %d equips all: slots %s, %d gold", row["entry"],
+                 pid, changed, gold_cost)
+        return _res(name)
+
+    def _craft(session: Session, pid: int, target: int, comp, copies: int) -> None:
+        costs = {m: n * copies for m, n in composite_parts(comp)}
+        pairs = _take_all(pid, costs)
+        db.spend(conn, pid, gold=int(comp["cost"] or 0) * copies)
+        pairs.append((target, db.grant_item(conn, pid, target, copies)))
+        notify.items_changed(registry, session, pairs)
+        notify.player_changed(registry, session, {"gold": _gold(pid)})
+        log.info("player %d crafts %dx %d", pid, copies, target)
+
+    def composite(session: Session, req):
+        name = "ItemCompositeRes"
+        pid = int(_player(session)["id"])
+        target = int(req.item)
+        comp = cfg.item_composite(target)
+        if comp is None or not composite_parts(comp):
+            return _refused(name, STATUS_NO_COMPOSITE, f"item {target}")
+        bag = _bag(pid)
+        if any(bag.get(m, 0) < n for m, n in composite_parts(comp)):
+            return _refused(name, STATUS_NOT_ENOUGH_ITEMS, f"materials of {target}")
+        if _gold(pid) < int(comp["cost"] or 0):
+            return _refused(name, STATUS_NOT_ENOUGH_GOLD, f"{comp['cost']} gold")
+        item_row = cfg.item(target)
+        if item_row is None:
+            raise KeyError(f"item_info has no row for composite {target}")
+        if bag.get(target, 0) >= int(item_row["stackable"] or 0):
+            return _refused(name, STATUS_ITEM_CAP, f"item {target} at its stack cap")
+        _craft(session, pid, target, comp, 1)
+        return _res(name, STATUS_OK)
+
+    def composite_all(session: Session, req):
+        """ItemCompositeAllRes has no status: craft min(materials, gold,
+        stackable - owned) copies, or change nothing and log."""
+        name = "ItemCompositeAllRes"
+        pid = int(_player(session)["id"])
+        target = int(req.entry)
+        comp = cfg.item_composite(target)
+        item_row = cfg.item(target)
+        parts = composite_parts(comp) if comp is not None else []
+        if not parts or item_row is None:
+            log.warning("5_2725 for item %d, which has no composite", target)
+            return _res(name)
+        bag = _bag(pid)
+        copies = min(bag.get(m, 0) // n for m, n in parts)
+        cost = int(comp["cost"] or 0)
+        if cost:
+            copies = min(copies, _gold(pid) // cost)
+        copies = min(copies, int(item_row["stackable"] or 0) - bag.get(target, 0))
+        if copies <= 0:
+            log.warning("5_2725 for item %d: nothing can be crafted", target)
+            return _res(name)
+        _craft(session, pid, target, comp, copies)
+        return _res(name)
+
+    def quality_up(session: Session, req):
+        """The client clears its own items and sets quality = next of the OLD
+        row on the Res (RoleUICtr.lua:397-424), then counts exactly one
+        INFO_CHANGE_NTF_HERO for the success panel (settled point 11)."""
+        name = "HeroQualityUpRes"
+        pid = int(_player(session)["id"])
+        row = _hero(pid, req.hero)
+        if row is None:
+            return _refused(name, STATUS_NO_HERO, f"hero {req.hero}")
+        if not all(gear_slots(row)):
+            return _refused(name, STATUS_SLOTS_NOT_FULL, f"hero {row['entry']}")
+        old = quality_row_for(cfg, int(row["entry"]), int(row["quality"]))
+        nxt = int(old["next"] or 0)
+        if not nxt:
+            return _refused(name, STATUS_TOP_QUALITY, f"hero {row['entry']}")
+        conn.execute(
+            "UPDATE heroes SET quality = ? WHERE id = ?", (nxt, int(row["id"]))
+        )
+        conn.commit()
+        db.set_hero_items(conn, int(row["id"]), [0] * GEAR_SLOTS)
+        new_row = conn.execute(
+            "SELECT * FROM heroes WHERE id = ?", (int(row["id"]),)
+        ).fetchone()
+        built = build_client_hero(registry, cfg, new_row)
+        fields = _hero_fields(
+            int(row["id"]),
+            {"quality", "prototype", "ability", *STAT_NAMES,
+             *(f"item{i}" for i in range(GEAR_SLOTS))},
+        )
+        # The new prototype can unlock a skill (100000 -> 100010 adds
+        # skill1); ClientHero:updateByFields copies spellN into spells[N+1].
+        for i, spell in enumerate(built.spells):
+            fields[f"spell{i}"] = int(spell)
+        notify.hero_changed(registry, session, int(row["entry"]), fields)
+        notify.hero_base_changed(
+            registry, session, int(row["entry"]),
+            {n: getattr(built.base_unit, n) for n in notify.BASE_UNIT},
+        )
+        log.info("hero %d of player %d raised to quality %d", row["entry"], pid, nxt)
+        return _res(name, STATUS_OK)
+
+    return {
+        (5, 2105): equip,
+        (5, 2163): equip_all,
+        (5, 2111): composite,
+        (5, 2725): composite_all,
+        (5, 2109): quality_up,
+    }
