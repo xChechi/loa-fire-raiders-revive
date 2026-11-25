@@ -228,3 +228,89 @@ def test_buy_past_the_stack_limit_queues_the_mail_notify(reg, cfg, world) -> Non
     grant_item(conn, pid, 101000, int(cfg.item(101000)["stackable"]))
     assert _buy(reg, handlers, session, index=0).status == 0
     assert 7 in [m.ident for (_s, c, m) in session.outbox if c == 2008]
+
+
+# --- store 2, the mystery merchant (O-W2-11) --------------------------------
+
+T0 = 1_800_000_000
+
+
+@pytest.fixture
+def merchant(settings, cfg, reg):
+    """A level-16 player and a shop whose clock is T0."""
+    from server.modules import mystery
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0, gold=1000, diamond=1000)
+    conn.execute("UPDATE players SET level = 16 WHERE id = ?", (pid,))
+    conn.commit()
+    clock = {"now": T0}
+    handlers = shop.handlers(
+        reg, settings, conn, cfg, rng=random.Random(7), clock=lambda: clock["now"]
+    )
+    session = Session(writer=None, peer="t", bound_port=0)
+    session.player_id = pid
+
+    def appear(now=T0):
+        always = random.Random(0)
+        always.random = lambda: 0.0
+        assert mystery.on_energy_spent(
+            conn, cfg, reg, session, pid, 600, rng=always, now=now
+        )
+        session.outbox.clear()
+
+    return conn, pid, handlers, session, clock, appear
+
+
+def test_store2_opens_during_the_stay_with_lastappear(reg, merchant) -> None:
+    conn, pid, handlers, session, clock, appear = merchant
+    appear()
+    clock["now"] = T0 + 3599
+    res = _query(reg, handlers, session, store=2)
+    assert res.status == 0
+    assert res.store.store == 2
+    assert res.store.lastappear == T0
+    assert res.store.stay_time == 3600
+    assert len(res.store.merchandise) == 12
+    res.SerializeToString()
+
+
+def test_store2_closed_after_stay_refused_329986(reg, merchant) -> None:
+    conn, pid, handlers, session, clock, appear = merchant
+    appear()
+    # GameSceneOtherPanel.lua:75-92 sends op 1 when the stay runs out, so that
+    # the server answers with the leave push 5_2022.
+    clock["now"] = T0 + 3600
+    res = _query(reg, handlers, session, store=2)
+    assert res.status == 329986
+    assert [(s, c, m.store) for (s, c, m) in session.outbox] == [(5, 2022, 2)]
+
+
+def test_store2_never_appeared_refused_329986(reg, merchant) -> None:
+    conn, pid, handlers, session, clock, appear = merchant
+    res = _query(reg, handlers, session, store=2)
+    assert res.status == 329986
+    assert session.outbox == []
+
+
+def test_store2_below_level16_refused_327957(reg, merchant) -> None:
+    conn, pid, handlers, session, clock, appear = merchant
+    appear()
+    conn.execute("UPDATE players SET level = 15 WHERE id = ?", (pid,))
+    conn.commit()
+    res = _query(reg, handlers, session, store=2)
+    assert res.status == 327957
+
+
+def test_vip14_store2_has_no_stay(reg, merchant) -> None:
+    conn, pid, handlers, session, clock, appear = merchant
+    # VIP >= vip_buy_level 14 skips the level unlock (FunctionType.lua:1184-1193)
+    # and keeps the store open (stay_time 0, FunctionType.lua:598-620).
+    conn.execute("UPDATE players SET level = 1, vip = 14 WHERE id = ?", (pid,))
+    conn.commit()
+    clock["now"] = T0 + 10 * 86400
+    res = _query(reg, handlers, session, store=2)
+    assert res.status == 0
+    assert res.store.stay_time == 0
+    assert len(res.store.merchandise) == 12
+    assert session.outbox == []
