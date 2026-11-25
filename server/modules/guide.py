@@ -18,6 +18,14 @@ from server.settings import Settings
 
 log = logging.getLogger("loa.guide")
 
+# BattleEndLayer.lua:1041-1048 sends these after every fight through
+# NewGuideManager:check(id, nil, true). With no guide playing, check takes the
+# isFirst branch (NewGuideManager.lua:276-288) and skips the nextid test at
+# :290-298, so all of them reach the server whatever step the guide is at.
+BATTLE_END_GUIDE_IDS = frozenset(
+    (10160, 10159, 10290, 10330, 10380, 10500, 10540, 10580)
+)
+
 
 def handlers(
     registry: Registry, settings: Settings, conn: sqlite3.Connection, cfg: Config
@@ -40,7 +48,21 @@ def handlers(
                 req.guide_id,
             )
             return registry.message_class("SaveGuideIdRes")(status=1)
-        db.set_guide_id(conn, player_id, int(req.guide_id))
+        gid = int(req.guide_id)
+        if gid in BATTLE_END_GUIDE_IDS:
+            # The test the client skips: a burst id is progress only when it
+            # is the saved step itself or that step's nextid.
+            saved = int(conn.execute(
+                "SELECT guide_id FROM players WHERE id = ?", (player_id,)
+            ).fetchone()[0])
+            row = cfg.guide(saved)
+            if gid != saved and (row is None or int(row["nextid"]) != gid):
+                log.info(
+                    "5_2041 guide_id %d from the battle-end burst is not the next"
+                    " step of %d, not saved", gid, saved,
+                )
+                return registry.message_class("SaveGuideIdRes")(status=1)
+        db.set_guide_id(conn, player_id, gid)
         log.info("guide_id %d saved for player %d", req.guide_id, player_id)
         return registry.message_class("SaveGuideIdRes")(status=0)
 

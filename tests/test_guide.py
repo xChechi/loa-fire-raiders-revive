@@ -162,3 +162,63 @@ def test_a_plan_a_players_row_survives_and_keeps_its_data(settings) -> None:
     after = find_player(conn, "stefan")
     assert int(after["guide_id"]) == 10160
     assert (after["nickname"], after["level"], after["gold"]) == ("Stefan", 7, 1234)
+
+
+# BattleEndLayer.lua:1041-1048 calls NewGuideManager:check(id, nil, true) for
+# these eight ids after EVERY fight (lost or won, campaign, elite, angel trial).
+BATTLE_END_BURST = (10160, 10159, 10290, 10330, 10380, 10500, 10540, 10580)
+
+
+def _save(reg, settings, conn, cfg, pid, gid):
+    handlers = guide.handlers(reg, settings, conn, cfg)
+    session = Session(writer=None, peer="t", bound_port=0)
+    session.player_id = pid
+    req = reg.message_class("SaveGuideIdReq")(guide_id=gid)
+    return handlers[(5, 2041)](session, req)
+
+
+def test_a_post_fight_burst_does_not_overwrite_an_unrelated_guide_step(
+    reg, settings, cfg
+) -> None:
+    """Runs 8, 10 and 11: after each fight the client sent the eight ids of
+    BattleEndLayer.lua:1041-1048 and guide_id fell 11208 -> 10380 (and
+    10390 -> 10380). NewGuideManager:check (NewGuideManager.lua:238-331)
+    sends `id` to the server only after the "引导接不上" test at :290-298
+    (data.nextid must equal id), but when no guide is playing
+    (self.guideData == nil, set at :430 when the step's node is missing) it
+    takes the isFirst branch (:276-288), skips that test, and sends every id
+    of the burst while it actually replays saveGuideId's own next step.
+    So a burst id is the guide's progress only when it is the saved step's
+    nextid (or the saved step itself)."""
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    for start in (11208, 10390):
+        set_guide_id(conn, pid, start)
+        for gid in BATTLE_END_BURST:
+            _save(reg, settings, conn, cfg, pid, gid)
+        assert int(find_player(conn, "stefan")["guide_id"]) == start
+
+
+def test_a_burst_id_that_is_the_saved_steps_next_is_saved(reg, settings, cfg) -> None:
+    """The tutorial path the burst exists for: 10150 -> 10160 (run 2), 10280 ->
+    10290 (run 6) and 10313 -> 10380 (run 7) are each row's nextid."""
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    for before, after in ((10150, 10160), (10280, 10290), (10313, 10380)):
+        assert int(cfg.guide(before)["nextid"]) == after
+        set_guide_id(conn, pid, before)
+        for gid in BATTLE_END_BURST:
+            _save(reg, settings, conn, cfg, pid, gid)
+        assert int(find_player(conn, "stefan")["guide_id"]) == after
+
+
+def test_a_lower_guide_id_outside_the_burst_is_still_saved(reg, settings, cfg) -> None:
+    """Guide ids are not ordered in play: run 10 went 11208 -> 10400 -> 10410
+    legitimately (the achievement guide after the train guide), so the
+    server keeps no numeric monotonicity."""
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_guide_id(conn, pid, 11208)
+    res = _save(reg, settings, conn, cfg, pid, 10400)
+    assert res.status == 0
+    assert int(find_player(conn, "stefan")["guide_id"]) == 10400
