@@ -111,17 +111,24 @@ def test_a_gold_draw_costs_the_configured_gold(reg, cfg, world) -> None:
     assert int(row["gold"]) == 1280000 - 20000
 
 
-def test_a_diamond_draw_costs_the_configured_diamonds(reg, cfg, world) -> None:
-    """Past the tutorial draw and with the day's free draw used (Wave 2 A1)."""
+def test_a_paid_supreme_draw_costs_its_ticket_not_the_diamonds(reg, cfg, world) -> None:
+    """Past the tutorial draw and with the day's free draw used (Wave 2 A1).
+    The supreme card is paid in ticket 99 only (TavernFace.lua:210-255)."""
+    from server.db import grant_item
+
     conn, pid, handlers, session = world
     conn.execute(
         "UPDATE players SET diamond_single_draws = 3, diamond_free_day = ?"
         " WHERE id = ?", (day_key(5), pid),
     )
     conn.commit()
+    grant_item(conn, pid, 99, 1)
     handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=2400000))
     row = find_player(conn, "stefan")
-    assert int(row["diamond"]) == 18888 - 2000
+    assert int(row["diamond"]) == 18888
+    assert conn.execute(
+        "SELECT COUNT(*) FROM items WHERE player_id = ? AND entry = 99", (pid,)
+    ).fetchone()[0] == 0
 
 
 def test_too_little_gold_is_refused_with_the_client_status(reg, cfg, settings) -> None:
@@ -151,7 +158,8 @@ def test_too_few_diamonds_is_refused_with_the_client_status(
     session = Session(writer=None, peer="t", bound_port=0)
     session.player_id = pid
     res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=2400000))
-    assert res.status == 327938                     # language.db 钻石不足
+    # A ticket card has no diamond fallback: the missing ticket 99 refuses it.
+    assert res.status == 327942                     # language.db 没有足够道具
     assert len(res.items) == 0
     assert int(find_player(conn, "stefan")["diamond"]) == 10
 
@@ -165,11 +173,17 @@ def test_an_unknown_banner_is_refused(reg, cfg, world) -> None:
 def test_a_banner_with_no_pool_is_refused_and_costs_nothing(reg, cfg, world) -> None:
     """3000000 has drop_id 0: nothing can be rolled, and an empty items list
     with status 0 would crash g_tools:randomTable, so the draw is refused."""
+    from server.db import grant_item
+
     conn, pid, handlers, session = world
+    grant_item(conn, pid, 98, 1000)                 # past the ticket check
     res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=3000000))
     assert res.status == 327681                     # language.db 系统内部错误
     assert len(res.items) == 0
     assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = 98", (pid,)
+    ).fetchone()[0] == 1000
 
 
 @pytest.mark.parametrize(
@@ -444,12 +458,21 @@ def test_post_guide_supreme_draw_pays_a_182000_hero_at_star2_level5_free(
     assert info.freetimes == 0
 
 
-def test_second_supreme_draw_same_day_is_charged_2000(reg, cfg, settings) -> None:
+def test_second_supreme_draw_same_day_costs_a_ticket(reg, cfg, settings) -> None:
+    from server.db import grant_item
+
     conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 1, DAY1_10AM)
-    _draw(reg, handlers, session)
+    grant_item(conn, pid, 99, 1)
+    _draw(reg, handlers, session)                   # the day's free draw
+    assert conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = 99", (pid,)
+    ).fetchone()[0] == 1
     res = _draw(reg, handlers, session)
     assert res.status == 0
-    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 2000
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert conn.execute(
+        "SELECT COUNT(*) FROM items WHERE player_id = ? AND entry = 99", (pid,)
+    ).fetchone()[0] == 0
 
 
 def test_free_draw_returns_after_5am_next_day(reg, cfg, settings) -> None:
@@ -467,8 +490,11 @@ def test_free_draw_returns_after_5am_next_day(reg, cfg, settings) -> None:
 
 
 def test_third_supreme_single_pays_182100(reg, cfg, settings, monkeypatch) -> None:
+    from server.db import grant_item
+
     seen = _spy_drop_ids(monkeypatch)
     conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 0, DAY1_10AM)
+    grant_item(conn, pid, 99, 1)                    # k = 2 is paid
     for _ in range(3):
         assert _draw(reg, handlers, session).status == 0
     assert seen == [189000, 182000, 182100]
@@ -479,8 +505,11 @@ def test_supreme_guarantee_repeats_every_8th_single(
 ) -> None:
     """DIAMOND_SINGLE_GACHA_FIRST_INTERVAL 1 puts the first guarantee at k = 2,
     NORMAL_INTERVAL 8 repeats it at k = 10, 18, ..."""
+    from server.db import grant_item
+
     seen = _spy_drop_ids(monkeypatch)
     conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 9, DAY1_10AM)
+    grant_item(conn, pid, 99, 9)                    # one free, nine paid
     for _ in range(10):
         assert _draw(reg, handlers, session).status == 0
     assert seen == [300000, 182100] + [300000] * 7 + [182100]
@@ -558,13 +587,27 @@ def test_paid_supreme_single_spends_one_ticket_99_and_no_diamonds(
     assert (99, 1) in _item_notifies(session)
 
 
-def test_paid_supreme_single_without_ticket_charges_2000_diamonds(
+def test_again_on_a_ticket_card_without_the_tickets_is_refused(
     reg, cfg, settings
 ) -> None:
+    """Run 10 finding 1: the reward screen's "再来一次" sent 5_2123 for
+    2400000 with no ticket 99 and was charged 2,000 diamonds. Again is
+    TavernStageBg:continueBt (TavernStageBg.lua:172-180), which sends
+    GachaReq {gacha = self.cardid} with no check at all. The first draw,
+    TavernFace:onBtnClick (TavernFace.lua:210-255), sends a supreme (idx 4,
+    item 99) or mystic (idx 6, item 98) draw only when it is free or
+    floor(cost / item_buy_info.rate) tickets are owned; otherwise it opens
+    the ticket shop (tavernface_short_res -> ItemBuyPanel, 5_2933). So the
+    server applies that check: no tickets, no draw, nothing written."""
     conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
-    res = _draw(reg, handlers, session)
-    assert res.status == 0
-    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 2000
+    before = dict(find_player(conn, "stefan"))
+    for banner in (2400000, SUPREME_TEN):
+        res = _draw(reg, handlers, session, banner)
+        assert res.status == 327942                 # language.db 没有足够道具
+        assert len(res.items) == 0
+    assert dict(find_player(conn, "stefan")) == before
+    assert heroes_of(conn, pid) == []
+    assert session.outbox == []
 
 
 def test_supreme_ten_pull_spends_nine_tickets_when_owned(reg, cfg, settings) -> None:
@@ -616,8 +659,11 @@ def test_every_tenth_gold_single_pays_181000_and_gold_next_counts_down(
 
 
 def test_first_supreme_ten_pull_pays_183000_once(reg, cfg, settings, monkeypatch) -> None:
+    from server.db import grant_item
+
     seen = _spy_drop_ids(monkeypatch)
     conn, pid, handlers, session = _past_free_draw(reg, cfg, settings, diamond=100000)
+    grant_item(conn, pid, 99, 18)                   # two ten-pulls of 9 tickets
     info = handlers[(5, 2121)](session, reg.message_class("GachaInfoReq")())
     assert info.diamond_ten_gacha == 0
     first = _draw(reg, handlers, session, SUPREME_TEN)
@@ -631,8 +677,9 @@ def test_first_supreme_ten_pull_pays_183000_once(reg, cfg, settings, monkeypatch
 
 
 def test_refused_draw_writes_nothing(reg, cfg, settings) -> None:
-    """Neither the tickets nor the currency suffice: refuse with the client's
-    own code and change nothing (no partial ticket spend, no count)."""
+    """The tickets (ticket card) or the currency (gold card) do not suffice:
+    refuse with the client's own code and change nothing (no partial ticket
+    spend, no count)."""
     from server.db import grant_item
 
     conn, pid, handlers, session = _past_free_draw(reg, cfg, settings, diamond=10, gold=10)
@@ -642,7 +689,7 @@ def test_refused_draw_writes_nothing(reg, cfg, settings) -> None:
     before = dict(find_player(conn, "stefan"))
 
     res = _draw(reg, handlers, session, SUPREME_TEN)
-    assert res.status == 327938                     # language.db 钻石不足
+    assert res.status == 327942                     # language.db 没有足够道具
     assert len(res.items) == 0
     res = _draw(reg, handlers, session, GOLD_SINGLE)
     assert res.status == 327937                     # language.db 金币不足

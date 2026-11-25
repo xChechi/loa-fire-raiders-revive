@@ -30,6 +30,7 @@ log = logging.getLogger("loa.gacha")
 STATUS_OK = 0
 STATUS_NOT_ENOUGH_GOLD = 327937      # language.db 金币不足
 STATUS_NOT_ENOUGH_DIAMOND = 327938   # language.db 钻石不足
+STATUS_NOT_ENOUGH_ITEMS = 327942     # language.db 没有足够道具
 # language.db 系统内部错误: the banner the client asked for is not in
 # gacha_info, or its drop id has no pool at all (3000000 has drop_id 0).
 STATUS_INTERNAL_ERROR = 327681
@@ -266,7 +267,8 @@ def handlers(
                     player_id, drop_id, key,
                 )
         # O-W2-4: a paid draw spends its tickets when they are owned, and the
-        # currency only otherwise.
+        # currency only otherwise; a ticket card (TICKET_ITEM) has no currency
+        # fallback.
         ticket = _ticket(cfg, banner, gacha_id, cost) if cost else None
         if ticket is not None:
             owned = conn.execute(
@@ -275,6 +277,16 @@ def handlers(
             ).fetchone()
             if ticket[1] > 0 and owned is not None and int(owned["amount"]) >= ticket[1]:
                 cost = 0
+            elif gacha_id in TICKET_ITEM:
+                # The reward screen's Again (TavernStageBg.lua:172-180) sends
+                # with no check; the first draw sends a ticket card only with
+                # its tickets (TavernFace.lua:210-255). Same rule here.
+                log.info(
+                    "banner %s needs %d x item %d, player %d has %d: refused",
+                    gacha_id, ticket[1], ticket[0], player_id,
+                    0 if owned is None else int(owned["amount"]),
+                )
+                return _refused(STATUS_NOT_ENOUGH_ITEMS)
             else:
                 ticket = None
         if cost_type == COST_GOLD and int(row["gold"]) < cost:
