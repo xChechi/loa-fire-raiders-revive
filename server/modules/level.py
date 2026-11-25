@@ -60,18 +60,41 @@ def roll_urandom(rng: random.Random | None = None) -> list[int]:
     return [rng.randrange(URANDOM_SCALE) for _ in range(URANDOM_SIZE)]
 
 
-def frontier(cfg: Config, row: sqlite3.Row) -> int:
-    """The one stage the player may newly clear."""
-    last = int(row["last_level"])
-    return cfg.next_stage(last) if last else cfg.first_stage()
+CHAPTER_ELITE = 2   # chapter_info.type of the elite chapters 110000-127000
+
+
+def chapter_type(cfg: Config, lvl: int) -> int:
+    """chapter_info.type of a stage's chapter; 1 when the chapter is unknown."""
+    stage = cfg.stage(lvl)
+    chapter = None if stage is None else cfg.chapter(int(stage["chapter"]))
+    return 1 if chapter is None else int(chapter["type"])
+
+
+def frontier(cfg: Config, row: sqlite3.Row, type_: int = 1) -> int:
+    """The one stage the player may newly clear. Elite chapters follow
+    last_elite, the rest last_level (LevelManager.lua:409-444)."""
+    column = "last_elite" if type_ == CHAPTER_ELITE else "last_level"
+    last = int(row[column])
+    return cfg.next_stage(last) if last else cfg.first_stage(type_)
 
 
 def is_unlocked(
     cfg: Config, conn: sqlite3.Connection, row: sqlite3.Row, lvl: int
 ) -> bool:
-    if lvl == frontier(cfg, row):
+    type_ = chapter_type(cfg, lvl)
+    progress = db.level_progress(conn, int(row["id"]), lvl)
+    if type_ == CHAPTER_ELITE and (progress is None or int(progress["star"]) <= 0):
+        # An unstarred elite stage opens only once its relation_level normal
+        # stage has a star; a starred one is status 1 and stays open
+        # (LevelManager.lua:858-879, LevelBuildTouch.lua:163-185).
+        relation = db.level_progress(
+            conn, int(row["id"]), int(cfg.stage(lvl)["relation_level"] or 0)
+        )
+        if relation is None or int(relation["star"]) <= 0:
+            return False
+    if lvl == frontier(cfg, row, type_):
         return True
-    return db.level_progress(conn, int(row["id"]), lvl) is not None
+    return progress is not None
 
 
 def chapter_stars(
@@ -228,6 +251,7 @@ def handlers(
         # more after a 6 s timeout (BattleFactoryBase.lua:871-930).
         rolled = pending.pop(lvl)
         player_id = int(row["id"])
+        elite = chapter_type(cfg, lvl) == CHAPTER_ELITE
         star = max(0, min(3, int(req.star)))
         won = star > 0
 
@@ -266,7 +290,14 @@ def handlers(
                 angel_xp = db.add_angel_xp(
                     conn, cfg, player_id, int(req.angel), int(stage["angel_xp"] or 0)
                 )
-                if lvl == frontier(cfg, row):
+                if elite and lvl == frontier(cfg, row, CHAPTER_ELITE):
+                    # db.py has no setter and is not this task's file.
+                    conn.execute(
+                        "UPDATE players SET last_elite = ? WHERE id = ?",
+                        (lvl, player_id),
+                    )
+                    conn.commit()
+                elif not elite and lvl == frontier(cfg, row):
                     db.set_last_level(conn, player_id, lvl)
         except Exception:
             log.error(
@@ -311,12 +342,15 @@ def handlers(
             # First, so the absolute player values below are the last word.
             item.announce(registry, session, granted)
             notify.items_changed(registry, session, granted["items"])
-            notify.player_changed(registry, session, {
+            changed = {
                 "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
                 "xp": int(fresh["xp"]), "level": int(fresh["level"]),
                 "energy": int(fresh["energy"]), "max_energy": int(fresh["max_energy"]),
                 "last_level": int(fresh["last_level"]),
-            })
+            }
+            if elite:
+                changed["last_elite"] = int(fresh["last_elite"])
+            notify.player_changed(registry, session, changed)
             if xp_change["levelled"]:
                 before = xp_change["before"]
                 after = xp_change["after"]
