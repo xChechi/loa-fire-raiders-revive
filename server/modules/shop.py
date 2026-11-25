@@ -112,8 +112,8 @@ def generate_slots(
 
 def client_store(registry: Registry, store_row, row: sqlite3.Row,
                  lastappear: int | None = None, stay_time: int | None = None):
-    """ClientStore from a stores row; store 2 also carries lastappear and
-    stay_time (fields 4, 5; RPGGame.lua:870-872)."""
+    """ClientStore from a stores row; stores 2 and 7 also carry lastappear and
+    stay_time (fields 4, 5; RPGGame.lua:870-872, :901-903)."""
     free_left = max(0, int(store_row["free_refresh"]) - int(row["refresh_used"]))
     msg = registry.message_class("ClientStore")(
         store=int(store_row["entry"]),
@@ -212,15 +212,19 @@ def handlers(
         player = _player(session)
         pid = int(player["id"])
         appear: tuple[int | None, int | None] = (None, None)
-        if store == mystery.STORE:
+        if store in mystery.COLUMNS:
+            # Store 2 (mystery) and store 7 (celestial merchant, never
+            # permanent): open only during the stay; after it, 329986 and the
+            # leave push 5_2022 {store}.
+            col = mystery.COLUMNS[store]
             now = int(clock())
-            permanent = mystery.is_permanent(store_row, player)
-            if not permanent and int(player["level"]) < cfg.function_unlock(mystery.FUNCTION):
+            permanent = store == mystery.STORE and mystery.is_permanent(store_row, player)
+            if not permanent and int(player["level"]) < cfg.function_unlock(col.function):
                 return _refused(name, STATUS_LEVEL_LOCKED, f"store {store}: level")
-            if not permanent and not mystery.present(player, now):
-                mystery.expire(registry, session, player, now)
+            if not permanent and not mystery.present(player, now, store):
+                mystery.expire(registry, session, player, now, stores=(store,))
                 return _refused(name, STATUS_MERCHANT_GONE, f"store {store}: gone")
-            appear = (int(player["mystery_appear"]), 0 if permanent else int(player["mystery_stay"]))
+            appear = (int(player[col.appear]), 0 if permanent else int(player[col.stay]))
         row = _load(player, store_row)
         if appear[0] == 0:
             # VIP >= vip_buy_level before any appearance: the store has been
@@ -305,4 +309,16 @@ def handlers(
         fill_required(res)
         return res
 
-    return {(5, 2129): query_or_refresh, (5, 2135): buy}
+    def exit_soul_store(session: Session, req):
+        """5_2589 ExitSoulStoreReq {}: "送走神界商店" (LegendsUI.lua:156-162);
+        the Res is empty."""
+        player = _player(session)
+        if player is None:
+            log.warning("5_2589 before any character exists")
+        else:
+            mystery.send_away(conn, int(player["id"]), clock())
+        res = registry.message_class("ExitSoulStoreRes")()
+        fill_required(res)
+        return res
+
+    return {(5, 2129): query_or_refresh, (5, 2135): buy, (5, 2589): exit_soul_store}

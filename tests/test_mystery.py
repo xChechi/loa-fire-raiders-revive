@@ -168,3 +168,100 @@ def test_expire_queues_5_2022_after_the_stay(reg, cfg, world) -> None:
     assert (service, cmd) == (5, 2022)
     assert msg.store == 2
     msg.SerializeToString()
+
+
+# --- store 7, the celestial merchant (plan B2 Wave 3 A3, O-W3-3) -------------
+# store_info(7): merchandise_amount 6, min/max_appeared_cost 200/400,
+# appeared_rate 0.005, stay_time 3600; function(10370).unlock_level is 19.
+
+
+def _level(conn, pid, level) -> None:
+    conn.execute("UPDATE players SET level = ? WHERE id = ?", (level, pid))
+    conn.commit()
+
+
+def _pushed(session, store) -> list:
+    return [m for (s, c, m) in session.outbox if (s, c) == (5, 2020) and m.store.store == store]
+
+
+def test_store7_needs_200_energy_before_rolling(reg, cfg, world) -> None:
+    conn, pid, session = world
+    _level(conn, pid, 19)
+    # A roll of 0.0 always hits 0.005, so only the 200 floor stops it.
+    _spend(conn, cfg, reg, session, pid, 199, FixedRng(0.0))
+    assert _pushed(session, 7) == []
+    assert int(_row(conn, pid)["legends_energy"]) == 199
+    _spend(conn, cfg, reg, session, pid, 1, FixedRng(0.0))
+    assert len(_pushed(session, 7)) == 1
+
+
+def test_store7_forced_at_400(reg, cfg, world) -> None:
+    conn, pid, session = world
+    _level(conn, pid, 19)
+    never = FixedRng(0.99)
+    _spend(conn, cfg, reg, session, pid, 399, never)
+    assert _pushed(session, 7) == []
+    assert _spend(conn, cfg, reg, session, pid, 1, never) is True
+    (msg,) = _pushed(session, 7)
+    assert msg.onEnergyCost is True
+    assert msg.store.lastappear == int(T0)
+    assert msg.store.stay_time == 3600
+    row = _row(conn, pid)
+    assert int(row["legends_energy"]) == 0
+    assert int(row["legends_appear"]) == int(T0)
+    assert int(row["legends_stay"]) == 3600
+    assert int(row["legends_shown"]) == 1
+    assert row["legends_day"] == "2026-11-25"
+    msg.SerializeToString()
+
+
+def test_store7_and_store2_counters_are_independent(reg, cfg, world) -> None:
+    conn, pid, session = world
+    _level(conn, pid, 19)
+    never = FixedRng(0.99)
+    _spend(conn, cfg, reg, session, pid, 400, never)
+    assert len(_pushed(session, 7)) == 1
+    assert _pushed(session, 2) == []
+    row = _row(conn, pid)
+    assert (int(row["legends_energy"]), int(row["mystery_energy"])) == (0, 400)
+    _spend(conn, cfg, reg, session, pid, 200, never)
+    assert len(_pushed(session, 2)) == 1
+    row = _row(conn, pid)
+    assert (int(row["legends_energy"]), int(row["mystery_energy"])) == (200, 0)
+    assert int(row["energy_use"]) == 600
+
+
+def test_store7_once_per_day(reg, cfg, world) -> None:
+    conn, pid, session = world
+    _level(conn, pid, 19)
+    never = FixedRng(0.99)
+    _spend(conn, cfg, reg, session, pid, 400, never)
+    _spend(conn, cfg, reg, session, pid, 400, never, now=T0 + 7200)
+    assert len(_pushed(session, 7)) == 1
+    _spend(conn, cfg, reg, session, pid, 400, never, now=T0 + 86400)
+    assert len(_pushed(session, 7)) == 2
+    row = _row(conn, pid)
+    assert row["legends_day"] == "2026-11-26"
+    assert int(row["legends_shown"]) == 1
+
+
+def test_store7_below_level19_never_appears(reg, cfg, world) -> None:
+    conn, pid, session = world
+    _level(conn, pid, 18)
+    _spend(conn, cfg, reg, session, pid, 400, FixedRng(0.0))
+    assert _pushed(session, 7) == []
+    assert int(_row(conn, pid)["legends_appear"]) == 0
+
+
+def test_store7_expired_at_login_queues_5_2022(reg, cfg, world) -> None:
+    # player.py's QueryMyself calls mystery.expire after the Res.
+    conn, pid, session = world
+    _level(conn, pid, 19)
+    _spend(conn, cfg, reg, session, pid, 400, FixedRng(0.99))
+    session.outbox.clear()
+    assert mystery.expire(reg, session, _row(conn, pid), now=T0 + 3599) is False
+    assert session.outbox == []
+    assert mystery.expire(reg, session, _row(conn, pid), now=T0 + 3600) is True
+    (service, cmd, msg), = session.outbox
+    assert (service, cmd) == (5, 2022)
+    assert msg.store == 7

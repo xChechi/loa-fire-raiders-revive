@@ -575,3 +575,21 @@ def test_wave1_world_migrates_without_loss(tmp_path) -> None:
         assert [int(angel[f"aura{i}_lv"]) for i in range(6)] == [1] * 6
     assert {r[0] for r in conn.execute("SELECT day FROM events")} <= {""}
     conn.close()
+
+
+LEGENDS_COLUMNS = {
+    "legends_energy", "legends_appear", "legends_stay", "legends_shown", "legends_day",
+}
+
+
+def test_legends_columns_added(tmp_path) -> None:
+    # Plan B2 Wave 3 A3: the celestial merchant's (store 7) own counters.
+    conn = connect(tmp_path / "player.db")
+    players = {r["name"]: r for r in conn.execute("PRAGMA table_info(players)")}
+    assert LEGENDS_COLUMNS <= set(players)
+    for name in LEGENDS_COLUMNS:
+        text = name.endswith("_day")
+        assert players[name]["type"] == ("TEXT" if text else "INTEGER"), name
+        assert players[name]["notnull"] == 1, name
+        assert players[name]["dflt_value"] == ("''" if text else "0"), name
+    conn.close()

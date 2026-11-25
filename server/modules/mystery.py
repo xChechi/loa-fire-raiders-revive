@@ -20,6 +20,20 @@ MAX_SHOW_STORE_TIMES is 1 per day; function(10350).unlock_level is 16
   ("到了要给后端发查询消息才会触发离开消息", GameSceneOtherPanel.lua:75-92); the
   shop answers it with 5_2022 DisapperStoreNotify {store 2} (RPGGame.lua:937)
   through `expire`.
+
+The celestial merchant (神界商人), store 7, is store 2's twin with its own
+numbers and counters (plan B2 Wave 3 A3, O-W3-3): store_info(7)
+merchandise_amount 6, min/max_appeared_cost 200/400, appeared_rate 0.005,
+stay_time 3600; function(10370).unlock_level is 19 (FunctionType.LEGENDS_TYPE,
+opened with 5_2129 {type 7, op 1}, FunctionType.lua:1401-1404). It keeps
+players.legends_*, has its own MAX_SHOW_STORE_TIMES per day and is never
+permanent (the VIP rule of FunctionType.lua:1184-1193 names store 2 only).
+Its appearance is the same 5_2020 push with store 7 (RPGGame.lua:884-911); the
+client opens UI_LEGENDS only while legendsAppearTime + legendsStayTime > now
+(FunctionType.lua:619-627), re-asks 5_2129 {type 7} when the time runs out
+(GameSceneOtherPanel.lua:95-105) and leaves on 5_2022 {store 7}
+(RPGGame.lua:955-962). "Send away" is 5_2589 ExitSoulStoreReq {}
+(LegendsUI.lua:156-162), which ends the stay at once (`send_away`).
 """
 
 from __future__ import annotations
@@ -29,6 +43,7 @@ import logging
 import random
 import sqlite3
 import time
+from typing import NamedTuple
 
 from server import db
 from server.config import Config
@@ -41,6 +56,25 @@ log = logging.getLogger("loa.mystery")
 STORE = 2
 FUNCTION = 10350          # FunctionType.MYSTERYSTORE_TYPE
 DAY_HOUR = 0              # the counters reset at midnight (A6)
+LEGENDS_STORE = 7
+LEGENDS_FUNCTION = 10370  # FunctionType.LEGENDS_TYPE, 神界商人
+
+
+class _Columns(NamedTuple):
+    """The players columns and unlock function of one merchant."""
+    energy: str
+    appear: str
+    stay: str
+    shown: str
+    function: int
+
+
+COLUMNS = {
+    STORE: _Columns("mystery_energy", "mystery_appear", "mystery_stay",
+                    "mystery_shown", FUNCTION),
+    LEGENDS_STORE: _Columns("legends_energy", "legends_appear", "legends_stay",
+                            "legends_shown", LEGENDS_FUNCTION),
+}
 
 _default_rng = random.SystemRandom()
 
@@ -50,22 +84,48 @@ def is_permanent(store_row, player: sqlite3.Row) -> bool:
     return int(player["vip"]) >= int(store_row["vip_buy_level"])
 
 
-def present(player: sqlite3.Row, now: float) -> bool:
-    appear, stay = int(player["mystery_appear"]), int(player["mystery_stay"])
+def present(player: sqlite3.Row, now: float, store: int = STORE) -> bool:
+    col = COLUMNS[store]
+    appear, stay = int(player[col.appear]), int(player[col.stay])
     return appear > 0 and (stay == 0 or now < appear + stay)
 
 
-def expire(registry: Registry, session: Session, player: sqlite3.Row, now: float) -> bool:
-    """Queue 5_2022 {store 2} once the stay of an appearance has run out."""
-    appear, stay = int(player["mystery_appear"]), int(player["mystery_stay"])
-    if appear <= 0 or stay <= 0 or now < appear + stay:
-        return False
-    msg = registry.message_class("DisapperStoreNotify")(store=STORE)
-    fill_required(msg)
-    session.queue(5, 2022, msg)
-    log.info("mystery merchant left player %d (appeared %d, stay %d)",
-             int(player["id"]), appear, stay)
-    return True
+def expire(registry: Registry, session: Session, player: sqlite3.Row, now: float,
+           stores: tuple[int, ...] = (STORE, LEGENDS_STORE)) -> bool:
+    """Queue 5_2022 {store} for each of `stores` whose stay has run out."""
+    left = False
+    for store in stores:
+        col = COLUMNS[store]
+        appear, stay = int(player[col.appear]), int(player[col.stay])
+        if appear <= 0 or stay <= 0 or now < appear + stay:
+            continue
+        msg = registry.message_class("DisapperStoreNotify")(store=store)
+        fill_required(msg)
+        session.queue(5, 2022, msg)
+        log.info("merchant of store %d left player %d (appeared %d, stay %d)",
+                 store, int(player["id"]), appear, stay)
+        left = True
+    return left
+
+
+def send_away(conn: sqlite3.Connection, pid: int, now: float) -> None:
+    """5_2589: end store 7's stay now, so that appear + stay <= now. A stay of
+    0 would mean "permanent", so a stay sent away in its first second moves
+    the appearance one second back instead."""
+    player = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    appear = int(player["legends_appear"])
+    if appear <= 0:
+        log.info("5_2589 for player %d with no celestial merchant", pid)
+        return
+    stay = int(now) - appear
+    if stay <= 0:
+        appear, stay = int(now) - 1, 1
+    conn.execute(
+        "UPDATE players SET legends_appear = ?, legends_stay = ? WHERE id = ?",
+        (appear, stay, pid),
+    )
+    conn.commit()
+    log.info("celestial merchant sent away by player %d", pid)
 
 
 def on_energy_spent(
@@ -78,8 +138,8 @@ def on_energy_spent(
     rng=None,
     now: float | None = None,
 ) -> bool:
-    """Count `amount` energy spent and maybe bring the merchant. True when it
-    appeared (5_2020 queued)."""
+    """Count `amount` energy spent and maybe bring store 2, then store 7. True
+    when either appeared (one 5_2020 queued per appearance)."""
     rng = _default_rng if rng is None else rng
     now = time.time() if now is None else float(now)
     today = db.day_key(DAY_HOUR, now)
@@ -89,19 +149,35 @@ def on_energy_spent(
             "UPDATE players SET energy_use = 0, mystery_shown = 0, mystery_day = ?"
             " WHERE id = ?", (today, pid),
         )
+    if player["legends_day"] != today:
+        conn.execute(
+            "UPDATE players SET legends_shown = 0, legends_day = ? WHERE id = ?",
+            (today, pid),
+        )
     conn.execute(
         "UPDATE players SET energy_use = energy_use + ?,"
-        " mystery_energy = mystery_energy + ? WHERE id = ?",
-        (int(amount), int(amount), pid),
+        " mystery_energy = mystery_energy + ?, legends_energy = legends_energy + ?"
+        " WHERE id = ?",
+        (int(amount), int(amount), int(amount), pid),
     )
     conn.commit()
-    player = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    appeared = False
+    for store in (STORE, LEGENDS_STORE):
+        if _roll(conn, cfg, registry, session, pid, store, rng, now, today):
+            appeared = True
+    return appeared
 
-    store_row = cfg.store(STORE)
-    spent = int(player["mystery_energy"])
+
+def _roll(conn: sqlite3.Connection, cfg: Config, registry: Registry, session: Session,
+          pid: int, store: int, rng, now: float, today: str) -> bool:
+    """One merchant's appearance roll on its own counters (O-W2-11, O-W3-3)."""
+    col = COLUMNS[store]
+    player = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    store_row = cfg.store(store)
+    spent = int(player[col.energy])
     if (
-        int(player["level"]) < cfg.function_unlock(FUNCTION)
-        or int(player["mystery_shown"]) >= cfg.variable_int("MAX_SHOW_STORE_TIMES", 1)
+        int(player["level"]) < cfg.function_unlock(col.function)
+        or int(player[col.shown]) >= cfg.variable_int("MAX_SHOW_STORE_TIMES", 1)
         or spent < int(store_row["min_appeared_cost"])
     ):
         return False
@@ -111,28 +187,29 @@ def on_energy_spent(
         return False
 
     at = int(now)
-    stay = 0 if is_permanent(store_row, player) else int(store_row["stay_time"])
+    permanent = store == STORE and is_permanent(store_row, player)
+    stay = 0 if permanent else int(store_row["stay_time"])
     slots = json.dumps(shop.generate_slots(conn, cfg, player, store_row, rng))
     conn.execute(
         "INSERT INTO stores (player_id, store, lastupdate, slots, refresh_used, refresh_day)"
         " VALUES (?, ?, ?, ?, 0, ?) ON CONFLICT(player_id, store) DO UPDATE SET"
         " lastupdate = excluded.lastupdate, slots = excluded.slots,"
         " refresh_used = 0, refresh_day = excluded.refresh_day",
-        (pid, STORE, at, slots, today),
+        (pid, store, at, slots, today),
     )
     conn.execute(
-        "UPDATE players SET mystery_energy = 0, mystery_appear = ?, mystery_stay = ?,"
-        " mystery_shown = mystery_shown + 1 WHERE id = ?",
+        f"UPDATE players SET {col.energy} = 0, {col.appear} = ?, {col.stay} = ?,"
+        f" {col.shown} = {col.shown} + 1 WHERE id = ?",
         (at, stay, pid),
     )
     conn.commit()
     row = conn.execute(
-        "SELECT * FROM stores WHERE player_id = ? AND store = ?", (pid, STORE)
+        "SELECT * FROM stores WHERE player_id = ? AND store = ?", (pid, store)
     ).fetchone()
     msg = registry.message_class("ShowStoreNotify")(onEnergyCost=True)
     msg.store.CopyFrom(shop.client_store(registry, store_row, row, at, stay))
     fill_required(msg)
     session.queue(5, 2020, msg)
-    log.info("mystery merchant appeared for player %d after %d energy (stay %d)",
-             pid, spent, stay)
+    log.info("merchant of store %d appeared for player %d after %d energy (stay %d)",
+             store, pid, spent, stay)
     return True

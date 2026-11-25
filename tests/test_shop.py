@@ -314,3 +314,69 @@ def test_vip14_store2_has_no_stay(reg, merchant) -> None:
     assert res.store.stay_time == 0
     assert len(res.store.merchandise) == 12
     assert session.outbox == []
+
+
+# --- store 7, the celestial merchant (plan B2 Wave 3 A3) ----------------------
+
+
+@pytest.fixture
+def legends(merchant, cfg, reg):
+    """The merchant fixture at level 19 with store 7 brought in at T0 (400
+    energy forces it; 0.99 never rolls store 2 in, which needs 600)."""
+    from server.modules import mystery
+
+    conn, pid, handlers, session, clock, _appear = merchant
+    conn.execute("UPDATE players SET level = 19 WHERE id = ?", (pid,))
+    conn.commit()
+    never = random.Random(0)
+    never.random = lambda: 0.99
+    assert mystery.on_energy_spent(conn, cfg, reg, session, pid, 400, rng=never, now=T0)
+    session.outbox.clear()
+    return conn, pid, handlers, session, clock
+
+
+def test_store7_query_has_six_slots_from_store7_rows(reg, cfg, legends) -> None:
+    conn, pid, handlers, session, clock = legends
+    clock["now"] = T0 + 3599
+    res = _query(reg, handlers, session, store=7)
+    assert res.status == 0
+    assert res.store.store == 7
+    assert res.store.lastappear == T0
+    assert res.store.stay_time == 3600
+    slots = list(res.store.merchandise)
+    assert len(slots) == 6
+    store7 = {int(r["entry"]) for r in cfg.merchandise(7)}
+    assert len(store7) == 179
+    assert {s.merchandise for s in slots} <= store7
+    assert len({s.merchandise for s in slots}) == 6
+    res.SerializeToString()
+
+
+def test_store7_below_level19_refused_327957(reg, legends) -> None:
+    conn, pid, handlers, session, clock = legends
+    conn.execute("UPDATE players SET level = 18 WHERE id = ?", (pid,))
+    conn.commit()
+    res = _query(reg, handlers, session, store=7)
+    assert res.status == 327957
+
+
+def test_store7_after_the_stay_refused_329986_and_queues_5_2022(reg, legends) -> None:
+    conn, pid, handlers, session, clock = legends
+    clock["now"] = T0 + 3600
+    res = _query(reg, handlers, session, store=7)
+    assert res.status == 329986
+    assert [(s, c, m.store) for (s, c, m) in session.outbox] == [(5, 2022, 7)]
+
+
+def test_send_away_then_query_refused_329986_and_queues_5_2022_store7(reg, legends) -> None:
+    conn, pid, handlers, session, clock = legends
+    # LegendsUI.lua:156-162 sends 5_2589 {} and closes the shop.
+    res = handlers[(5, 2589)](session, reg.message_class("ExitSoulStoreReq")())
+    assert type(res).__name__ == "ExitSoulStoreRes"
+    res.SerializeToString()
+    row = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    assert int(row["legends_appear"]) + int(row["legends_stay"]) <= T0
+    assert int(row["legends_stay"]) > 0
+    res = _query(reg, handlers, session, store=7)
+    assert res.status == 329986
+    assert [(s, c, m.store) for (s, c, m) in session.outbox] == [(5, 2022, 7)]

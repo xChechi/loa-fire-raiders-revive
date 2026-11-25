@@ -267,6 +267,14 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Run 11 fix: the highest damage of one manual gold-trial run, any day;
     # the auto fight pays it (goldtrial module docstring).
     ("players", "gold_trails_top", "INTEGER NOT NULL DEFAULT 0"),
+    # Wave 3 A3, O-W3-3: the celestial merchant's (store 7) own copy of the
+    # mystery_* counters above (energy spent since its last appearance, the
+    # appearance epoch and stay, appearances today and the day they belong to).
+    ("players", "legends_energy", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "legends_appear", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "legends_stay", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "legends_shown", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "legends_day", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
