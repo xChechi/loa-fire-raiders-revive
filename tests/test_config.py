@@ -293,3 +293,56 @@ def test_config_train_tables(cfg: Config) -> None:
     assert cfg.train_quality(1, 6) is None
     assert float(cfg.train_level_xp(8, 1)["rate"]) == pytest.approx(0.07)
     assert float(cfg.train_level_xp(8, 1)["base"]) == 0
+
+
+# --- Wave 2 A6: lookups for the Phase B systems (values read 25-11-2026) ----
+
+def test_config_gold_trails_limit_level1_is_93600(cfg: Config) -> None:
+    assert int(cfg.gold_trails_limit(1)["gold"]) == 93600
+    assert cfg.gold_trails_limit(0) is None
+    exchange = cfg.gold_trails_exchange()
+    assert [(int(r["damage"]), int(r["gold"])) for r in exchange][:2] == [
+        (80000, 270), (160000, 165)
+    ]
+    assert len(exchange) == 5
+    prizes = cfg.gold_trails_prizes()
+    assert len(prizes) == 19
+    assert (int(prizes[0]["damage"]), int(prizes[0]["gold"])) == (20000, 30000)
+    assert [int(r["damage"]) for r in prizes] == sorted(int(r["damage"]) for r in prizes)
+
+
+def test_config_herotrials_grade_1000_cd_300(cfg: Config) -> None:
+    grade = cfg.herotrials_grade(1000)
+    assert (int(grade["cd"]), int(grade["level"])) == (300, 30)
+    assert cfg.herotrials_grade(1) is None
+    stage = cfg.herotrials_stage(1010)
+    assert (int(stage["vocation"]), int(stage["weekday"])) == (1, 4)
+    assert int(stage["three_star_drops"]) == 802000
+
+
+def test_config_angeltrials_level1_event_2(cfg: Config) -> None:
+    assert int(cfg.angeltrials_level(1)["event"]) == 2
+    assert int(cfg.angeltrials_level(2)["event"]) == 3
+    assert cfg.angeltrials_level(0) is None
+    buffs = cfg.angeltrials_buffs()
+    assert len(buffs) == 21 and int(buffs[0]["cost_star"]) == 6
+    assert [cfg.angeltrials_treasure_cost(n) for n in (1, 2, 4)] == [100, 200, 400]
+    assert cfg.angeltrials_treasure_cost(101) is None
+    drops = cfg.angeltrials_treasure_drops()
+    assert len(drops) == 2068 and int(drops[0]["drop_entry"]) == 10000
+    # Ranks are bands: the row is the smallest `rank` at or above the asked one.
+    assert cfg.angeltrials_rank_award(1) == 510000
+    assert cfg.angeltrials_rank_award(21) == 512000
+    assert cfg.angeltrials_rank_award(50) == 512000
+    assert cfg.angeltrials_rank_award(10_000_000) is None
+
+
+def test_config_hero_runes_100000(cfg: Config) -> None:
+    assert cfg.hero_runes(100000) == [1000000, 1001000, 1002000, 1003000, 1004000]
+    assert cfg.hero_runes(1) is None
+    rune = cfg.rune(1000000)
+    assert (int(rune["rune"]), int(rune["unlock_level"])) == (10000, 30)
+    # rune_level_up is keyed by rune_info.rune, not rune_info.entry.
+    row = cfg.rune_level(10000, 1)
+    assert (int(row["gold"]), int(row["max_hp"])) == (2000, 60)
+    assert cfg.rune_level(1000000, 1) is None

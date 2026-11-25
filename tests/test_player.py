@@ -419,3 +419,43 @@ def test_daily_stats_carry_paid_store_refreshes(reg, cfg, row) -> None:
     assert stats.store_refresh_times_2 == 3
     assert stats.store_refresh_times_3 == 0
     assert stats.store_refresh_times_4 == 0
+
+
+# --- Wave 2 A6: last_elite and the Phase B daily counters -------------------
+
+def test_query_myself_sends_last_elite(reg, cfg, row) -> None:
+    """LevelManager.lua:427-444: 0 = elite just opened, else the last elite
+    stage cleared."""
+    conn, r = row
+    assert _query(reg, cfg, conn).player.last_elite == 0
+    conn.execute("UPDATE players SET last_elite = 110010 WHERE id = ?", (int(r["id"]),))
+    conn.commit()
+    assert _query(reg, cfg, conn).player.last_elite == 110010
+
+
+def test_daily_stats_mystery_and_gold_trail_counters_reset_on_a_new_day(
+    reg, cfg, row
+) -> None:
+    """show_store_times and energy_use belong to mystery_day, gold_trails_times
+    and the QueryMyselfRes.gold_trails ladder ("今日累计伤害", x02003) to
+    gold_trails_day. A counter from another day reads 0; nothing is written."""
+    conn, r = row
+    pid = int(r["id"])
+    conn.execute(
+        "UPDATE players SET mystery_shown = 1, energy_use = 84,"
+        " mystery_day = '2026-11-24', gold_trails_times = 2,"
+        " gold_trails_best = 50000, gold_trails_prize = 3,"
+        " gold_trails_day = '2026-11-24' WHERE id = ?", (pid,),
+    )
+    conn.commit()
+    same = _query(reg, cfg, conn, today="2026-11-24")
+    assert (same.stats.show_store_times, same.stats.energy_use) == (1, 84)
+    assert same.stats.gold_trails_times == 2
+    assert (same.gold_trails.damage, same.gold_trails.prize) == (50000, 3)
+    nxt = _query(reg, cfg, conn, today="2026-11-25")
+    assert (nxt.stats.show_store_times, nxt.stats.energy_use) == (0, 0)
+    assert nxt.stats.gold_trails_times == 0
+    assert nxt.gold_trails.HasField("prize")
+    assert (nxt.gold_trails.damage, nxt.gold_trails.prize) == (0, 0)
+    stored = find_player(conn, "stefan")
+    assert (stored["mystery_shown"], stored["gold_trails_times"]) == (1, 2)

@@ -455,3 +455,88 @@ def test_trains_table_exists(tmp_path) -> None:
     assert cols == {
         "player_id", "train", "quality", "refer_type", "refer_id", "cal_time", "addxp"
     }
+
+
+# --- Wave 2 A6: Phase B groundwork -----------------------------------------
+
+WAVE2_PLAYER_COLUMNS = {
+    "last_elite",
+    "mystery_energy", "mystery_appear", "mystery_stay", "mystery_day", "mystery_shown",
+    "energy_use",
+    "gold_trails_times", "gold_trails_best", "gold_trails_prize", "gold_trails_day",
+    "herotrials_zs", "herotrials_fs", "herotrials_ss",
+    "herotrials_zs_cd", "herotrials_fs_cd", "herotrials_ss_cd", "herotrials_day",
+}
+
+
+def test_wave2_tables_and_columns_exist(tmp_path) -> None:
+    conn = connect(tmp_path / "player.db")
+    players = {r["name"]: r for r in conn.execute("PRAGMA table_info(players)")}
+    assert WAVE2_PLAYER_COLUMNS <= set(players)
+    for name in WAVE2_PLAYER_COLUMNS:
+        text = name.endswith("_day")
+        assert players[name]["type"] == ("TEXT" if text else "INTEGER"), name
+        assert players[name]["notnull"] == 1, name
+        assert players[name]["dflt_value"] == ("''" if text else "0"), name
+    angels = {r["name"]: r for r in conn.execute("PRAGMA table_info(angels)")}
+    for name in ("spell0_lv", "spell1_lv", *(f"aura{i}_lv" for i in range(6))):
+        assert angels[name]["dflt_value"] == "1", name
+    events = {r["name"]: r for r in conn.execute("PRAGMA table_info(events)")}
+    assert events["day"]["dflt_value"] == "''"
+    runes = {r["name"] for r in conn.execute("PRAGMA table_info(runes)")}
+    assert runes == {"player_id", "hero", "idx", "level", "rune_val"}
+    trials = {r["name"] for r in conn.execute("PRAGMA table_info(angeltrials)")}
+    assert trials == {
+        "player_id", "opened", "level", "points", "stars", "crash_level",
+        "treasure_cum_count", "flag", "day", "buffs", "units", "pending",
+    }
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute("INSERT INTO angeltrials (player_id) VALUES (?)", (pid,))
+    conn.execute("INSERT INTO runes (player_id, hero, idx) VALUES (?, 100000, 0)", (pid,))
+    trial = conn.execute("SELECT * FROM angeltrials").fetchone()
+    assert (trial["opened"], trial["level"], trial["day"]) == (0, 0, "")
+    assert (trial["buffs"], trial["units"], trial["pending"]) == ("[]", "[]", "{}")
+    rune = conn.execute("SELECT * FROM runes").fetchone()
+    assert (rune["level"], rune["rune_val"]) == (0, 0)
+
+
+def test_wave1_world_migrates_without_loss(tmp_path) -> None:
+    """The Wave 1 world kept before the boss diagnosis opens in a COPY, keeps
+    every row of every table, and reads the Wave 2 defaults."""
+    import shutil
+    import sqlite3
+
+    import pytest
+
+    src = Path("data") / "player.db.pre-boss-diag"
+    if not src.exists():
+        pytest.skip("data/player.db.pre-boss-diag is not in this tree")
+    copy = tmp_path / "player.db"
+    shutil.copy2(src, copy)
+    raw = sqlite3.connect(copy)
+    tables = [
+        r[0] for r in raw.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+            " AND name != 'sqlite_sequence'"
+        )
+    ]
+    before = {t: sorted(raw.execute(f"SELECT * FROM {t}").fetchall()) for t in tables}
+    columns = {t: [r[1] for r in raw.execute(f"PRAGMA table_info({t})")] for t in tables}
+    raw.close()
+    assert before["players"], "the kept world has a character"
+
+    conn = connect(copy)
+    for table, rows in before.items():
+        cols = columns[table]
+        after = sorted(
+            tuple(r) for r in conn.execute(f"SELECT {', '.join(cols)} FROM {table}")
+        )
+        assert after == rows, table
+    player = conn.execute("SELECT * FROM players ORDER BY id").fetchone()
+    assert int(player["last_elite"]) == 0
+    assert player["mystery_day"] == "" and player["gold_trails_day"] == ""
+    assert int(player["herotrials_zs_cd"]) == 0
+    for angel in conn.execute("SELECT * FROM angels"):
+        assert [int(angel[f"aura{i}_lv"]) for i in range(6)] == [1] * 6
+    assert {r[0] for r in conn.execute("SELECT day FROM events")} <= {""}
+    conn.close()

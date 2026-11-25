@@ -134,6 +134,32 @@ CREATE TABLE IF NOT EXISTS trains (
     addxp      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (player_id, train)
 );
+-- Wave 2 A6 (B7): one row per levelled rune; idx 0..4 is the hero_rune_info
+-- column rune0..rune4. A missing row is a level-0 rune with no rune_val.
+CREATE TABLE IF NOT EXISTS runes (
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    hero      INTEGER NOT NULL,
+    idx       INTEGER NOT NULL,
+    level     INTEGER NOT NULL DEFAULT 0,
+    rune_val  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, hero, idx)
+);
+-- Wave 2 A6 (B6): the angel-trials tower, one row per player, reset at
+-- day_key(ANGELTRIALS_RANK_TIME). The JSON columns follow stores.slots.
+CREATE TABLE IF NOT EXISTS angeltrials (
+    player_id          INTEGER PRIMARY KEY REFERENCES players(id),
+    opened             INTEGER NOT NULL DEFAULT 0,
+    level              INTEGER NOT NULL DEFAULT 0,
+    points             INTEGER NOT NULL DEFAULT 0,
+    stars              INTEGER NOT NULL DEFAULT 0,
+    crash_level        INTEGER NOT NULL DEFAULT 0,
+    treasure_cum_count INTEGER NOT NULL DEFAULT 0,
+    flag               INTEGER NOT NULL DEFAULT 0,
+    day                TEXT    NOT NULL DEFAULT '',
+    buffs              TEXT    NOT NULL DEFAULT '[]',
+    units              TEXT    NOT NULL DEFAULT '[]',
+    pending            TEXT    NOT NULL DEFAULT '{}'
+);
 """
 
 # The Plan A schema exactly as it shipped, for the migration test only. Keep it
@@ -200,6 +226,44 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("heroes", "spell1_lv", "INTEGER NOT NULL DEFAULT 1"),
     ("heroes", "spell2_lv", "INTEGER NOT NULL DEFAULT 1"),
     ("heroes", "spell3_lv", "INTEGER NOT NULL DEFAULT 1"),
+    # Wave 2 A6, the Phase B groundwork. B2: the last elite stage cleared
+    # (ClientPlayer.last_elite, LevelManager.lua:427-444).
+    ("players", "last_elite", "INTEGER NOT NULL DEFAULT 0"),
+    # B3, O-W2-11: energy spent since the last appearance, the appearance
+    # epoch and its stay, and the day the two daily counters below belong to
+    # (ClientDailyStats.show_store_times = mystery_shown, energy_use).
+    ("players", "mystery_energy", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "mystery_appear", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "mystery_stay", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "mystery_day", "TEXT NOT NULL DEFAULT ''"),
+    ("players", "mystery_shown", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "energy_use", "INTEGER NOT NULL DEFAULT 0"),
+    # B4: runs today, today's damage ("今日累计伤害", x02003: the client adds
+    # each run's damage, AssistantData.lua:658), the prize-ladder bits
+    # (RoleData.lua:819-830) and the day all three belong to.
+    ("players", "gold_trails_times", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "gold_trails_best", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "gold_trails_prize", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "gold_trails_day", "TEXT NOT NULL DEFAULT ''"),
+    # B5: runs per vocation today and the epoch each cooldown ends.
+    ("players", "herotrials_zs", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_fs", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_ss", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_zs_cd", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_fs_cd", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_ss_cd", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "herotrials_day", "TEXT NOT NULL DEFAULT ''"),
+    # B1, O-W2-6: angel spell and aura levels, not ids.
+    ("angels", "spell0_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "spell1_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura0_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura1_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura2_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura3_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura4_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("angels", "aura5_lv", "INTEGER NOT NULL DEFAULT 1"),
+    # E2: the day_key(5) a daily-task row's progress belongs to.
+    ("events", "day", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

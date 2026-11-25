@@ -165,6 +165,90 @@ class Config:
         )
         return rows[0] if rows else None
 
+    # --- gold trial (Wave 2 B4) ----------------------------------------------
+    def gold_trails_exchange(self) -> list:
+        """Damage bands and their gold rate, in the order getCoinByDamage
+        walks them (BattleFactoryCoinTry.lua:135-160)."""
+        return self._all(
+            "gold_trails_exchange_info", "gold_trails_exchange_info",
+            "ORDER BY damage", (),
+        )
+
+    def gold_trails_limit(self, level: int):
+        """The gold cap per run for a player level (BattleFactoryCoinTry.lua:33)."""
+        return self._one(
+            "gold_trails_gold_limit", "gold_trails_gold_limit", "level", int(level)
+        )
+
+    def gold_trails_prizes(self) -> list:
+        """The damage prize ladder sorted by damage, as RoleData.lua:834-838
+        sorts it; bit k of the prize flags is row k."""
+        return self._all(
+            "gold_trails_prize_info", "gold_trails_prize_info", "ORDER BY damage", ()
+        )
+
+    # --- hero trials (Wave 2 B5) ---------------------------------------------
+    def herotrials_stage(self, entry: int):
+        return self._one(
+            "herotrials_stage_info", "herotrials_stage_info", "entry", int(entry)
+        )
+
+    def herotrials_grade(self, entry: int):
+        return self._one(
+            "herotrials_grade_info", "herotrials_grade_info", "entry", int(entry)
+        )
+
+    # --- angel trials (Wave 2 B6) --------------------------------------------
+    def angeltrials_level(self, level: int):
+        return self._one(
+            "angeltrials_level_info", "angeltrials_level_info", "level", int(level)
+        )
+
+    def angeltrials_buffs(self) -> list:
+        return self._all(
+            "angeltrials_buff_info", "angeltrials_buff_info", "ORDER BY id", ()
+        )
+
+    def angeltrials_treasure_cost(self, n: int) -> int | None:
+        """The cost of the n-th treasure opened (1-based); None past the table."""
+        row = self._one(
+            "angeltrials_treasure_cost", "angeltrials_treasure_cost", "id", int(n)
+        )
+        return None if row is None else int(row["cost"])
+
+    def angeltrials_treasure_drops(self) -> list:
+        return self._all(
+            "angeltrials_treasure_drop", "angeltrials_treasure_drop", "ORDER BY id", ()
+        )
+
+    def angeltrials_rank_award(self, rank: int) -> int | None:
+        """The drop id for a rank. The table lists band ends (…, 20, 50, 100,
+        …, 999999), so a rank takes the first row at or above it."""
+        rows = self._all(
+            "angeltrials_rank_award_info", "angeltrials_rank_award_info",
+            "WHERE rank >= ? ORDER BY rank LIMIT 1", (int(rank),),
+        )
+        return int(rows[0]["drops"]) if rows else None
+
+    # --- runes (Wave 2 B7) ---------------------------------------------------
+    def hero_runes(self, hero: int) -> list[int] | None:
+        """hero_rune_info rune0..rune4 (rune_info entries), None for a hero
+        with no runes."""
+        row = self._one("hero_rune_info", "hero_rune_info", "hero", int(hero))
+        return None if row is None else [int(row[f"rune{i}"] or 0) for i in range(5)]
+
+    def rune(self, entry: int):
+        return self._one("rune_info", "rune_info", "entry", int(entry))
+
+    def rune_level(self, rune: int, level: int):
+        """rune_level_up is keyed by rune_info.rune (e.g. 10000), not by the
+        rune_info entry."""
+        rows = self._all(
+            "rune_level_up", "rune_level_up", "WHERE entry = ? AND level = ?",
+            (int(rune), int(level)),
+        )
+        return rows[0] if rows else None
+
     # --- angels -------------------------------------------------------------
     # AngelManager.lua:79,295 only ever count angel_info rows whose
     # activation_item_num is not 0, so the same filter applies here.

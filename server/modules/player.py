@@ -57,20 +57,32 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     # ClientPlayer.lua:360-363 sets angel_money only when arena_point is present.
     msg.arena_point = int(row["arena_point"])
     msg.angel_money = int(row["angel_money"])
-    msg.last_elite = 0
+    # LevelManager.lua:427-444: 0 = elite just opened, else the last elite
+    # stage cleared, the same contract as last_level.
+    msg.last_elite = int(row["last_elite"])
     msg.last_signet = 0
     # Everything else required gets the proto2 zero.
     fill_required(msg)
     return msg
 
 
-def build_daily_stats(registry: Registry, row: sqlite3.Row | None = None):
+def build_daily_stats(
+    registry: Registry, row: sqlite3.Row | None = None, today: str | None = None
+):
     """`row` is a players row already passed through db.ensure_today, so its
-    purchase counters are today's."""
+    purchase counters are today's. The Wave 2 counters are reset by their own
+    modules on their next write, so here a counter whose day column is not
+    `today` (ISO, defaults to the local date) reads 0; nothing is written."""
     msg = registry.message_class("ClientDailyStats")(deadline=_end_of_today())
     if row is not None:
+        today = today or date.today().isoformat()
         msg.buy_energy = int(row["buy_energy_used"])
         msg.buy_gold = int(row["buy_gold_used"])
+        if row["mystery_day"] == today:
+            msg.show_store_times = int(row["mystery_shown"])
+            msg.energy_use = int(row["energy_use"])
+        if row["gold_trails_day"] == today:
+            msg.gold_trails_times = int(row["gold_trails_times"])
     fill_required(msg)
     return msg
 
@@ -107,7 +119,7 @@ def build_query_myself_res(
         status=0, guild=0, mail_new=1 if unread else 0
     )
     msg.player.CopyFrom(build_client_player(registry, row))
-    msg.stats.CopyFrom(build_daily_stats(registry, row))
+    msg.stats.CopyFrom(build_daily_stats(registry, row, today))
     # The client counts only paid shop refreshes here (AllShopUI.lua:736-739);
     # a stores row from an older day has had no refresh yet today.
     for store_row in conn.execute(
@@ -122,7 +134,11 @@ def build_query_myself_res(
         setattr(msg.stats, field, paid)
     # RoleData:updateData reads d.gold_trails.prize with no nil check, so the
     # sub-message must be present even though both its fields are optional.
+    # Both are today's ("今日累计伤害", x02003), so another day reads 0.
     msg.gold_trails.SetInParent()
+    gold_today = row["gold_trails_day"] == today
+    msg.gold_trails.damage = int(row["gold_trails_best"]) if gold_today else 0
+    msg.gold_trails.prize = int(row["gold_trails_prize"]) if gold_today else 0
     for hero_row in db.heroes_of(conn, int(row["id"])):
         msg.heroes.add().CopyFrom(hero.build_client_hero(registry, cfg, hero_row))
     for stock in item.build_inventory(registry, conn, int(row["id"])):
