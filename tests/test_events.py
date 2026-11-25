@@ -325,6 +325,44 @@ def test_bump_stage_win_counts_normal_and_elite(reg, cfg, settings, world) -> No
     assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((10, 1, 0), (5, 1, 0))
 
 
+def test_sweeps_count_toward_the_stage_tasks_times_times(reg, cfg, settings, world) -> None:
+    """Run 11 finding 5: an energy sweep and an item sweep left 10070 at 1/10.
+    10070 is "完成任意普通或精英关卡10次" and 10080 "完成精英关卡5次" (event_info
+    desc, kind 3342342), and the client counts a sweep of n as n plays of the
+    stage: DesSweepPanel.lua:715-720 adds curSweepTimes to the stage's daily
+    count, the counter a fought clear raises. Task progress is server-pushed
+    only, and nothing on the client excludes sweeps. So 5_2205 and 5_2337
+    bump KIND_FIGHT by `times`, elite or normal by the stage's chapter."""
+    from server.db import grant_item
+    from server.modules import level
+
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    conn.execute("UPDATE players SET energy = 200, max_energy = 200 WHERE id = ?", (pid,))
+    for lvl in (10000, 110000):
+        upsert_level(conn, pid, lvl, star=3)
+    conn.commit()
+    grant_item(conn, pid, level.CLEAN_ELITE_ITEM, 30)
+    handlers = level.handlers(reg, settings, conn, cfg, rng=random.Random(1))
+
+    def sweep(lvl, times):
+        handlers[(5, 2205)](
+            session, reg.message_class("LevelCleanReq")(level=lvl, times=times)
+        )
+
+    sweep(10000, 2)                                   # normal energy sweep x2
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((2, 0, 0), (0, 0, 0))
+    sweep(110000, 1)                                  # elite energy sweep x1
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((3, 0, 0), (1, 0, 0))
+    session.outbox.clear()
+    res = handlers[(5, 2337)](session, reg.message_class("UseCleanEliteItemReq")(
+        level_entry=110000, amount=30,
+    ))                                                # elite item sweep x3
+    assert res.times == 3
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((6, 0, 0), (4, 0, 0))
+    assert {10070, 10080} <= {m.refer for m in _task_notifies(session)}
+
+
 def test_daily_resets_at_5am(reg, cfg, settings, world) -> None:
     conn, pid, _, session = world
     _set_level(conn, pid, 10)

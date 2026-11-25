@@ -558,6 +558,10 @@ def handlers(
             "stage %d swept x%d by player %d: %d energy, %d gold, drops %s",
             lvl, times, player_id, cost, gold, prizes[:-1],
         )
+        # A sweep of n is n plays of the stage (DesSweepPanel.lua:715-720).
+        elite = chapter_type(cfg, lvl) == CHAPTER_ELITE
+        events.bump(conn, cfg, registry, session, player_id, events.KIND_FIGHT,
+                    events.FIGHT_ELITE if elite else events.FIGHT_NORMAL, n=times)
         fill_required(res)
         return res
 
@@ -725,6 +729,9 @@ def handlers(
             "stage %d item-swept x%d by player %d: %d tickets, %d gold, drops %s",
             lvl, times, player_id, cost, gold, prizes[:-1],
         )
+        elite = chapter_type(cfg, lvl) == CHAPTER_ELITE
+        events.bump(conn, cfg, registry, session, player_id, events.KIND_FIGHT,
+                    events.FIGHT_ELITE if elite else events.FIGHT_NORMAL, n=times)
         fill_required(res)
         return res
 
