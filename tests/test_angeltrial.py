@@ -419,6 +419,35 @@ def test_trial_fight_team_query_is_answered_by_team_py_unchanged(world, reg, cfg
     assert [(u.position, u.refer) for u in res.team_base.units] == [(1, KNIGHT)]
 
 
+def test_trial_fights_carry_the_heroes_rune_stats(world, reg, cfg):
+    """A level-1 rune idx 0 adds its rune_level_up stats (+60 max hp on the
+    knight, test_rune.py) to the mirror enemy and to a new live unit."""
+    from server.modules import hero
+
+    conn, pid, handlers, session, _ = world
+    conn.execute(
+        "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 0, 1, 0)",
+        (pid, KNIGHT),
+    )
+    conn.commit()
+    row = heroes_of(conn, pid)[0]
+    bare = team.build_fight_unit(reg, cfg, row, 1)
+    own = team.build_fight_unit(reg, cfg, row, 1, runes=hero.runes_of(conn, row))
+    assert own.unit.max_hp > bare.unit.max_hp
+    _fight_floor(conn, pid, reg, handlers, session)
+    (enemy,) = _fight(reg, handlers, session, 2).enemyUnits
+    info = cfg.angeltrials_level(1)
+    factor = info["fa_fix_battle_hard"] * (info["floor_fa_fix4"] + info["ceiling_fa_fix4"]) / 2
+    assert enemy.unit.max_hp == int(own.unit.max_hp * factor)
+    # A crash adds the knight's live unit at full hp: the rune hp counts.
+    _set_level(conn, pid, 1)
+    conn.execute("UPDATE angeltrials SET crash_level = 3, pending = '{}' WHERE player_id = ?",
+                 (pid,))
+    conn.commit()
+    (knight,) = _crash(reg, handlers, session).units
+    assert knight.max_hp == own.unit.max_hp
+
+
 def test_crash_level_clears_to_crash_level(world, reg):
     conn, pid, handlers, session, _ = world
     _start(reg, handlers, session)

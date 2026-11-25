@@ -97,7 +97,7 @@ from collections.abc import Callable
 
 from server import db
 from server.config import Config
-from server.modules import drops, events, item, level as stage, notify, team
+from server.modules import drops, events, hero, item, level as stage, notify, team
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -477,7 +477,9 @@ def handlers(
         for position, entry in enumerate(entries, start=1):
             if entry not in owned:
                 continue
-            unit = team.build_fight_unit(registry, cfg, owned[entry], position)
+            unit = team.build_fight_unit(
+                registry, cfg, owned[entry], position, hero.runes_of(conn, owned[entry])
+            )
             unit.unit.max_hp = int(unit.unit.max_hp * factor)
             for field in SCALED_FIELDS:
                 setattr(unit.unit, field, getattr(unit.unit, field) * factor)
@@ -492,7 +494,9 @@ def handlers(
         if pending.get("level") != state["level"]:
             strongest = sorted(
                 _owned_heroes(pid).values(),
-                key=lambda r: -team.build_fight_unit(registry, cfg, r, 0).ability,
+                key=lambda r: -team.build_fight_unit(
+                    registry, cfg, r, 0, hero.runes_of(conn, r)
+                ).ability,
             )
             pending = {
                 "level": state["level"], "event": EVENT_FIGHT,
@@ -657,7 +661,9 @@ def handlers(
         entry = int(hero_row["entry"])
         live = find_live(state["units"], UNIT_HERO, entry)
         if live is None:
-            unit = team.build_fight_unit(registry, cfg, hero_row, 0).unit
+            unit = team.build_fight_unit(
+                registry, cfg, hero_row, 0, hero.runes_of(conn, hero_row)
+            ).unit
             live = {
                 "type": UNIT_HERO, "refer": entry, "hp": int(unit.max_hp),
                 "energy": 0, "max_hp": int(unit.max_hp),
