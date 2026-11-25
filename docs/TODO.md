@@ -1,6 +1,6 @@
 # LOA private server — status and roadmap
 
-Updated 26-10-2026.
+Updated 25-11-2026.
 
 ## Done — Plan B1 "tutorial + hero summon + campaign chapter 1" (master, 32 commits `673e300..HEAD`, 257 tests)
 
@@ -131,6 +131,13 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       the angel passes the hero cap through passive training (19 → 29); sweeps do not count for
       Stage Slayer; the hero-trial V-VII cooldown and the draw "Again" ticket check were not
       reachable in this run.
+      **Fixed 25-11-2026 after run 11 (unit-tested, no emulator run yet):** lunch and dinner energy
+      may pass the cap (`357f804`); the gold-trial auto fight pays from the server's damage
+      (`194f27f`); a single daily claim keeps the row `MMTaskListView` reads (`02f70ab`); the
+      post-fight guide burst saves only the guide's own next step, so `guide_id` no longer falls
+      to 10380 (`ff8ce25`); angels stop at the heroes' cap in training (`0ccf0d3`); energy and item
+      sweeps count `times` toward Stage Slayer 10070 / 10080 (`7b1081a`); the draw screen's "Again"
+      on a ticket card is refused without the tickets instead of charging diamonds (`589e039`).
       Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
@@ -161,11 +168,15 @@ Plan A and Plan B1 worlds are kept beside it as `data/player.db.*` backups
 
 ## Later — in order
 
-- [ ] **Plan B3: dailies.** Sign-in (`checkin.db`), shop (`merchandise_info.db`), mail with attachments, rewards.
-      Arena and guild hidden or against bots.
-- [ ] **Plan C: English UI.** `localise/` pipeline on llm00 `gemma4:e4b` (spec 3.3): 10,788 templates after digit
-      masking, names first as a glossary, line-based batches of 40, resumable cache, ~14-20 h detached. Then the
-      `Language_en.lua` + patched `.db` swap into the APK and the server.
+- [x] **Plan B3: dailies.** Done inside Plan B2 Wave 1 (24-11-2026): sign-in and the 7-day gift (`7109f6b`), mail
+      with attachments (`186e1e4`), gold and diamond shops (`c4bde66`), rewards and prize overflow (`0f8dd8c`,
+      `6b6cd4c`); daily tasks followed in Wave 2 E2 (`5cc228a`). Acceptance: run 8 (`b8d83fd`) and run 11 in
+      `docs/dev-loop.md` section 7. Arena and guild were not built.
+- [x] **Plan C: English UI.** Done (`0921568` 20-10-2026 .. `19c03b3` 25-11-2026, 47 `localise`/`english`
+      commits): text through the Claude batch translator (`713d5e8`) instead of the llm00 Gemma run, images
+      re-drawn (`localise.images`), story dialogue, and the League of Angels logo; the English APK
+      (versionName 1.0.0.5) ran in runs 7-11. Emulator sheets in `docs/screens/en-2026-11-2*`. Leftover
+      Chinese strings are listed per run in `docs/dev-loop.md` section 7.
 - [ ] **Phone build (S20 Ultra), when wanted.** `settings.toml [net] host` = home Wi-Fi IPv4 of this PC,
       `py -3.14 -m client.build_assets`, `client\android\gradlew.bat assembleRelease` (JAVA_HOME = Android
       Studio JBR), same keystore, sideload. Firewall rule on the Private profile only; never forward port 8112
