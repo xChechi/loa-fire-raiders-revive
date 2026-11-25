@@ -30,7 +30,7 @@ from datetime import date
 
 from server import db
 from server.config import Config
-from server.modules import item, notify
+from server.modules import item, mystery, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -43,6 +43,8 @@ STATUS_NOT_ENOUGH_GOLD = 327937      # language.db 金币不足
 STATUS_NOT_ENOUGH_DIAMOND = 327938   # language.db 钻石不足
 STATUS_NO_REFRESH_LEFT = 329985      # language.db 今日刷新次数已用完
 STATUS_SOLD_OUT = 329988             # language.db 此商品已经卖完
+STATUS_LEVEL_LOCKED = 327957         # language.db 未满足此玩法的等级
+STATUS_MERCHANT_GONE = 329986        # language.db 商人已经消失
 
 OP_REFRESH = 2
 NO_DISCOUNT = 100
@@ -71,12 +73,75 @@ def refresh_cost(cost: str, paid_before: int) -> int:
     return 0
 
 
+def _highest_cleared_chapter(conn: sqlite3.Connection, cfg: Config, pid: int) -> int:
+    best = 0
+    for row in db.levels_of(conn, pid):
+        if int(row["star"]) <= 0:
+            continue
+        stage = cfg.stage(int(row["level"]))
+        if stage is not None:
+            best = max(best, int(stage["chapter"]))
+    return best
+
+
+def generate_slots(
+    conn: sqlite3.Connection, cfg: Config, player: sqlite3.Row, store_row, rng
+) -> list[dict]:
+    """`merchandise_amount` merchandise_info(store) rows that fit the player,
+    picked by weight without replacement (also the mystery merchant's)."""
+    level, vip = int(player["level"]), int(player["vip"])
+    chapter = _highest_cleared_chapter(conn, cfg, int(player["id"]))
+    pool = [
+        r for r in cfg.merchandise(int(store_row["entry"]))
+        if int(r["min_level"]) <= level <= int(r["max_level"])
+        and int(r["min_vip"]) <= vip <= int(r["max_vip"])
+        and int(r["unlock_chapter"] or 0) <= chapter
+        and int(r["weight"] or 0) > 0
+    ]
+    slots: list[dict] = []
+    for _ in range(min(int(store_row["merchandise_amount"]), len(pool))):
+        pick = rng.randrange(sum(int(r["weight"]) for r in pool))
+        for at, row in enumerate(pool):
+            pick -= int(row["weight"])
+            if pick < 0:
+                slots.append({"merchandise": int(row["entry"]), "buy": 0})
+                del pool[at]
+                break
+    return slots
+
+
+def client_store(registry: Registry, store_row, row: sqlite3.Row,
+                 lastappear: int | None = None, stay_time: int | None = None):
+    """ClientStore from a stores row; store 2 also carries lastappear and
+    stay_time (fields 4, 5; RPGGame.lua:870-872)."""
+    free_left = max(0, int(store_row["free_refresh"]) - int(row["refresh_used"]))
+    msg = registry.message_class("ClientStore")(
+        store=int(store_row["entry"]),
+        lastupdate=int(row["lastupdate"]),
+        remain_free_refresh=free_left,
+    )
+    if lastappear is not None:
+        msg.lastappear = int(lastappear)
+    if stay_time is not None:
+        msg.stay_time = int(stay_time)
+    for index, slot in enumerate(json.loads(row["slots"])):
+        msg.merchandise.add(
+            index=index,
+            merchandise=int(slot["merchandise"]),
+            buy=int(slot["buy"]),
+            discount=NO_DISCOUNT,
+        )
+    fill_required(msg)
+    return msg
+
+
 def handlers(
     registry: Registry,
     settings: Settings,
     conn: sqlite3.Connection,
     cfg: Config,
     rng: random.Random | None = None,
+    clock=time.time,
 ) -> dict[tuple[int, int], Handler]:
     rng = _default_rng if rng is None else rng
 
@@ -87,36 +152,8 @@ def handlers(
             ).fetchone()
         return db.find_player(conn, settings.username)
 
-    def _highest_cleared_chapter(pid: int) -> int:
-        best = 0
-        for row in db.levels_of(conn, pid):
-            if int(row["star"]) <= 0:
-                continue
-            stage = cfg.stage(int(row["level"]))
-            if stage is not None:
-                best = max(best, int(stage["chapter"]))
-        return best
-
     def _generate(player: sqlite3.Row, store_row) -> list[dict]:
-        level, vip = int(player["level"]), int(player["vip"])
-        chapter = _highest_cleared_chapter(int(player["id"]))
-        pool = [
-            r for r in cfg.merchandise(int(store_row["entry"]))
-            if int(r["min_level"]) <= level <= int(r["max_level"])
-            and int(r["min_vip"]) <= vip <= int(r["max_vip"])
-            and int(r["unlock_chapter"] or 0) <= chapter
-            and int(r["weight"] or 0) > 0
-        ]
-        slots: list[dict] = []
-        for _ in range(min(int(store_row["merchandise_amount"]), len(pool))):
-            pick = rng.randrange(sum(int(r["weight"]) for r in pool))
-            for at, row in enumerate(pool):
-                pick -= int(row["weight"])
-                if pick < 0:
-                    slots.append({"merchandise": int(row["entry"]), "buy": 0})
-                    del pool[at]
-                    break
-        return slots
+        return generate_slots(conn, cfg, player, store_row, rng)
 
     def _load(player: sqlite3.Row, store_row) -> sqlite3.Row:
         """The saved store, created on first sight; the refresh counter starts
@@ -143,23 +180,6 @@ def handlers(
         return conn.execute(
             "SELECT * FROM stores WHERE player_id = ? AND store = ?", (pid, store)
         ).fetchone()
-
-    def _client_store(store_row, row: sqlite3.Row):
-        free_left = max(0, int(store_row["free_refresh"]) - int(row["refresh_used"]))
-        msg = registry.message_class("ClientStore")(
-            store=int(store_row["entry"]),
-            lastupdate=int(row["lastupdate"]),
-            remain_free_refresh=free_left,
-        )
-        for index, slot in enumerate(json.loads(row["slots"])):
-            msg.merchandise.add(
-                index=index,
-                merchandise=int(slot["merchandise"]),
-                buy=int(slot["buy"]),
-                discount=NO_DISCOUNT,
-            )
-        fill_required(msg)
-        return msg
 
     def _refused(name: str, status: int, why: str):
         log.info("%s refused %d: %s", name, status, why)
@@ -191,7 +211,21 @@ def handlers(
             return _refused(name, STATUS_INTERNAL, f"store {store} not in store_info")
         player = _player(session)
         pid = int(player["id"])
+        appear: tuple[int | None, int | None] = (None, None)
+        if store == mystery.STORE:
+            now = int(clock())
+            permanent = mystery.is_permanent(store_row, player)
+            if not permanent and int(player["level"]) < cfg.function_unlock(mystery.FUNCTION):
+                return _refused(name, STATUS_LEVEL_LOCKED, f"store {store}: level")
+            if not permanent and not mystery.present(player, now):
+                mystery.expire(registry, session, player, now)
+                return _refused(name, STATUS_MERCHANT_GONE, f"store {store}: gone")
+            appear = (int(player["mystery_appear"]), 0 if permanent else int(player["mystery_stay"]))
         row = _load(player, store_row)
+        if appear[0] == 0:
+            # VIP >= vip_buy_level before any appearance: the store has been
+            # there since it was first generated.
+            appear = (int(row["lastupdate"]), appear[1])
         if op == OP_REFRESH:
             used, free = int(row["refresh_used"]), int(store_row["free_refresh"])
             if used >= free:
@@ -218,7 +252,7 @@ def handlers(
             log.info("store %d refreshed for player %d (refresh %d today)",
                      store, pid, int(row["refresh_used"]))
         res = registry.message_class(name)(status=STATUS_OK)
-        res.store.CopyFrom(_client_store(store_row, row))
+        res.store.CopyFrom(client_store(registry, store_row, row, *appear))
         fill_required(res)
         return res
 
