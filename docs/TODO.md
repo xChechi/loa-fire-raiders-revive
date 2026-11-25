@@ -80,9 +80,9 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       purchase refusals, the 6-minute energy timer, mail and the shop pass, and so do relaunch and
       server restart. Zero `Traceback`, zero `LUA ERROR` (the chat error is gone). Open from that
       run: boss 10022 lost twice, so achievement kind 2 / guide 10400 and the chapter chest are
-      still unreached; sweep needs level 8. `5_2149` sell-all is unanswered, so the shop's
-      sell-junk box keeps coming back. A lost fight's guide burst can lower `guide_id` until the
-      next relaunch re-saves it. 累计签到礼包 / 已领取 / 已售 are untranslated.
+      still unreached; sweep needs level 8. A lost fight's guide burst can lower `guide_id` until
+      the next relaunch re-saves it. Fixed on 25-11-2026: `5_2149` sell-all is answered
+      (`56038c6`), and 累计签到礼包 / 已领取 / 已售 are in English (`b044af3`).
       Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
