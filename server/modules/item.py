@@ -208,7 +208,13 @@ def grant_prizes(
         else:
             # The lowest hero_quality row is the one a summon starts at, and
             # hero.quality_row_for reads the same row back on the way out.
+            # Star and level are hero_info.star / init_level, the same start
+            # the soul-stone summon (hero.summon, 5_2105) gives: a 3-star
+            # hero such as 304000 is born at star 3, level 5, not 1/1.
             quality = int(cfg.hero_qualities(refer)[0]["quality"])
+            info = cfg.hero(refer)
+            star = int(info["star"] or 1) if info is not None else 1
+            init_level = int(info["init_level"] or 1) if info is not None else 1
             for _ in range(max(1, amount)):
                 owned = conn.execute(
                     "SELECT 1 FROM heroes WHERE player_id = ? AND entry = ?",
@@ -220,7 +226,10 @@ def grant_prizes(
                         out["converted"].append(index)
                 else:
                     out["heroes"].append(
-                        db.grant_hero(conn, player_id, refer, quality)
+                        db.grant_hero(
+                            conn, player_id, refer, quality,
+                            star=star, level=init_level,
+                        )
                     )
     conn.commit()
     if overflow:

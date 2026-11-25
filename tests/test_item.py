@@ -170,6 +170,22 @@ def test_duplicate_hero_converts_to_soul_stones(reg, cfg, conn) -> None:
     ]
 
 
+def test_granted_hero_starts_at_hero_info_star_and_init_level(reg, cfg, conn) -> None:
+    """A prize hero arrives the way the soul-stone summon (5_2105) grants one:
+    hero_info.star and hero_info.init_level. 304000 (7-day gift day 2,
+    LOGIN_AWARD drop 700010) is a 3-star hero starting at level 5; 100000 is
+    1-star at level 1, so the two together pin both columns."""
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_prizes(conn, cfg, pid, [(30, 304000, 1), (30, 100000, 1)])
+    by_entry = {int(h["entry"]): h for h in heroes_of(conn, pid)}
+    info = cfg.hero(304000)
+    assert (int(info["star"]), int(info["init_level"])) == (3, 5)
+    assert int(by_entry[304000]["star"]) == 3
+    assert int(by_entry[304000]["level"]) == 5
+    assert int(by_entry[100000]["star"]) == 1
+    assert int(by_entry[100000]["level"]) == 1
+
+
 def test_two_of_one_new_hero_in_one_call_is_a_hero_and_stones(reg, cfg, conn) -> None:
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     out = grant_prizes(conn, cfg, pid, [(30, 101000, 2)])
