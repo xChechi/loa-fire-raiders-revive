@@ -459,3 +459,38 @@ def test_daily_stats_mystery_and_gold_trail_counters_reset_on_a_new_day(
     assert (nxt.gold_trails.damage, nxt.gold_trails.prize) == (0, 0)
     stored = find_player(conn, "stefan")
     assert (stored["mystery_shown"], stored["gold_trails_times"]) == (1, 2)
+
+
+def test_level_reporter_query_answers_empty(reg, settings, cfg) -> None:
+    # DesFlagPanel.lua:62-75 sends 5_2623 when a stage's flag panel opens and
+    # draws cells only `if firstReporter`: an empty answer is harmless.
+    conn = connect(settings.db_path)
+    handlers = player.handlers(reg, settings, conn, cfg)
+    req = reg.message_class("LevelReporterQueryReq")(level=10012)
+    res = handlers[(5, 2623)](None, req)
+    assert res.DESCRIPTOR.name == "LevelReporterQueryRes"
+    assert not res.HasField("first_reporter")
+    assert len(res.reporters) == 0
+    assert res.IsInitialized()
+    res.SerializeToString()
+
+
+def test_sync_red_point_sends_nothing_and_is_registered(
+    reg, settings, cfg, caplog, monkeypatch
+) -> None:
+    # 5_2039 SyncRedPointReq has no Res (GameToolsBtnPanel.lua:102-120 sends
+    # it every 60 s): the handler returns None, so the server sends nothing.
+    import logging
+
+    monkeypatch.setattr(player, "_red_point_logged", False)
+    conn = connect(settings.db_path)
+    handlers = player.handlers(reg, settings, conn, cfg)
+    assert (5, 2039) in handlers
+    req = reg.message_class("SyncRedPointReq")(angel_count=0)
+    with caplog.at_level(logging.DEBUG, logger="loa.player"):
+        assert handlers[(5, 2039)](None, req) is None
+        assert handlers[(5, 2039)](None, req) is None
+    lines = [r for r in caplog.records if "5_2039 SyncRedPointReq has no Res" in r.getMessage()]
+    assert len(lines) == 1
+    assert lines[0].levelno == logging.DEBUG
+    assert lines[0].getMessage() == "5_2039 SyncRedPointReq has no Res; nothing to send"

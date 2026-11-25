@@ -16,6 +16,9 @@ from server.settings import Settings
 
 log = logging.getLogger("loa.player")
 
+# 5_2039 logs its "nothing to send" line once per process.
+_red_point_logged = False
+
 # RPGGame sets g_roleData.cspvpState = 99 as "off season" before it asks.
 MAGIC_STATE_OFF_SEASON = 99
 
@@ -242,9 +245,30 @@ def handlers(
             season_state=0, season_state_end_time=0
         )
 
+    def level_reporters(session: Session, req):
+        """5_2623 LevelReporterQueryReq (DesFlagPanel.lua:62-63): other
+        players' clears of a stage. The listener draws cells only `if
+        firstReporter` (DesFlagPanel.lua:66-75), so the single player's empty
+        answer is harmless (plan B2 Wave 3 A4, O-W3-4)."""
+        res = registry.message_class("LevelReporterQueryRes")()
+        fill_required(res)
+        return res
+
+    def sync_red_point(session: Session, req):
+        """5_2039 SyncRedPointReq (GameToolsBtnPanel.lua:102-120, every 60 s
+        in the city) has no Res: return None so the server sends nothing and
+        stops logging "no handler" (O-W3-4)."""
+        global _red_point_logged
+        if not _red_point_logged:
+            _red_point_logged = True
+            log.debug("5_2039 SyncRedPointReq has no Res; nothing to send")
+        return None
+
     return {
         (5, 2005): query_myself,
+        (5, 2039): sync_red_point,
         (5, 2317): game_ready,
+        (5, 2623): level_reporters,
         (5, 2801): push_messages,
         (5, 2943): bt_cards,
         (153, 2001): magic_state,
