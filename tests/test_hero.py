@@ -150,3 +150,40 @@ def test_hero_notify_fields_names_are_all_hero_fields(reg, cfg, tmp_path) -> Non
     assert fields["level"] == 2
     assert fields["max_hp"] == hero.unit.max_hp
     assert fields["power"] == hero.unit.power
+
+
+def test_client_hero_has_five_runes(reg, cfg, tmp_path) -> None:
+    """ClientHero.runes is cloned as is (ClientHero.lua:177) and indexed by
+    idx + 1 (ClientHero:updateRune, RuneDataHelp:asynRuneServerData), so all
+    five are sent, zeros where no runes row exists yet."""
+    from server.modules.hero import build_client_hero_with_runes, runes_of
+
+    conn = connect(tmp_path / "r.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_hero(conn, pid, 100000, 10, star=1, level=30)
+    conn.execute(
+        "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 1, 2, 7)",
+        (pid, 100000),
+    )
+    conn.commit()
+    row = heroes_of(conn, pid)[0]
+    plain = build_client_hero(reg, cfg, row)
+    assert [(r.idx, r.level, r.rune_val) for r in plain.runes] == [
+        (i, 0, 0) for i in range(5)
+    ]
+    built = build_client_hero_with_runes(reg, cfg, row, runes_of(conn, row))
+    assert [(r.idx, r.level, r.rune_val) for r in built.runes] == [
+        (0, 0, 0), (1, 2, 7), (2, 0, 0), (3, 0, 0), (4, 0, 0),
+    ]
+    # rune1 of 100000 is rune_info 1001000 -> rune 20000; its level-2 row's
+    # stats go to unit only.
+    level2 = cfg.rune_level(int(cfg.rune(cfg.hero_runes(100000)[1])["rune"]), 2)
+    from server.modules.hero import NPC_UNIT_FIELDS
+
+    stats = [n for n in NPC_UNIT_FIELDS if n in level2.keys()]
+    assert any(float(level2[n] or 0) for n in stats)
+    for name in stats:
+        diff = getattr(built.unit, name) - getattr(plain.unit, name)
+        assert diff == pytest.approx(float(level2[name] or 0), abs=0.01), name
+    assert built.base_unit == plain.base_unit
+    built.SerializeToString()
