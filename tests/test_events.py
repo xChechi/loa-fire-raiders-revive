@@ -336,15 +336,51 @@ def test_lunch_energy_claimable_only_after_12(reg, cfg, settings, world) -> None
     assert _award(reg, handlers, session, 10580).status == events.STATUS_NOT_DONE
     clock[0] = _at(25, 12, 0)
     assert _award(reg, handlers, session, 10580).status == 0
-    # drop 150430 is 80 energy; db.add_energy clips at the level's max_energy
-    cap = int(cfg.xp_for_level(10)["max_energy"])
-    assert int(find_player(conn, "stefan")["energy"]) == min(80, cap)
+    # drop 150430 is 80 energy, paid in full even past the level's max_energy
+    assert int(find_player(conn, "stefan")["energy"]) == 80
     assert _award(reg, handlers, session, 10590).status == events.STATUS_NOT_DONE
     clock[0] = _at(26, 4, 59)                         # dinner is open until 05:00
     assert _award(reg, handlers, session, 10590).status == 0
     clock[0] = _at(26, 5, 0)                          # a new day: lunch is not open yet
     events.refresh(conn, cfg, reg, None, pid, clock[0])
     assert _state(conn, pid, 10580) == (0, 0, 0)
+
+
+def test_lunch_and_dinner_energy_pass_the_cap(reg, cfg, settings, world) -> None:
+    """Owner's decision (run 11 finding 2): the lunch / dinner prize is paid in
+    full at full energy, on the single claim and on claim-all. Regeneration
+    then adds nothing until the player is back under the cap."""
+    from server.db import find_player, refresh_energy
+
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    cap = int(cfg.xp_for_level(10)["max_energy"])
+    clock = [_at(25, 12, 0)]
+    handlers = _clocked(reg, settings, conn, cfg, clock)
+    conn.execute("UPDATE players SET energy = ?, energy_at = 0 WHERE id = ?", (cap, pid))
+    conn.commit()
+    assert _award(reg, handlers, session, 10580).status == 0
+    assert int(find_player(conn, "stefan")["energy"]) == cap + 80
+    row = refresh_energy(conn, cfg, find_player(conn, "stefan"), now=clock[0] + 3600)
+    assert int(row["energy"]) == cap + 80
+    clock[0] = _at(25, 18, 0)                         # dinner, by claim-all
+    res = handlers[(5, 2243)](session, reg.message_class("AllEventAwardReq")(type=1))
+    assert 10590 in res.entrys
+    assert int(find_player(conn, "stefan")["energy"]) == cap + 160
+
+
+def test_an_energy_achievement_still_stops_at_the_cap(reg, cfg, world) -> None:
+    """Only the kind-4 daily prize passes the cap; 41000 (level 30, drop
+    152000 = 100 energy) is clipped as before."""
+    from server.db import find_player
+
+    conn, pid, handlers, session = world
+    _set_level(conn, pid, 30)
+    cap = int(cfg.xp_for_level(30)["max_energy"])
+    conn.execute("UPDATE players SET energy = ? WHERE id = ?", (cap - 10, pid))
+    conn.commit()
+    assert _award(reg, handlers, session, 41000).status == 0
+    assert int(find_player(conn, "stefan")["energy"]) == cap
 
 
 def test_award_all_type1_claims_only_daily(reg, cfg, settings, world) -> None:

@@ -125,6 +125,41 @@ def test_refresh_energy_clamps_at_the_level_cap(tmp_path: Path) -> None:
     cfg.close()
 
 
+def test_refresh_energy_keeps_energy_above_the_cap_and_adds_none(tmp_path: Path) -> None:
+    """Prize and bought energy may pass the cap (GameResourcePanel.lua:189 shows
+    energy/max_energy unclamped, StrengthUI.lua:292 only stops buying above
+    2400). Regeneration adds nothing while above the cap and never cuts it."""
+    from server.config import Config
+    from server.db import refresh_energy
+
+    cfg = Config.load(STOCK)
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute("UPDATE players SET energy = 140, energy_at = 0 WHERE id = ?", (pid,))
+    conn.commit()
+    row = refresh_energy(conn, cfg, find_player(conn, "stefan"), now=100_000)
+    assert int(row["energy"]) == 140
+    assert int(row["max_energy"]) == 60
+    assert int(row["energy_at"]) == 100_000
+    cfg.close()
+
+
+def test_a_level_up_never_cuts_energy_above_the_cap(tmp_path: Path) -> None:
+    from server.config import Config
+    from server.db import add_player_xp
+
+    cfg = Config.load(STOCK)
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute("UPDATE players SET energy = 140 WHERE id = ?", (pid,))
+    conn.commit()
+    need = int(cfg.xp_for_level(1)["player_xp_for_next_level"])
+    change = add_player_xp(conn, cfg, pid, need)
+    assert change["after"][0] == 2
+    assert int(find_player(conn, "stefan")["energy"]) == 140
+    cfg.close()
+
+
 def test_max_energy_follows_the_player_level(tmp_path: Path) -> None:
     from server.config import Config
     from server.db import refresh_energy

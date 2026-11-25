@@ -131,9 +131,13 @@ def _hero_stones(cfg: Config, hero: int) -> tuple[int, int]:
 
 
 def grant_prizes(
-    conn: sqlite3.Connection, cfg: Config, player_id: int, prizes
+    conn: sqlite3.Connection, cfg: Config, player_id: int, prizes,
+    energy_over_cap: bool = False,
 ) -> dict:
     """Apply (category, refer, amount) triples and report what changed.
+
+    Energy stops at the level's max_energy unless energy_over_cap (the lunch /
+    dinner daily prize, see events).
 
     The return value is what both the persistence and the client notification
     need: the new absolute gold, diamond and energy, the new absolute amount of
@@ -176,7 +180,7 @@ def grant_prizes(
                 (amount, int(player_id)),
             )
         elif category == CATEGORY_ENERGY:
-            db.add_energy(conn, cfg, player_id, amount)
+            db.add_energy(conn, cfg, player_id, amount, over_cap=energy_over_cap)
         elif category == CATEGORY_ITEM:
             _item(refer, amount)
         elif category == CATEGORY_PLAYER_XP:

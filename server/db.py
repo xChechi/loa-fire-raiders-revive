@@ -514,7 +514,8 @@ def refresh_energy(
         # Only whole cycles are consumed: the remainder carries over.
         energy_at = energy_at + cycles * cycle
     if energy >= max_energy:
-        energy = max_energy
+        # Prize and bought energy may sit above the cap (GameResourcePanel.lua:189
+        # shows it unclamped): regeneration adds nothing there and never cuts it.
         energy_at = now
     conn.execute(
         "UPDATE players SET energy = ?, max_energy = ?, energy_at = ? WHERE id = ?",
@@ -534,7 +535,18 @@ def spend_energy(conn: sqlite3.Connection, player_id: int, amount: int) -> None:
     conn.commit()
 
 
-def add_energy(conn: sqlite3.Connection, cfg, player_id: int, amount: int) -> None:
+def add_energy(
+    conn: sqlite3.Connection, cfg, player_id: int, amount: int, over_cap: bool = False
+) -> None:
+    """Add up to the level's max_energy; with over_cap, add the whole amount
+    (the lunch / dinner daily prize, events.KIND_TIME_WINDOW)."""
+    if over_cap:
+        conn.execute(
+            "UPDATE players SET energy = energy + ? WHERE id = ?",
+            (int(amount), int(player_id)),
+        )
+        conn.commit()
+        return
     row = conn.execute(
         "SELECT * FROM players WHERE id = ?", (int(player_id),)
     ).fetchone()
@@ -648,7 +660,10 @@ def add_player_xp(conn: sqlite3.Connection, cfg, player_id: int, amount: int) ->
             level -= 1
             break
         max_energy = int(new_row["max_energy"])
-        energy = min(max_energy, energy + int(new_row["levelup_recovery_energy"] or 0))
+        # Capped as before, but energy already above the cap is never cut.
+        energy = max(energy, min(
+            max_energy, energy + int(new_row["levelup_recovery_energy"] or 0)
+        ))
     xp += amount
     conn.execute(
         "UPDATE players SET level = ?, xp = ?, energy = ?, max_energy = ? WHERE id = ?",

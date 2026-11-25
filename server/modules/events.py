@@ -27,6 +27,11 @@ again at 0, not done, not claimed. The counted kinds (O-W2-13, read from each
 row's desc) are raised by bump() at their call sites. Kind 4 (the lunch and
 dinner energy) is done from arg1:00 until arg2:00 the next morning. Every
 other daily kind (arena, guild, chat, nobility) stays at 0, logged once.
+
+The kind-4 prize (80 energy, drops 150430 / 150440) is paid in full even
+above the level's max_energy (owner's decision after run 11; the client
+shows energy/max_energy unclamped, GameResourcePanel.lua:189). Every other
+energy prize, the level-30+ achievements included, still stops at the cap.
 """
 
 from __future__ import annotations
@@ -266,10 +271,10 @@ def handlers(
             return int(session.player_id)
         return int(db.find_player(conn, settings.username)["id"])
 
-    def _pay(session: Session, pid: int, triples) -> dict:
+    def _pay(session: Session, pid: int, triples, over_cap: bool = False) -> dict:
         """grant_prizes vets the whole list before it writes, so a raise
         leaves every event unclaimed."""
-        changed = item.grant_prizes(conn, cfg, pid, triples)
+        changed = item.grant_prizes(conn, cfg, pid, triples, energy_over_cap=over_cap)
         for hero_row_id in changed["heroes"]:
             hero_row = conn.execute(
                 "SELECT * FROM heroes WHERE id = ?", (hero_row_id,)
@@ -312,7 +317,8 @@ def handlers(
             fill_required(res)
             return res
         rolled = drops.roll(cfg, int(ev["drops"] or 0), rng=rng)
-        _pay(session, pid, drops.as_triples(rolled))
+        _pay(session, pid, drops.as_triples(rolled),
+             over_cap=int(ev["kind"]) == KIND_TIME_WINDOW)
         _claim(pid, [entry])
         refresh(conn, cfg, registry, session, pid, now_of())  # activates the children
         log.info("player %d claimed event %d: %s", pid, entry, drops.as_triples(rolled))
@@ -323,7 +329,7 @@ def handlers(
     def award_all(session: Session, req):
         catalog, pid = int(req.type), _pid(session)
         refresh(conn, cfg, registry, session, pid, now_of())
-        entries, rolled = [], []
+        entries, rolled, over_cap = [], [], False
         for row in conn.execute(
             "SELECT entry FROM events WHERE player_id = ? AND done = 1 AND claimed = 0"
             " ORDER BY entry", (pid,),
@@ -333,11 +339,14 @@ def handlers(
                 continue
             entries.append(int(row["entry"]))
             rolled.extend(drops.roll(cfg, int(ev["drops"] or 0), rng=rng))
+            # Kind 4 is the only daily row whose drops pay energy, and no
+            # achievement is kind 4, so the flag covers exactly its prize.
+            over_cap = over_cap or int(ev["kind"]) == KIND_TIME_WINDOW
         res = registry.message_class("AllEventAwardRes")(
             eventNum=len(entries), type=catalog
         )
         if entries:
-            changed = _pay(session, pid, drops.as_triples(rolled))
+            changed = _pay(session, pid, drops.as_triples(rolled), over_cap=over_cap)
             _claim(pid, entries)
             refresh(conn, cfg, registry, session, pid, now_of())
             for entry in drops.to_prize_entries(registry, rolled):
