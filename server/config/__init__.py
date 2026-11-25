@@ -128,6 +128,24 @@ class Config:
         )
         return rows[0] if rows else None
 
+    # --- skills and function unlocks (Wave 2) --------------------------------
+    def spell(self, entry: int):
+        return self._one("spell_info", "spell_info", "entry", int(entry))
+
+    def spell_level_up(self, level: int):
+        """spell0..spell3: the highest skill level a hero of this level may
+        reach (RoleSkillRender.lua:236-263)."""
+        return self._one("spell_level_up", "spell_level_up", "level", int(level))
+
+    def function_unlock(self, entry: int) -> int:
+        """function.unlock_level, the player level a feature opens at
+        (FunctionType:checkIsOpend, FunctionType.lua:1152-1180). `function`
+        is an SQL keyword, hence the brackets."""
+        row = self._one("functions", "[function]", "entry", int(entry))
+        if row is None:
+            raise KeyError(f"function has no row for {entry}")
+        return int(row["unlock_level"] or 0)
+
     # --- angels -------------------------------------------------------------
     # AngelManager.lua:79,295 only ever count angel_info rows whose
     # activation_item_num is not 0, so the same filter applies here.

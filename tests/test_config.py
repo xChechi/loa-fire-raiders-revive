@@ -265,3 +265,19 @@ def test_mail_template_and_item_buy(cfg: Config) -> None:
     assert int(cfg.mail_template(99999)["entry"]) == 99999
     row = cfg.item_buy(1210800)
     assert (int(row["category"]), int(row["rate"])) == (20, 500)
+
+
+def test_config_function_unlock_10050_is_5_and_10040_is_8(cfg: Config) -> None:
+    """functions.db, table `function`: 英雄技能 5, 训练 8."""
+    assert cfg.function_unlock(10050) == 5
+    assert cfg.function_unlock(10040) == 8
+    with pytest.raises(KeyError):
+        cfg.function_unlock(1)
+
+
+def test_config_spell_and_spell_level_up(cfg: Config) -> None:
+    assert int(cfg.spell(1000000)["next"]) == 1000001
+    assert int(cfg.spell(1000001)["upgrade_cost"]) == 1000
+    assert cfg.spell(1) is None
+    assert int(cfg.spell_level_up(3)["spell0"]) == 2
+    assert int(cfg.spell_level_up(5)["spell1"]) == 2

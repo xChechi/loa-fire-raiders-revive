@@ -177,6 +177,12 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "diamond_free_day", "TEXT NOT NULL DEFAULT ''"),
     # Wave 2 A2: supreme ten-pulls made; 0 rolls FIRST_TEN_TIMES_DIAMOND_GACHA.
     ("players", "diamond_ten_draws", "INTEGER NOT NULL DEFAULT 0"),
+    # Wave 2 A3: skill levels, not ids (O-W2-6); hero.spell_at_level resolves
+    # the id from the current prototype's base, so a level survives quality-up.
+    ("heroes", "spell0_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("heroes", "spell1_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("heroes", "spell2_lv", "INTEGER NOT NULL DEFAULT 1"),
+    ("heroes", "spell3_lv", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 

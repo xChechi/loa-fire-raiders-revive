@@ -121,6 +121,24 @@ def gear_bonus(cfg: Config, row: sqlite3.Row) -> dict[str, float]:
     return bonus
 
 
+LEVELLED_SPELLS = 4                  # skill0..skill3; skill4 (awaken) is W3
+
+
+def spell_at_level(cfg: Config, base: int, level: int) -> int:
+    """The spell_info id `level - 1` steps along `next` from a level-1 base
+    (O-W2-6). Raises when the chain ends early."""
+    spell = int(base)
+    for _ in range(int(level) - 1):
+        row = cfg.spell(spell)
+        nxt = int(row["next"] or 0) if row is not None else 0
+        if not nxt:
+            raise KeyError(
+                f"spell_info chain of {base} ends at {spell} before level {level}"
+            )
+        spell = nxt
+    return spell
+
+
 def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
     entry = int(row["entry"])
     star = int(row["star"])
@@ -160,8 +178,10 @@ def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
     msg.base_unit.CopyFrom(
         build_client_hero_unit(registry, cfg, npc_row, growth_row, level)
     )
-    for key in SPELL_FIELDS:
+    for i, key in enumerate(SPELL_FIELDS):
         spell = int(npc_row[key] or 0)
+        if spell and i < LEVELLED_SPELLS:
+            spell = spell_at_level(cfg, spell, int(row[f"spell{i}_lv"]))
         if spell:
             msg.spells.append(spell)
     msg.items.extend(gear_slots(row))
@@ -234,12 +254,17 @@ STATUS_HERO_OWNED = 327940           # 英雄已经存在
 STATUS_NO_HERO = 327941              # 英雄不存在
 STATUS_NOT_ENOUGH_ITEMS = 327942     # 没有足够道具
 STATUS_LEVEL_TOO_LOW = 327944        # 等级不够
+STATUS_FUNCTION_LOCKED = 327957      # 未满足此玩法的等级
 STATUS_ITEM_CAP = 327970             # 物品达到上限
+STATUS_SKILL_TOP = 328962            # 已经是当前最高等级
+STATUS_SKILL_LOCKED = 328963         # 此技能未激活
 STATUS_SLOT_FULL = 328961            # 此装备栏位上已经有装备了
 STATUS_TOP_STAR = 328965             # 此英雄已经是最高星级
 STATUS_TOP_QUALITY = 328966          # 英雄已经是最高品质
 STATUS_SLOTS_NOT_FULL = 328967       # 英雄没有穿齐进阶所需装备
 STATUS_NO_COMPOSITE = 328968         # 没有可以合成的装备
+
+SKILL_FUNCTION = 10050               # function 英雄技能 (RoleUI.lua:353)
 
 # The unit stats ClientHero:updateByFields copies into ClientHero.unit.
 STAT_NAMES = tuple(n for n in NPC_UNIT_FIELDS if n in HERO_FIELDS)
@@ -582,7 +607,81 @@ def handlers(
                  stones, stone, gold)
         return _res(name, STATUS_OK)
 
+    def skill_up(session: Session, req):
+        """{hero, index} raises one level (RoleUICtr.lua:220-223); with
+        spell_entry it raises every level up to that id (RoleUICtr.lua:225-228,
+        RoleSkillRender.lua:265-302). Each level costs the NEXT row's
+        upgrade_cost and may not pass spell_level_up(hero level).spell{index}.
+        On spell_entry 0 the client keeps the old id until the ident-2
+        spell{index} arrives (RoleUICtr.lua:427-442, RoleSkillPanel.lua:116-130)."""
+        name = "HeroSkillUpRes"
+        player = _player(session)
+        pid = int(player["id"])
+        index = int(req.index)
+        target = int(req.spell_entry)
+        echo = {"index": index, "spell_entry": target}
+        unlock = cfg.function_unlock(SKILL_FUNCTION)
+        if int(player["level"]) < unlock:
+            return _refused(
+                name, STATUS_FUNCTION_LOCKED,
+                f"player level {player['level']} < {unlock}", **echo,
+            )
+        row = _hero(pid, req.hero)
+        if row is None:
+            return _refused(name, STATUS_NO_HERO, f"hero {req.hero}", **echo)
+        npc_row = cfg.npc(prototype_for(cfg, int(row["entry"]), int(row["quality"])))
+        base = int(npc_row[f"skill{index}"] or 0) if 0 <= index < LEVELLED_SPELLS else 0
+        if not base:
+            return _refused(
+                name, STATUS_SKILL_LOCKED, f"hero {row['entry']} skill {index}", **echo
+            )
+        level = int(row[f"spell{index}_lv"])
+        spell = spell_at_level(cfg, base, level)
+        if target:
+            # The target must lie ahead on this skill's own chain.
+            ahead, walk = set(), cfg.spell(spell)
+            while walk is not None and int(walk["next"] or 0) and len(ahead) < 1000:
+                ahead.add(int(walk["next"]))
+                walk = cfg.spell(int(walk["next"]))
+            if target not in ahead:
+                return _refused(
+                    name, STATUS_INTERNAL_ERROR,
+                    f"spell {target} is not ahead of {spell}", **echo,
+                )
+        caps = cfg.spell_level_up(int(row["level"]))
+        if caps is None:
+            raise KeyError(f"spell_level_up has no row for level {row['level']}")
+        cap = int(caps[f"spell{index}"] or 0)
+        cost = 0
+        while True:
+            nxt = int(cfg.spell(spell)["next"] or 0)
+            nxt_row = cfg.spell(nxt) if nxt else None
+            if nxt_row is None or int(nxt_row["level"]) > cap:
+                return _refused(
+                    name, STATUS_SKILL_TOP,
+                    f"hero {row['entry']} skill {index} at level {level}, cap {cap}",
+                    **echo,
+                )
+            cost += int(nxt_row["upgrade_cost"] or 0)
+            spell, level = nxt, level + 1
+            if not target or spell == target:
+                break
+        if int(player["gold"]) < cost:
+            return _refused(name, STATUS_NOT_ENOUGH_GOLD, f"{cost} gold", **echo)
+        db.spend(conn, pid, gold=cost)
+        # The column name is a literal: index was checked to be 0..3 above.
+        conn.execute(
+            f"UPDATE heroes SET spell{index}_lv = ? WHERE id = ?", (level, int(row["id"]))
+        )
+        conn.commit()
+        notify.player_changed(registry, session, {"gold": _gold(pid)})
+        notify.hero_changed(registry, session, int(row["entry"]), {f"spell{index}": spell})
+        log.info("hero %d of player %d skill %d to level %d (%d) for %d gold",
+                 row["entry"], pid, index, level, spell, cost)
+        return _res(name, STATUS_OK, **echo)
+
     return {
+        (5, 2103): skill_up,
         (5, 2105): equip,
         (5, 2163): equip_all,
         (5, 2111): composite,
