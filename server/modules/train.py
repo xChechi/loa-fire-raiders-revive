@@ -195,7 +195,8 @@ def apply_xp(
         row = _unit(conn, pid, kind, entry)
         if always or int(row["level"]) != before_level:
             notify.hero_changed(
-                registry, session, int(entry), hero.hero_notify_fields(registry, cfg, row)
+                registry, session, int(entry),
+                hero.hero_notify_fields_with_runes(registry, cfg, row, hero.runes_of(conn, row)),
             )
     else:
         level, exp = db.add_angel_xp(conn, cfg, pid, entry, gain)

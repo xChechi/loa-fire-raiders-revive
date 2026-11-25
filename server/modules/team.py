@@ -65,10 +65,15 @@ HERO_PLACES = range(1, 7)
 
 
 def build_fight_unit(
-    registry: Registry, cfg: Config, hero_row: sqlite3.Row, position: int
+    registry: Registry, cfg: Config, hero_row: sqlite3.Row, position: int,
+    runes: list[tuple[int, int]] | None = None,
 ):
-    """One ClientFightUnit for an owned hero row, standing at position."""
-    client_hero = hero.build_client_hero(registry, cfg, hero_row)
+    """One ClientFightUnit for an owned hero row, standing at position.
+    `runes` is hero.runes_of(conn, hero_row); None is five level-0 runes."""
+    if runes is None:
+        client_hero = hero.build_client_hero(registry, cfg, hero_row)
+    else:
+        client_hero = hero.build_client_hero_with_runes(registry, cfg, hero_row, runes)
     unit = registry.message_class("ClientFightUnit")(
         type=UNIT_TYPE_HERO,
         refer=client_hero.entry,
@@ -199,7 +204,9 @@ def build_self_team_res(
                 "own; the slot is left out", entry, slot, player_id,
             )
             continue
-        unit = build_fight_unit(registry, cfg, hero_row, slot)
+        unit = build_fight_unit(
+            registry, cfg, hero_row, slot, hero.runes_of(conn, hero_row)
+        )
         ability += int(unit.ability)
         res.team_base.units.add().CopyFrom(unit)
 

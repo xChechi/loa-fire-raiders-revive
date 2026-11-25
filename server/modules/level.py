@@ -376,7 +376,9 @@ def handlers(
                     ).fetchone()
                     notify.hero_changed(
                         registry, session, entry,
-                        hero.hero_notify_fields(registry, cfg, hero_row),
+                        hero.hero_notify_fields_with_runes(
+                            registry, cfg, hero_row, hero.runes_of(conn, hero_row)
+                        ),
                     )
             if angel_xp is not None:
                 notify.angel_changed(registry, session, int(req.angel), {

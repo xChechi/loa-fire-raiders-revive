@@ -504,3 +504,30 @@ def test_query_myself_tells_an_expired_merchant_to_leave(reg, settings, cfg) -> 
     handlers[(5, 2005)](session, req)
     gone = [m for s, c, m in session.outbox if (s, c) == (5, 2022)]
     assert len(gone) == 1 and gone[0].store == 2
+
+
+def test_login_hero_payload_carries_the_rune_stats(reg, settings, cfg) -> None:
+    """QueryMyselfRes.heroes is what the client fights and shows with until a
+    notify says otherwise, so a levelled rune's stats must be in it."""
+    from server.db import create_player, grant_hero, heroes_of
+    from server.modules import hero, player
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_hero(conn, pid, 100000, 10, star=1, level=30)
+    row = find_player(conn, "stefan")
+    plain = player.build_query_myself_res(reg, cfg, conn, row).heroes[0]
+    conn.execute(
+        "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 1, 2, 7)",
+        (pid, 100000),
+    )
+    conn.commit()
+    sent = player.build_query_myself_res(reg, cfg, conn, row).heroes[0]
+    hero_row = heroes_of(conn, pid)[0]
+    expected = hero.build_client_hero_with_runes(
+        reg, cfg, hero_row, hero.runes_of(conn, hero_row)
+    )
+    assert [(r.idx, r.level, r.rune_val) for r in sent.runes][1] == (1, 2, 7)
+    assert sent.unit == expected.unit
+    assert sent.unit != plain.unit
+    assert sent.base_unit == plain.base_unit
