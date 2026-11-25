@@ -25,6 +25,8 @@ TOUCHED = (
     "scripts/app/game/view/ui/des/DesSweepPanel.lua",
     "scripts/app/game/view/ui/roleListUI/RoleListRoleRender.lua",
     "scripts/app/game/view/ui/angel/AngelPreviewDes.lua",
+    "scripts/app/game/view/ui/email/EmailRenderBox.lua",
+    "scripts/app/game/utils/MMTools.lua",
 )
 
 
@@ -503,3 +505,32 @@ def test_patch_22_shrinks_the_sweep_unlock_line_to_end_before_the_challenge_butt
     )
     assert "local txt_node, txt_w = g_gameUI_Tools:createContentNode(txtTable)" in sweep
     assert "if txt_w and txt_w > 430 then txt_node:setScale(430 / txt_w) end" in sweep
+
+
+def test_patch_25_lays_the_mailbox_row_out_from_its_measured_labels(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    box = (assets / "scripts/app/game/view/ui/email/EmailRenderBox.lua").read_text(
+        encoding="utf-8"
+    )
+    # the subject starts after the measured "Subject:" label and ends by x 530
+    subject = ("local sx = 100 + tf_title:getContentSize().width + 8; "
+               "tf_title1:setAnchorPoint(ccp(0, 1)); tf_title1:setPosition(ccp(sx, 80 + 28)); "
+               "tf_title1:setTextAreaSize(CCSize(530 - sx, 56))")
+    assert box.count(subject) == 1
+    assert box.index("tf_title1:setColor(g_colorManager.C3_GREEN);") < box.index(subject)
+    # the date and "Remaining N Days" end at x 705, each part after the last
+    assert "tf_2:setAnchorPoint(ccp(1, 1)); tf_2:setPosition(ccp(705, 80 + 28))" in box
+    assert "tf_2:setPosition(ccp(700, 20))" not in box
+    assert "tf_2:setPositionY(20 + 28)" in box
+    days = "for _, t in ipairs({tf_5, tf_4, tf_3}) do"
+    assert box.count(days) == 1
+    assert box.index("tf_5:setColor(g_colorManager.C3_WHITE)") < box.index(days)
+
+
+def test_patch_26_dates_read_day_month_year(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    tools = (assets / "scripts/app/game/utils/MMTools.lua").read_text(encoding="utf-8")
+    assert ('timeStr = string.format("%02d-%02d-%04d", timeTab.day, timeTab.month, '
+            "timeTab.year);") in tools
+    assert 'timeTab.year .. "-" .. timeTab.month' not in tools
+

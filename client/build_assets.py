@@ -97,6 +97,7 @@ ROLE_INFO = "scripts/app/game/view/ui/roleUI/RoleUIInfoPanel.lua"
 BAG_LEFT = "scripts/app/game/view/ui/bag/BagLeftPanel.lua"
 LEVEL_DES = "scripts/app/game/view/ui/LevelDes.lua"
 GUIDE_TALK = "scripts/app/game/manager/guide/NewGuideTalkPanel.lua"
+EMAIL_ROW = "scripts/app/game/view/ui/email/EmailRenderBox.lua"
 
 # Patch 12, English text layout. The engine draws every label with its own
 # FreeType code (FTLabelManager in libgame.so), which may break a line after
@@ -509,6 +510,46 @@ PATCHES: tuple[Patch, ...] = (
     Patch("scripts/app/game/view/ui/angel/AngelPreviewDes.lua",
           "self.angelInfo.name, 12 - 34, 60 + 30, self.bgImg",
           "self.angelInfo.name, 12 - 34 - 24, 60 + 30, self.bgImg"),
+    # 25. EmailRenderBox: every text of a mailbox row is a Label centred in a
+    #     fixed box (320 wide unless given), placed for the short Chinese:
+    #     "Subject:" from x 100 with the subject from x 180, so the subject
+    #     ran over the label ("ThemItem"), and "Remaining" / the day count /
+    #     "Days" from x 540 / 610 / 640 ("Rema7niDays"). The labels drop
+    #     their box so they measure their own text: the subject starts 8
+    #     after "Subject:" and is fitted (patch 12) to end by x 530; the
+    #     date and "Remaining N Days" end at x 705, the right end of the
+    #     Chinese date, each part placed left of the one after it. A boxed
+    #     Label draws its text at the top of its 56-high box, so every label
+    #     here hangs from that top edge (y + 28) and the row stays in line.
+    Patch(EMAIL_ROW,
+          "tf_title1:setColor(g_colorManager.C3_GREEN);\n",
+          "tf_title1:setColor(g_colorManager.C3_GREEN);\n"
+          "    tf_title:setTextAreaSize(CCSize(0, 0)); tf_title:setAnchorPoint(ccp(0, 1)); "
+          "tf_title:setPosition(ccp(100, 80 + 28))\n"
+          "    local sx = 100 + tf_title:getContentSize().width + 8; "
+          "tf_title1:setAnchorPoint(ccp(0, 1)); tf_title1:setPosition(ccp(sx, 80 + 28)); "
+          "tf_title1:setTextAreaSize(CCSize(530 - sx, 56))\n"),
+    Patch(EMAIL_ROW,
+          "tf_2:setColor(g_colorManager.C3_WHITE);\n",
+          "tf_2:setColor(g_colorManager.C3_WHITE);\n"
+          "    tf_2:setTextAreaSize(CCSize(0, 0)); "
+          "tf_2:setAnchorPoint(ccp(1, 1)); tf_2:setPosition(ccp(705, 80 + 28))\n"),
+    Patch(EMAIL_ROW,
+          "tf_5:setColor(g_colorManager.C3_WHITE)",
+          "tf_5:setColor(g_colorManager.C3_WHITE)\n"
+          "        local x = 705\n"
+          "        for _, t in ipairs({tf_5, tf_4, tf_3}) do\n"
+          "            t:setTextAreaSize(CCSize(0, 0)); t:setAnchorPoint(ccp(1, 1)); "
+          "t:setPosition(ccp(x, 20 + 28))\n"
+          "            x = x - t:getContentSize().width - (t == tf_4 and 8 or 0)\n"
+          "        end"),
+    Patch(EMAIL_ROW, "tf_2:setPosition(ccp(700, 20))", "tf_2:setPositionY(20 + 28)"),
+    # 26. MMTools:getDateStr (the mail date, the friend chat time) wrote
+    #     year-month-day unpadded ("2026-5-3"); the owner's rule is dd-mm-yyyy.
+    Patch("scripts/app/game/utils/MMTools.lua",
+          'timeStr = timeTab.year .. "-" .. timeTab.month .. "-"..timeTab.day;',
+          'timeStr = string.format("%02d-%02d-%04d", timeTab.day, timeTab.month, '
+          "timeTab.year);"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

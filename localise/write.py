@@ -179,6 +179,7 @@ KEY_OVERRIDES = {
     "x07016": "Drops",         # 可能掉落: stage info, icons follow
     "z00201": "Drops",         # 可能掉落: item source panel, 120 px box
     "z00221": "Cost:",         # 消耗体力: stage info, 120 px box, stamina icon follows
+    "c00042": "Subject:",      # 主题：: mailbox row, the subject follows (cache: "Theme:")
 }
 
 # g_lan:getTxt("key") .. value  /  value .. g_lan:getTxt("key")

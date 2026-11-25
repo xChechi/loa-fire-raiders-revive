@@ -261,3 +261,10 @@ def test_select_server_hint_is_short_enough_to_hide_under_the_login_button():
     from localise.write import KEY_OVERRIDES
 
     assert KEY_OVERRIDES["c00140"] == "Select"
+
+
+def test_mail_subject_label_reads_subject_not_theme():
+    # c00042 = "主题：", the label before the subject on a mailbox row.
+    from localise.write import KEY_OVERRIDES
+
+    assert KEY_OVERRIDES["c00042"] == "Subject:"
