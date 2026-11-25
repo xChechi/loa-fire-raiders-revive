@@ -28,6 +28,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/email/EmailRenderBox.lua",
     "scripts/app/game/utils/MMTools.lua",
     "scripts/app/game/view/ui/normalShop/NormalShopRender.lua",
+    "scripts/app/game/framework/MMAwardDropItem.lua",
 )
 
 
@@ -554,3 +555,11 @@ def test_patch_27_wraps_shop_slot_names_to_the_slot_width(assets: Path) -> None:
     assert render.count(scale) == 1
     assert render.index("self.nameTfd:setString(itemData.itemVo.name);") < render.index(scale)
 
+
+def test_patch_28_wraps_reward_names_to_the_reward_spacing(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    item = (assets / "scripts/app/game/framework/MMAwardDropItem.lua").read_text(
+        encoding="utf-8"
+    )
+    assert ('self.itemInfo=g_cocoGUI_creator:createMMLabel("",24,nil,'
+            "CCSize(196, 62),ui.TEXT_ALIGN_CENTER)") in item

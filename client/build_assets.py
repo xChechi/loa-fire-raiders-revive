@@ -581,6 +581,20 @@ PATCHES: tuple[Patch, ...] = (
           "self.nameTfd:getFontName(), self.nameTfd:getFontSize()):getContentSize().width + 2 * #line) end; "
           "local h = lines * self.nameTfd:getFontSize() * 1.37; "
           "self.nameTfd:setScale(math.min(1, 40 / h, 168 / math.max(widest, 1)))\n"),
+    # 28. MMAwardDropItem: the reward popup puts the items 200 apart, each
+    #     name one unbounded line under its icon ("Soul Stone (Rose Knight)"
+    #     over "Divination Crystal"). A 196 x 62 box, centred, top-aligned so
+    #     a one-line name stays where it was; showItemEffect places the label
+    #     by its height, which is now the box's. 62 is above patch 12's
+    #     one-line limit (1.8 lines; msyh.ttf at 24 is 33 high), where 56
+    #     put "Soul Stone (Imperial Se|ntinel)" on one line, and below three
+    #     lines at 20: at 66 patch 12 kept three ("...(Imperial / Sentinel)",
+    #     "Supreme Divination / Ticket") and the popup's scroll view cut the
+    #     third on the AVD. At 62 such names shrink until they take two.
+    Patch("scripts/app/game/framework/MMAwardDropItem.lua",
+          'self.itemInfo=g_cocoGUI_creator:createMMLabel("",24)',
+          'self.itemInfo=g_cocoGUI_creator:createMMLabel("",24,nil,'
+          "CCSize(196, 62),ui.TEXT_ALIGN_CENTER)"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")
