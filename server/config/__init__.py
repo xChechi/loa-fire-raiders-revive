@@ -146,6 +146,25 @@ class Config:
             raise KeyError(f"function has no row for {entry}")
         return int(row["unlock_level"] or 0)
 
+    # --- training (Wave 2) ---------------------------------------------------
+    def train_slots(self) -> list:
+        return self._all("train_info", "train_info", "ORDER BY entry", ())
+
+    def train_quality(self, train: int, quality: int):
+        rows = self._all(
+            "train_quality", "train_quality", "WHERE train = ? AND quality = ?",
+            (int(train), int(quality)),
+        )
+        return rows[0] if rows else None
+
+    def train_level_xp(self, level: int, quality: int):
+        """Keyed by player level and slot quality (TrainUI.lua:646-656)."""
+        rows = self._all(
+            "train_level_xp", "train_level_xp", "WHERE level = ? AND quality = ?",
+            (int(level), int(quality)),
+        )
+        return rows[0] if rows else None
+
     # --- angels -------------------------------------------------------------
     # AngelManager.lua:79,295 only ever count angel_info rows whose
     # activation_item_num is not 0, so the same filter applies here.

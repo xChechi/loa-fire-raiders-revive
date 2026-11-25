@@ -11,7 +11,7 @@ from server import db
 from server.config import Config
 from server.modules import (
     activity, angel, bag, buy, chat, checkin, events, gacha, guide, hero, level,
-    login, mail, player, shop, team,
+    login, mail, player, shop, team, train,
 )
 from server.net.registry import Registry
 from server.net.server import Server
@@ -74,6 +74,7 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers.update(buy.handlers(registry, settings, conn, cfg))
     handlers.update(shop.handlers(registry, settings, conn, cfg))
     handlers.update(bag.handlers(registry, settings, conn, cfg))
+    handlers.update(train.handlers(registry, settings, conn, cfg))
     handlers.update(activity.handlers(registry, settings, conn, cfg))
     handlers.update(events.handlers(registry, settings, conn, cfg))
     return handlers

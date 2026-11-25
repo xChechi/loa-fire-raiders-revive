@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+log = logging.getLogger("loa.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS players (
@@ -116,6 +119,20 @@ CREATE TABLE IF NOT EXISTS stores (
     refresh_used INTEGER NOT NULL DEFAULT 0,
     refresh_day  TEXT    NOT NULL DEFAULT '',
     PRIMARY KEY (player_id, store)
+);
+-- Wave 2 A4: one row per opened training slot (train_info.entry). refer_type
+-- 1 hero / 2 angel, refer_id the hero or angel entry (0 = empty); cal_time
+-- is the epoch the passive xp is settled up to, addxp the xp settled since
+-- the last op-2 query (O-W2-8, O-W2-10).
+CREATE TABLE IF NOT EXISTS trains (
+    player_id  INTEGER NOT NULL REFERENCES players(id),
+    train      INTEGER NOT NULL,
+    quality    INTEGER NOT NULL DEFAULT 1,
+    refer_type INTEGER NOT NULL DEFAULT 0,
+    refer_id   INTEGER NOT NULL DEFAULT 0,
+    cal_time   INTEGER NOT NULL DEFAULT 0,
+    addxp      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, train)
 );
 """
 
@@ -610,3 +627,44 @@ def add_hero_xp(
         out.append((entry, level, xp))
     conn.commit()
     return out
+
+
+def add_angel_xp(
+    conn: sqlite3.Connection, cfg, player_id: int, angel_entry: int, amount: int
+) -> tuple[int, int] | None:
+    """stage_info.angel_xp for the fielded angel, levelled through
+    xp_for_level.angel_xp_for_next_level and capped at angel_info.max_level.
+    LevelOutReq.angel is the angel_entry (BattleFactoryLevel.lua:361-369),
+    0 when none fought. Returns the new (level, exp), or None for no angel."""
+    if not angel_entry:
+        return None
+    row = conn.execute(
+        "SELECT * FROM angels WHERE player_id = ? AND angel_entry = ?",
+        (player_id, angel_entry),
+    ).fetchone()
+    if row is None:
+        log.warning(
+            "5_2203 names angel %d, which player %d does not own; no angel xp",
+            angel_entry, player_id,
+        )
+        return None
+    info = cfg.angel_by_star(angel_entry, int(row["star"]))
+    if info is None:
+        raise KeyError(
+            f"angel_info has no row for angel {angel_entry} star {row['star']}"
+        )
+    cap = int(info["max_level"])
+    level, exp = int(row["level"]), int(row["exp"]) + int(amount)
+    while level < cap:
+        need_row = cfg.xp_for_level(level)
+        need = int(need_row["angel_xp_for_next_level"] or 0) if need_row else 0
+        if need <= 0 or exp < need:
+            break
+        exp -= need
+        level += 1
+    conn.execute(
+        "UPDATE angels SET level = ?, exp = ? WHERE id = ?",
+        (level, exp, int(row["id"])),
+    )
+    conn.commit()
+    return level, exp

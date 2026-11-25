@@ -281,3 +281,15 @@ def test_config_spell_and_spell_level_up(cfg: Config) -> None:
     assert cfg.spell(1) is None
     assert int(cfg.spell_level_up(3)["spell0"]) == 2
     assert int(cfg.spell_level_up(5)["spell1"]) == 2
+
+
+def test_config_train_tables(cfg: Config) -> None:
+    slots = cfg.train_slots()
+    assert [int(r["entry"]) for r in slots] == list(range(1, 13))
+    assert [int(r["entry"]) for r in slots if int(r["is_free"])] == [1, 2, 3, 11, 12]
+    row = cfg.train_quality(4, 1)
+    assert (int(row["diamond"]), int(row["exp_up"]), int(row["effect"])) == (880, 75, 1)
+    assert int(cfg.train_quality(1, 2)["diamond"]) == 1880
+    assert cfg.train_quality(1, 6) is None
+    assert float(cfg.train_level_xp(8, 1)["rate"]) == pytest.approx(0.07)
+    assert float(cfg.train_level_xp(8, 1)["base"]) == 0

@@ -1,5 +1,5 @@
 """Bag: 5_2137 SellItemReq, 5_2149 SellAllGoldStockReq, 5_2131 UseItemReq,
-5_2933 ItemBuyReq, and an empty 5_2139 QueryTrainInfoReq answer.
+5_2933 ItemBuyReq. 5_2139 QueryTrainInfoReq lives in train.py (Wave 2 A4).
 
 Selling (BagCtr.lua:41-47,64-68): the client offers "sell" only when
 item_info.price > 0 (BagLeftPanel.lua:278-292) and reads `status` alone;
@@ -207,15 +207,9 @@ def handlers(
         log.info("player %d bought %dx %d for %d diamonds", pid, amount, refer, cost)
         return _res(name)
 
-    def train_info(session: Session, req):
-        # Training unlocks at level 5 (Wave 2); RoleData.lua:1137-1139 asks at
-        # login anyway, so it gets a valid answer with nothing in it.
-        return _res("QueryTrainInfoRes", status=STATUS_OK)
-
     return {
         (5, 2137): sell,
         (5, 2149): sell_all,
         (5, 2131): use,
         (5, 2933): item_buy,
-        (5, 2139): train_info,
     }

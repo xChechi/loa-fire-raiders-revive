@@ -1,4 +1,4 @@
-"""5_2137 SellItem, 5_2131 UseItem, 5_2933 ItemBuy, 5_2139 QueryTrainInfo.
+"""5_2137 SellItem, 5_2131 UseItem, 5_2933 ItemBuy.
 
 Stock rows used below (item_info stores TEXT): 10000 粗布头巾 price 150;
 1800 美味吐司 class 99 price 0; 1140 联盟经验合剂 class 45 arg0 100.
@@ -161,12 +161,10 @@ def test_item_buy_short_or_unconfigured_changes_nothing(reg, world) -> None:
     assert session.outbox == []
 
 
-def test_train_info_is_valid_and_empty(reg, world) -> None:
-    _conn, _pid, handlers, session = world
-    res = _call(reg, handlers, session, 2139, op=0)
-    assert res.status == 0
-    assert list(res.trains) == [] and list(res.items) == [] and list(res.logs) == []
-    res.SerializeToString()
+def test_bag_no_longer_answers_2139(reg, world) -> None:
+    """5_2139 moved to server/modules/train.py (Wave 2 A4)."""
+    _conn, _pid, handlers, _session = world
+    assert (5, 2139) not in handlers
 
 
 # 5_2149 SellAllGoldStock. Junk per AllShopUI.lua:1099-1112: 1050 布料 and

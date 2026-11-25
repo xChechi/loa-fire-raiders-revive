@@ -425,3 +425,33 @@ def test_day_key_rolls_at_5am() -> None:
     assert day_key(5, datetime(2026, 11, 25, 4, 59).timestamp()) == "2026-11-24"
     assert day_key(5, datetime(2026, 11, 25, 5, 0).timestamp()) == "2026-11-25"
     assert day_key(0, datetime(2026, 11, 25, 0, 0).timestamp()) == "2026-11-25"
+
+
+def test_add_angel_xp_moved_to_db_matches_level_out(tmp_path) -> None:
+    """level_out's angel xp now lives in db.add_angel_xp (Wave 2 A4), shared
+    with training. 20 + 30 = 50 xp take a level-1 angel to level 3."""
+    from server import db
+    from server.config import Config
+    from server.modules import level
+
+    assert not hasattr(level, "_add_angel_xp")
+    cfg = Config.load(STOCK)
+    try:
+        conn = connect(tmp_path / "player.db")
+        pid = create_player(conn, "stefan", "stefan", guide_id=0)
+        assert db.add_angel_xp(conn, cfg, pid, 0, 50) is None
+        assert db.add_angel_xp(conn, cfg, pid, 500000, 50) is None   # not owned
+        db.grant_angel(conn, pid, 500000, level=1, star=1)
+        assert db.add_angel_xp(conn, cfg, pid, 500000, 55) == (3, 5)
+        row = conn.execute("SELECT level, exp FROM angels WHERE player_id = ?", (pid,)).fetchone()
+        assert (int(row["level"]), int(row["exp"])) == (3, 5)
+    finally:
+        cfg.close()
+
+
+def test_trains_table_exists(tmp_path) -> None:
+    conn = connect(tmp_path / "player.db")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(trains)")}
+    assert cols == {
+        "player_id", "train", "quality", "refer_type", "refer_id", "cal_time", "addxp"
+    }
