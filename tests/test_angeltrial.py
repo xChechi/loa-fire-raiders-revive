@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, grant_hero
-from server.modules import angeltrial
+from server.db import connect, create_player, grant_hero, heroes_of
+from server.modules import angeltrial, team
 from server.net.registry import Registry
 from server.net.server import Session
 from server.settings import Settings
@@ -238,3 +238,207 @@ def test_rank_lists_only_self(world, reg):
     )
     own = _call(reg, handlers, session, 2519, "AngeltrialsSelfRankReq")
     assert own.status == 0 and own.selfRank == 1
+
+
+# --- commit 2: the fights ------------------------------------------------------
+
+PRIEST = 200000
+
+
+def _fight_floor(conn, pid, reg, handlers, session, level=1):
+    _start(reg, handlers, session)
+    _set_level(conn, pid, level)
+    return _event(reg, handlers, session, level, 2)
+
+
+def _fight(reg, handlers, session, difficulty, heros=(KNIGHT,), angel=0):
+    return _call(
+        reg, handlers, session, 2511, "AngeltrialsFightingReq",
+        difficulty=difficulty, heros=list(heros), angel=angel,
+    )
+
+
+def _live(reg, type_, refer, hp, energy, max_hp, max_energy=1000):
+    return reg.message_class("ClientFightLiveUnit")(
+        type=type_, refer=refer, hp=hp, energy=energy, max_hp=max_hp,
+        max_energy=max_energy,
+    )
+
+
+def _end(reg, handlers, session, success, stars, units=(), enemy_units=(), heros=(KNIGHT,)):
+    return _call(
+        reg, handlers, session, 2513, "AngeltrialsEndFightReq",
+        success=success, stars=stars, units=list(units),
+        enemyUnits=list(enemy_units), heros=list(heros), angel=0,
+    )
+
+
+def _crash(reg, handlers, session, heroes=(KNIGHT,)):
+    return _call(
+        reg, handlers, session, 2527, "AngeltrialsCrashLevelReq",
+        heroIds=list(heroes), angelIds=[],
+    )
+
+
+def test_fight_floor_offers_three_mirror_teams_scaled_by_difficulty(world, reg):
+    conn, pid, handlers, session, _ = world
+    res = _fight_floor(conn, pid, reg, handlers, session)
+    assert res.status == 0 and (res.level, res.event) == (1, 2)
+    fight = res.eventResult.fightEvent
+    assert list(fight.fightDifficulty) == [0, 1, 2]
+    assert len(fight.enemies) == 3 and list(fight.enemyUnits) == []
+    # O-W2-14: the enemy is the player's own line-up.
+    assert all([h.entry for h in team.heros] == [KNIGHT] for team in fight.enemies)
+    easy, normal, hard = (t.fightAbility for t in fight.enemies)
+    # fa_fix_battle_easy/normal/hard of floor 1 are 0.76 / 1 / 1.06.
+    assert easy < normal < hard
+
+
+def test_fighting_req_returns_scaled_enemy_units_and_buff_effects(world, reg, cfg):
+    conn, pid, handlers, session, _ = world
+    _fight_floor(conn, pid, reg, handlers, session)
+    res = _fight(reg, handlers, session, 2)
+    assert res.status == 0
+    assert len(res.urandom) == 64
+    assert len(res.buffEffects) == 6 and set(res.buffEffects) == {0.0}
+    # angeltrials_level_info(1).enemy_buff_fix 0.5 (FightData.lua:221-226).
+    assert res.enemyBuffRate == pytest.approx(0.5)
+    (enemy,) = res.enemyUnits
+    assert (enemy.type, enemy.refer, enemy.position) == (1, KNIGHT, 1)
+    info = cfg.angeltrials_level(1)
+    factor = info["fa_fix_battle_hard"] * (info["floor_fa_fix4"] + info["ceiling_fa_fix4"]) / 2
+    own = team.build_fight_unit(reg, cfg, heroes_of(conn, pid)[0], 1)
+    assert enemy.unit.max_hp == int(own.unit.max_hp * factor)
+    assert enemy.unit.power == pytest.approx(own.unit.power * factor)
+    assert enemy.hp == enemy.unit.max_hp
+
+
+def test_fighting_without_a_fight_event_refused_329736(world, reg):
+    _, _, handlers, session, _ = world
+    _start(reg, handlers, session)
+    assert _fight(reg, handlers, session, 1).status == 329736
+
+
+def test_fighting_with_an_unowned_hero_refused_329738(world, reg):
+    conn, pid, handlers, session, _ = world
+    _fight_floor(conn, pid, reg, handlers, session)
+    assert _fight(reg, handlers, session, 1, heros=(PRIEST,)).status == 329738
+
+
+def test_fight_result_three_stars_scales_points_2_5(world, reg):
+    conn, pid, handlers, session, _ = world
+    _fight_floor(conn, pid, reg, handlers, session)
+    _fight(reg, handlers, session, 1)
+    res = _end(reg, handlers, session, True, 3, units=[_live(reg, 1, KNIGHT, 500, 300, 877)])
+    assert res.success is True and res.warning is False
+    # normal_battle_point 60 x ANGELTRIALS_POINTS_ADDITION_THREE_STAR 2.5 x
+    # (1 + player level 20 / 80) (BattleEndLayer.lua:667-700; 80 is the
+    # client's own lvTop, AngelTrainBattleSelectRender.lua:125-130).
+    assert res.points == 187
+    # 3 stars x normal_battle_star 3 (得星倍率, AngelTrainBattleSelectRender.lua:132).
+    assert res.stars == 9
+    assert res.newLevel == 2
+    assert _query(reg, handlers, session).level == 2
+
+
+def test_end_fight_without_a_fight_changes_nothing(world, reg):
+    _, _, handlers, session, _ = world
+    _start(reg, handlers, session)
+    res = _end(reg, handlers, session, True, 3)
+    assert (res.success, res.newLevel, res.points) == (False, 1, 0)
+
+
+def test_lost_fight_keeps_the_floor_and_the_enemy_hp(world, reg):
+    conn, pid, handlers, session, _ = world
+    _fight_floor(conn, pid, reg, handlers, session)
+    _fight(reg, handlers, session, 0)
+    res = _end(
+        reg, handlers, session, False, 0,
+        units=[_live(reg, 1, KNIGHT, 0, 0, 877)],
+        enemy_units=[_live(reg, 1, KNIGHT, 120, 400, 546)],
+    )
+    assert res.success is False and res.newLevel == 1
+    assert _query(reg, handlers, session).points == 0
+    again = _event(reg, handlers, session, 1, 2)
+    left = again.eventResult.fightEvent.enemyUnits
+    assert [(u.refer, u.hp) for u in left] == [(KNIGHT, 120)]
+    # The knight died: a dead hero cannot be fielded again.
+    assert _fight(reg, handlers, session, 0).status == 329738
+
+
+def test_enemy_keeps_its_left_hp_on_a_retry_of_the_same_difficulty(world, reg):
+    conn, pid, handlers, session, _ = world
+    grant_hero(conn, pid, PRIEST, 10, star=1, level=20)
+    _fight_floor(conn, pid, reg, handlers, session)
+    _fight(reg, handlers, session, 0)
+    _end(
+        reg, handlers, session, False, 0,
+        units=[_live(reg, 1, KNIGHT, 0, 0, 877)],
+        enemy_units=[_live(reg, 1, KNIGHT, 120, 400, 546), _live(reg, 1, PRIEST, 0, 0, 500)],
+    )
+    _event(reg, handlers, session, 1, 2)
+    res = _fight(reg, handlers, session, 0, heros=(PRIEST,))
+    assert {(u.refer, u.hp, u.energy) for u in res.enemyUnits} == {
+        (KNIGHT, 120, 400), (PRIEST, 0, 0),
+    }
+    other = _fight(reg, handlers, session, 1, heros=(PRIEST,))
+    assert all(u.hp == u.unit.max_hp for u in other.enemyUnits)
+
+
+def test_live_units_persist_between_fights(world, reg):
+    conn, pid, handlers, session, _ = world
+    grant_hero(conn, pid, PRIEST, 10, star=1, level=20)
+    _fight_floor(conn, pid, reg, handlers, session)
+    _fight(reg, handlers, session, 1, heros=(PRIEST,))
+    _end(reg, handlers, session, True, 2,
+         units=[_live(reg, 1, PRIEST, 100, 200, 1000)], heros=(PRIEST,))
+    _set_level(conn, pid, 3)
+    _event(reg, handlers, session, 3, 2)
+    _fight(reg, handlers, session, 1)
+    res = _end(reg, handlers, session, True, 1, units=[_live(reg, 1, KNIGHT, 400, 50, 877)])
+    by_refer = {u.refer: u for u in res.units}
+    assert by_refer[KNIGHT].hp == 400
+    # The priest sat on the bench: ANGELTRIALS_RECOVER_HP_RATE 0.15 of 1000.
+    assert by_refer[PRIEST].hp == 250
+    live = _call(reg, handlers, session, 2515, "AngeltrialsFightLiveReq")
+    assert live.status == 0
+    assert {(u.refer, u.hp, u.energy) for u in live.units} == {
+        (KNIGHT, 400, 50), (PRIEST, 250, 200),
+    }
+
+
+def test_trial_fight_team_query_is_answered_by_team_py_unchanged(world, reg, cfg, settings):
+    # Risk 6: the fight sends 5_2327 with fight_type 4 (FightType.ANGEL_TRY,
+    # FunctionType.lua:1100-1133); team.py answers any fight type with the
+    # player's own heroes and keeps the support hero for the campaign.
+    conn, pid, _, session, _ = world
+    query = team.handlers(reg, settings, conn, cfg)[(5, 2327)]
+    res = query(session, reg.message_class("QuerySelfTeamReq")(
+        fight_type=4, units=[0, KNIGHT, 0, 0, 0, 0, 0],
+    ))
+    assert [(u.position, u.refer) for u in res.team_base.units] == [(1, KNIGHT)]
+
+
+def test_crash_level_clears_to_crash_level(world, reg):
+    conn, pid, handlers, session, _ = world
+    _start(reg, handlers, session)
+    conn.execute("UPDATE angeltrials SET crash_level = 3 WHERE player_id = ?", (pid,))
+    conn.commit()
+    res = _crash(reg, handlers, session)
+    # 3 stars at the hard row (f00167 3星碾压): 80 x 2.5 x 1.25 points, 3 x 5 stars.
+    assert (res.newLevel, res.points, res.stars) == (2, 250, 15)
+    # ANGELTRIALS_CRASH_RECOVER_ENERGY_RATE 0.3 of the knight's max energy 1000.
+    (knight,) = res.units
+    assert (knight.refer, knight.energy, knight.hp, knight.max_energy) == (
+        KNIGHT, 300, knight.max_hp, 1000,
+    )
+    _set_level(conn, pid, 3)
+    assert _crash(reg, handlers, session).newLevel == 4
+    # Floor 5 is above the crash level: the answer is the unchanged tower
+    # (floor 3's hard row is 88 points: 250 + 88 x 2.5 x 1.25).
+    _set_level(conn, pid, 5)
+    res = _crash(reg, handlers, session)
+    assert (res.newLevel, res.points, res.stars) == (5, 525, 30)
+    # A buff-shop floor is no fight to crash.
+    _set_level(conn, pid, 2)
+    assert _crash(reg, handlers, session).newLevel == 2

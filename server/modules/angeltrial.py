@@ -26,6 +26,41 @@ What the client reads, with file:line (scripts under .stock/assets/scripts/app/g
 - 8_2517 -> 8_2518 {status, leadings[], selfRank} (AngelTryCtr.lua:117-125);
   8_2519 -> 8_2520 {status, selfRank} (tryTypeSelect/TryTypeHelpPanel.lua:45-46).
   Multiplayer is out of scope, so the board holds the player alone.
+- 8_2515 -> 8_2516 {status, units}: the player's live units, cached as
+  myHeroLeftUnits and handed to the line-up (AngelTryCtr.lua:296-312). A hero
+  with no live unit fights at full hp and 0 energy (AngelTryLine.lua:74-98).
+- 8_2511 {difficulty 0-2, heros, angel} -> 8_2512 {status, selfUnits,
+  enemyUnits, buffEffects, enemyBuffRate, urandom} (AngelTryLine.lua:120-188).
+  enemyUnits are ClientFightUnit type 1 (hp > 0 only) or type 2; buffEffects
+  is indexed by angeltrials_buff_info.effect from 0 and only 2, 3, 4 are read
+  (Battle.lua:2286-2331); enemyBuffRate scales them for the enemy side. The
+  fight itself then asks 5_2327 with fight_type 4 (FightType.ANGEL_TRY,
+  FightType.lua:17,105-113), which team.py answers with the player's own
+  heroes for any fight type.
+- 8_2513 {success, units, enemyUnits, stars, heros, angel, op} -> 8_2514
+  {warning, success, newLevel, points, stars, prizeEntries, units,
+  angeltrialsBuffs}: the request is BattleFactoryAngelTry:getFightResultParam
+  (BattleFactoryAngelTry.lua:122-175); warning == true is the cheat alert
+  (:117-119); the rest goes to AngelTryUI:updateAngelViewData
+  (AngelTryUI.lua:57-85).
+- 8_2527 {heroIds, angelIds} -> 8_2528 {newLevel, points, stars,
+  prizeEntries, units}: the fast clear (f00167 3星碾压) offered on a fight
+  floor while crashLevel >= level, one floor per request
+  (AngelTrainTowerPanel.lua:367-384, AngelTrainFastBattleDialog.lua:108-123,
+  AngelTryCtr.lua:246-271).
+
+Points are the client's own end-screen sum: floor(<difficulty>_battle_point x
+ANGELTRIALS_POINTS_ADDITION_<n>_STAR x (1 + player level / 80))
+(BattleEndLayer.lua:667-700; the 80 is the lvTop the client forces at
+AngelTrainBattleSelectRender.lua:125-130). Stars gained are the fight's stars
+x <difficulty>_battle_star, the "得星倍率" the card shows (:104-132).
+
+The enemy (O-W2-14). The stock server matched a real player by arena rank
+(arena_rank_percent0..4 with floor/ceiling_fa_fix0..4). There is no arena
+here, so the enemy is the player's own strongest heroes, every stat and the
+ability scaled by fa_fix_battle_<difficulty> x the middle of tier 4's
+floor/ceiling_fa_fix (arena_rank_percent4 = 1, the tier that covers
+everyone).
 
 The state is one `angeltrials` row. It belongs to day_key(ANGELTRIALS_RANK_TIME)
 (05:00, O-W2-1) and is reset on the first request of a new day. crash_level is
@@ -46,7 +81,7 @@ from collections.abc import Callable
 
 from server import db
 from server.config import Config
-from server.modules import drops, item, notify
+from server.modules import drops, item, level as stage, notify, team
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -74,6 +109,41 @@ STATUS_WRONG_LEVEL = 329731      # 错误的女神试炼层数
 STATUS_WRONG_EVENT = 329732      # 错误的女神试炼事件
 STATUS_CLEARED = 329733          # 女神试炼已通关
 STATUS_NO_ENEMY = 329734         # 女神试炼无法找到匹配的敌人,属于内部错误
+STATUS_NO_EVENT = 329736         # 未触发女神试炼事件
+STATUS_BAD_FIGHT = 329738        # 错误的战斗数据
+
+# fightDifficulty 0, 1, 2 and their angeltrials_level_info column prefixes.
+DIFFICULTIES = ("easy", "normal", "hard")
+# f00167 3星碾压: the fast clear pays the top difficulty at 3 stars.
+CRASH_DIFFICULTY = 2
+CRASH_STARS = 3
+
+POINTS_KEYS = {
+    1: "ANGELTRIALS_POINTS_ADDITION_ONE_STAR",
+    2: "ANGELTRIALS_POINTS_ADDITION_TWO_STAR",
+    3: "ANGELTRIALS_POINTS_ADDITION_THREE_STAR",
+}
+RECOVER_HP_KEY = "ANGELTRIALS_RECOVER_HP_RATE"
+CRASH_ENERGY_KEY = "ANGELTRIALS_CRASH_RECOVER_ENERGY_RATE"
+
+# AngelTrainBattleSelectRender.lua:126 overrides PLAY_MAX_LEVEL with 80.
+LV_TOP = 80
+
+# The arena-rank tier whose floor/ceiling_fa_fix scale the mirror enemy.
+ENEMY_TIER = 4
+
+# Heroes in one line-up (LineFrame.lua:678 fills up to 5).
+TEAM_SIZE = 5
+
+# ClientFightLiveUnit.type.
+UNIT_HERO = 1
+UNIT_ANGEL = 2
+
+# buffEffects has one slot per angeltrials_buff_info.effect 0..5.
+BUFF_EFFECT_SLOTS = 6
+
+# ClientHeroUnit fields the mirror enemy scales.
+SCALED_FIELDS = ("power", "defence", "magic", "magic_defence")
 
 _default_rng = random.SystemRandom()
 
@@ -173,6 +243,46 @@ def offer_buffs(cfg: Config, group: int, rng: random.Random) -> list[int]:
                 pool.pop(index)
                 break
     return out
+
+
+def enemy_factor(info, difficulty: int) -> float:
+    """How strong the mirror enemy is next to the player, per difficulty."""
+    floor = float(info[f"floor_fa_fix{ENEMY_TIER}"] or 0)
+    ceiling = float(info[f"ceiling_fa_fix{ENEMY_TIER}"] or 0)
+    battle = float(info[f"fa_fix_battle_{DIFFICULTIES[difficulty]}"] or 0)
+    return battle * (floor + ceiling) / 2
+
+
+def _float_variable(cfg: Config, key: str) -> float:
+    raw = cfg.variable(key)
+    if raw is None or raw == "":
+        raise KeyError(f"variables.{key} is missing")
+    return float(raw)
+
+
+def fight_award(cfg: Config, info, difficulty: int, stars: int, player_level: int):
+    """(points, trial stars) for winning a floor at this difficulty."""
+    prefix = DIFFICULTIES[difficulty]
+    rate = _float_variable(cfg, POINTS_KEYS[stars])
+    points = int(
+        float(info[f"{prefix}_battle_point"] or 0) * rate
+        * (1 + int(player_level) / LV_TOP)
+    )
+    return points, int(stars) * int(info[f"{prefix}_battle_star"] or 0)
+
+
+def live_dict(unit) -> dict:
+    return {
+        "type": int(unit.type), "refer": int(unit.refer), "hp": int(unit.hp),
+        "energy": int(unit.energy), "max_hp": int(unit.max_hp),
+        "max_energy": int(unit.max_energy),
+    }
+
+
+def find_live(units: list[dict], type_: int, refer: int) -> dict | None:
+    return next(
+        (u for u in units if u["type"] == int(type_) and u["refer"] == int(refer)), None
+    )
 
 
 def handlers(
@@ -286,6 +396,67 @@ def handlers(
             )
         res.eventResult.buffShopEvent.angeltrialsBuffs.extend(pending["offers"])
 
+    def _owned_heroes(pid: int) -> dict[int, sqlite3.Row]:
+        # One row per entry, the lowest id, as team.build_self_team_res does.
+        owned: dict[int, sqlite3.Row] = {}
+        for row in db.heroes_of(conn, pid):
+            owned.setdefault(int(row["entry"]), row)
+        return owned
+
+    def _mirror_units(pid: int, entries: list[int], info, difficulty: int) -> list:
+        """The enemy's ClientFightUnits: the player's own heroes, scaled."""
+        owned = _owned_heroes(pid)
+        factor = enemy_factor(info, difficulty)
+        units = []
+        for position, entry in enumerate(entries, start=1):
+            if entry not in owned:
+                continue
+            unit = team.build_fight_unit(registry, cfg, owned[entry], position)
+            unit.unit.max_hp = int(unit.unit.max_hp * factor)
+            for field in SCALED_FIELDS:
+                setattr(unit.unit, field, getattr(unit.unit, field) * factor)
+            unit.ability = int(unit.ability * factor)
+            unit.hp = unit.unit.max_hp
+            unit.energy = int(info["enemy_hero_energy"] or 0)
+            units.append(unit)
+        return units
+
+    def _fight_event(pid: int, player, state: dict, info, res) -> None:
+        pending = state["pending"]
+        if pending.get("level") != state["level"]:
+            strongest = sorted(
+                _owned_heroes(pid).values(),
+                key=lambda r: -team.build_fight_unit(registry, cfg, r, 0).ability,
+            )
+            pending = {
+                "level": state["level"], "event": EVENT_FIGHT,
+                "heroes": [int(r["entry"]) for r in strongest[:TEAM_SIZE]],
+                "difficulty": -1, "left": {"difficulty": -1, "units": []},
+            }
+            state["pending"] = pending
+            log.info(
+                "angel trials floor %d fight for player %d: mirror of %s",
+                state["level"], pid, pending["heroes"],
+            )
+        fight = res.eventResult.fightEvent
+        for difficulty in range(len(DIFFICULTIES)):
+            units = _mirror_units(pid, pending["heroes"], info, difficulty)
+            enemy = fight.enemies.add(
+                level=int(player["level"]), fightAbility=sum(u.ability for u in units),
+                name=str(player["nickname"]), avatar=int(player["avatar"]),
+            )
+            for unit in units:
+                hero_msg = enemy.heros.add(
+                    entry=unit.refer, level=unit.level, star=unit.star,
+                    quality=unit.quality, fightAbility=unit.ability,
+                    position=unit.position, model=unit.model,
+                )
+                fill_required(hero_msg)
+            fill_required(enemy)
+            fight.fightDifficulty.append(difficulty)
+        for left in pending["left"]["units"]:
+            fight.enemyUnits.add(**left)
+
     def trigger(session: Session, req):
         name = "TriggerAngeltrialsEventRes"
         player = _player(session)
@@ -311,8 +482,9 @@ def handlers(
         elif event == EVENT_BUFF_SHOP:
             _buff_shop_event(pid, state, info, res)
         else:
-            # The fights land in the second angel-trials commit.
-            return _refused(name, STATUS_NO_ENEMY, pid, f"floor {level} is a fight")
+            if not _owned_heroes(pid):
+                return _refused(name, STATUS_NO_ENEMY, pid, "no hero to mirror")
+            _fight_event(pid, player, state, info, res)
         save_state(conn, pid, state)
         fill_required(res)
         log.info("8_2505 player %d floor %d event %d", pid, level, event)
@@ -345,11 +517,226 @@ def handlers(
     def self_rank(session: Session, req):
         return _res("AngeltrialsSelfRankRes", selfRank=1)
 
+    def _fight_pending(state: dict) -> bool:
+        pending = state["pending"]
+        return bool(state["opened"]) and pending.get("event") == EVENT_FIGHT \
+            and pending.get("level") == state["level"]
+
+    def _buff_effects(state: dict) -> list[float]:
+        by_id = {int(b["id"]): b for b in cfg.angeltrials_buffs()}
+        effects = [0.0] * BUFF_EFFECT_SLOTS
+        for buff in state["buffs"]:
+            row = by_id[int(buff)]
+            effects[int(row["effect"])] += float(row["effect_value"] or 0)
+        return effects
+
+    def fighting(session: Session, req):
+        name = "AngeltrialsFightingRes"
+        player = _player(session)
+        pid = int(player["id"])
+        state = load_state(conn, cfg, pid, now_of())
+        if not _fight_pending(state):
+            return _refused(name, STATUS_NO_EVENT, pid, f"no fight on floor {state['level']}")
+        difficulty = int(req.difficulty)
+        heroes = [int(h) for h in req.heros if int(h)]
+        angel = int(req.angel)
+        owned = _owned_heroes(pid)
+        why = None
+        if difficulty not in range(len(DIFFICULTIES)):
+            why = f"difficulty {difficulty}"
+        elif not heroes:
+            why = "no hero in the line-up"
+        for entry in heroes:
+            live = find_live(state["units"], UNIT_HERO, entry)
+            if entry not in owned:
+                why = f"hero {entry} is not owned"
+            elif live is not None and live["hp"] <= 0:
+                why = f"hero {entry} died earlier today"
+        if angel and all(int(a["angel_entry"]) != angel for a in db.angels_of(conn, pid)):
+            why = f"angel {angel} is not owned"
+        if why:
+            return _refused(name, STATUS_BAD_FIGHT, pid, why)
+        pending = state["pending"]
+        pending["difficulty"] = difficulty
+        save_state(conn, pid, state)
+        info = cfg.angeltrials_level(state["level"])
+        res = registry.message_class(name)(
+            status=STATUS_OK, enemyBuffRate=float(info["enemy_buff_fix"] or 0)
+        )
+        for live in state["units"]:
+            if (live["type"] == UNIT_HERO and live["refer"] in heroes) or (
+                live["type"] == UNIT_ANGEL and live["refer"] == angel
+            ):
+                res.selfUnits.add(**live)
+        left = pending["left"]
+        left_units = left["units"] if left["difficulty"] == difficulty else []
+        for unit in _mirror_units(pid, pending["heroes"], info, difficulty):
+            prior = find_live(left_units, UNIT_HERO, unit.refer)
+            if prior is not None:
+                unit.hp, unit.energy = prior["hp"], prior["energy"]
+            res.enemyUnits.add().CopyFrom(unit)
+        res.buffEffects.extend(_buff_effects(state))
+        res.urandom.extend(stage.roll_urandom(rand))
+        fill_required(res)
+        log.info(
+            "8_2511 player %d floor %d difficulty %d: heroes %s, angel %d vs %s",
+            pid, state["level"], difficulty, heroes, angel,
+            [(u.refer, u.hp) for u in res.enemyUnits],
+        )
+        return res
+
+    def _tower_answer(name: str, state: dict, **fields):
+        res = registry.message_class(name)(
+            newLevel=state["level"], points=state["points"], stars=state["stars"],
+            **fields,
+        )
+        for live in state["units"]:
+            res.units.add(**live)
+        return res
+
+    def end_fight(session: Session, req):
+        name = "AngeltrialsEndFightRes"
+        player = _player(session)
+        pid = int(player["id"])
+        state = load_state(conn, cfg, pid, now_of())
+        pending = state["pending"]
+        if not _fight_pending(state) or int(pending.get("difficulty", -1)) < 0:
+            # No status on this Res: the answer is the unchanged tower.
+            log.warning(
+                "8_2513 for player %d without a fight started on floor %d; "
+                "would refuse %d", pid, state["level"], STATUS_NO_EVENT,
+            )
+            res = _tower_answer(name, state, warning=False, success=False)
+            res.angeltrialsBuffs.extend(int(b) for b in state["buffs"])
+            fill_required(res)
+            return res
+        difficulty = int(pending["difficulty"])
+        fought = [live_dict(u) for u in req.units]
+        fought_keys = {(u["type"], u["refer"]) for u in fought}
+        recover = _float_variable(cfg, RECOVER_HP_KEY)
+        for live in state["units"]:
+            benched = (live["type"], live["refer"]) not in fought_keys
+            if benched and live["type"] == UNIT_HERO and live["hp"] > 0:
+                live["hp"] = min(live["max_hp"], live["hp"] + int(recover * live["max_hp"]))
+        for unit in fought:
+            live = find_live(state["units"], unit["type"], unit["refer"])
+            if live is None:
+                state["units"].append(unit)
+            else:
+                live.update(unit)
+        stars = min(int(req.stars), CRASH_STARS)
+        won = bool(req.success) and stars >= 1
+        floor = state["level"]
+        if won:
+            info = cfg.angeltrials_level(floor)
+            points, gained = fight_award(cfg, info, difficulty, stars, int(player["level"]))
+            state["points"] += points
+            state["stars"] += gained
+            state["level"] += 1
+            state["pending"] = {}
+        else:
+            pending["left"] = {
+                "difficulty": difficulty,
+                "units": [live_dict(u) for u in req.enemyUnits],
+            }
+            pending["difficulty"] = -1
+        save_state(conn, pid, state)
+        log.info(
+            "8_2513 player %d floor %d difficulty %d: won %s with %d star(s); "
+            "points %d, stars %d, floor now %d",
+            pid, floor, difficulty, won, stars if won else 0,
+            state["points"], state["stars"], state["level"],
+        )
+        res = _tower_answer(name, state, warning=False, success=won)
+        res.angeltrialsBuffs.extend(int(b) for b in state["buffs"])
+        fill_required(res)
+        return res
+
+    def fight_live(session: Session, req):
+        name = "AngeltrialsFightLiveRes"
+        player = _player(session)
+        pid = int(player["id"])
+        state = load_state(conn, cfg, pid, now_of())
+        if not state["opened"]:
+            return _refused(name, STATUS_NOT_OPENED, pid, "not opened today")
+        res = _res(name)
+        for live in state["units"]:
+            res.units.add(**live)
+        return res
+
+    def crash(session: Session, req):
+        name = "AngeltrialsCrashLevelRes"
+        player = _player(session)
+        pid = int(player["id"])
+        state = load_state(conn, cfg, pid, now_of())
+        floor = state["level"]
+        info = cfg.angeltrials_level(floor) if floor >= 1 else None
+        why = None
+        if not state["opened"]:
+            why = (STATUS_NOT_OPENED, "not opened today")
+        elif info is None:
+            why = (STATUS_CLEARED, f"floor {floor}")
+        elif int(info["event"]) != EVENT_FIGHT:
+            why = (STATUS_WRONG_EVENT, f"floor {floor} is event {info['event']}")
+        elif floor > state["crash_level"]:
+            why = (STATUS_WRONG_LEVEL, f"floor {floor} above crash level {state['crash_level']}")
+        if why:
+            # No status on this Res: the answer is the unchanged tower.
+            log.warning("8_2527 for player %d would refuse %d: %s", pid, *why)
+            res = _tower_answer(name, state)
+            fill_required(res)
+            return res
+        points, gained = fight_award(
+            cfg, info, CRASH_DIFFICULTY, CRASH_STARS, int(player["level"])
+        )
+        rate = _float_variable(cfg, CRASH_ENERGY_KEY)
+        owned = _owned_heroes(pid)
+        for entry in (int(h) for h in req.heroIds):
+            if entry not in owned:
+                continue
+            live = find_live(state["units"], UNIT_HERO, entry)
+            if live is None:
+                unit = team.build_fight_unit(registry, cfg, owned[entry], 0).unit
+                live = {
+                    "type": UNIT_HERO, "refer": entry, "hp": int(unit.max_hp),
+                    "energy": 0, "max_hp": int(unit.max_hp),
+                    "max_energy": int(unit.max_energy),
+                }
+                state["units"].append(live)
+            if live["hp"] > 0:
+                live["energy"] = min(
+                    live["max_energy"], live["energy"] + int(rate * live["max_energy"])
+                )
+        # An angel has a live unit only once the client reported one from a
+        # fight; its max energy is the client's own number.
+        for entry in (int(a) for a in req.angelIds):
+            live = find_live(state["units"], UNIT_ANGEL, entry)
+            if live is not None:
+                live["energy"] = min(
+                    live["max_energy"], live["energy"] + int(rate * live["max_energy"])
+                )
+        state["points"] += points
+        state["stars"] += gained
+        state["level"] += 1
+        state["pending"] = {}
+        save_state(conn, pid, state)
+        log.info(
+            "8_2527 player %d crashed floor %d: +%d points, +%d stars", pid, floor,
+            points, gained,
+        )
+        res = _tower_answer(name, state)
+        fill_required(res)
+        return res
+
     return {
         (8, 2501): query,
         (8, 2503): start,
         (8, 2505): trigger,
         (8, 2507): query_buffs,
+        (8, 2511): fighting,
+        (8, 2513): end_fight,
+        (8, 2515): fight_live,
         (8, 2517): rank,
         (8, 2519): self_rank,
+        (8, 2527): crash,
     }
