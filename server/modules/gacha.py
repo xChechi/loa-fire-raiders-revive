@@ -54,6 +54,7 @@ DRAW_COUNT_COLUMN = {COST_GOLD: "gold_single_draws", COST_DIAMOND: "diamond_sing
 # 5_2123 {gacha = 2400000} and only marks the draw free on its side
 # (TavernFace.lua:171-191).
 SUPREME_SINGLE = 2400000
+SUPREME_TEN = 2500000
 FREE_DRAW_DAY_HOUR = 5
 
 
@@ -98,17 +99,60 @@ def supreme_next(cfg: Config, k: int) -> int:
     return target - k + 1
 
 
+def gold_guaranteed(cfg: Config, m: int) -> bool:
+    """O-W2-5: with m gold singles made, the next one (n = m + 1, the tutorial
+    draw counted) pays GOLD_GACHA_HEROSOULSTONE_GACHA when n % 10 == 0."""
+    return m >= 1 and (m + 1) % _variable(cfg, "GOLD_SINGLE_GACHA_NORMAL_INTERVAL") == 0
+
+
+def gold_next(cfg: Config, m: int) -> int:
+    """GachaInfoRes.gold_next: the gold singles left to the next multiple of
+    the interval, inclusive ("再抽 N 次必得灵魂石", TavernFace2.lua:64-79)."""
+    interval = _variable(cfg, "GOLD_SINGLE_GACHA_NORMAL_INTERVAL")
+    target = -(-(m + 1) // interval) * interval
+    return target - m
+
+
 def _counters(cfg: Config, row) -> dict[str, int]:
     """The tavern tip fields both Res carry; TavernUI:synData copies them from
     every GachaRes (TavernUI.lua:190-198)."""
     k = int(row["diamond_single_draws"]) if row is not None else 0
-    return {"diamond_gacha": 1 if k >= 1 else 0, "next": supreme_next(cfg, k)}
+    m = int(row["gold_single_draws"]) if row is not None else 0
+    t = int(row["diamond_ten_draws"]) if row is not None else 0
+    return {
+        "diamond_gacha": 1 if k >= 1 else 0, "next": supreme_next(cfg, k),
+        "gold_gacha": 1 if m >= 1 else 0, "gold_next": gold_next(cfg, m),
+        # TavernFace4.lua:119-123: 0 draws the "first ten-pull → 3-star" tip.
+        "diamond_ten_gacha": 1 if t >= 1 else 0,
+    }
+
+
+# Draw tickets the client checks before it sends a paid draw. The supreme card
+# (idx 4, 2400000/2500000) needs item 99 and the mystic card (idx 6, 3000000)
+# item 98, floor(cost / item_buy_info(ticket).rate) of them; otherwise it opens
+# the ticket shop instead of sending (TavernFace.lua:210-237,308-325). The gold
+# card sends regardless and spends gacha_info.item x item_cost when owned
+# (TavernFace.lua:234-236, TavernUtil.lua:195-227).
+TICKET_ITEM = {2400000: 99, 2500000: 99, 3000000: 98}
+
+
+def _ticket(cfg: Config, banner, gacha_id: int, cost: int) -> tuple[int, int] | None:
+    """(item entry, amount) that pays this draw instead of the currency."""
+    if gacha_id in TICKET_ITEM:
+        entry = TICKET_ITEM[gacha_id]
+        buy = cfg.item_buy(entry)
+        if buy is None or not int(buy["rate"] or 0):
+            raise KeyError(f"item_buy_info has no rate for ticket {entry}")
+        return entry, cost // int(buy["rate"])
+    entry = int(banner["item"] or 0)
+    if entry:
+        return entry, int(banner["item_cost"] or 0)
+    return None
 
 
 def build_gacha_info(registry: Registry, cfg: Config, row=None, now: float | None = None):
     res = registry.message_class("GachaInfoRes")(
-        status=STATUS_OK, week=0, gold_next=0,
-        gold_gacha=0, diamond_ten_gacha=0, **_counters(cfg, row),
+        status=STATUS_OK, week=0, **_counters(cfg, row),
     )
     # Open question F of the plan: todays stays empty and week stays 0. The
     # daily/weekly soul counters are not tracked in Plan B1, and TavernBase
@@ -198,8 +242,17 @@ def handlers(
                 if k > 0:
                     free_day = today
             supreme = (k, free)
+        elif gacha_id == SUPREME_TEN and int(row["diamond_ten_draws"]) == 0:
+            drop_id = _variable(cfg, "FIRST_TEN_TIMES_DIAMOND_GACHA")
+            log.info("first supreme ten-pull for player %d: drop %d", player_id, drop_id)
         elif gacha_id in SINGLE_DRAW_BANNERS:
             single_draw_column = DRAW_COUNT_COLUMN[cost_type]
+            if cost_type == COST_GOLD and gold_guaranteed(cfg, int(row[single_draw_column])):
+                drop_id = _variable(cfg, "GOLD_GACHA_HEROSOULSTONE_GACHA")
+                log.info(
+                    "gold single n=%d for player %d: drop %d",
+                    int(row[single_draw_column]) + 1, player_id, drop_id,
+                )
             if int(row[single_draw_column]) == 0:
                 key = FIRST_DRAW_VARIABLE[cost_type]
                 scripted = cfg.variable(key)
@@ -212,6 +265,18 @@ def handlers(
                     "gold" if cost_type == COST_GOLD else "diamond",
                     player_id, drop_id, key,
                 )
+        # O-W2-4: a paid draw spends its tickets when they are owned, and the
+        # currency only otherwise.
+        ticket = _ticket(cfg, banner, gacha_id, cost) if cost else None
+        if ticket is not None:
+            owned = conn.execute(
+                "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+                (player_id, ticket[0]),
+            ).fetchone()
+            if ticket[1] > 0 and owned is not None and int(owned["amount"]) >= ticket[1]:
+                cost = 0
+            else:
+                ticket = None
         if cost_type == COST_GOLD and int(row["gold"]) < cost:
             return _refused(STATUS_NOT_ENOUGH_GOLD)
         if cost_type == COST_DIAMOND and int(row["diamond"]) < cost:
@@ -249,7 +314,16 @@ def handlers(
         # hero id with no config row) leaves the player's balances untouched
         # instead of charging for prizes that never arrive.
         changed = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
-        if cost or single_draw_column or free_day:
+        if ticket is not None:
+            left = db.take_item(conn, player_id, ticket[0], ticket[1])
+            changed["items"] = [p for p in changed["items"] if p[0] != ticket[0]]
+            changed["items"].append((ticket[0], left))
+            log.info(
+                "banner %s paid with %d x item %d for player %d",
+                gacha_id, ticket[1], ticket[0], player_id,
+            )
+        ten_draw = gacha_id == SUPREME_TEN
+        if cost or single_draw_column or free_day or ten_draw:
             # Every column name below is a literal from this module, never
             # request data.
             sets, params = [], []
@@ -264,6 +338,8 @@ def handlers(
             if free_day:
                 sets.append("diamond_free_day = ?")
                 params.append(free_day)
+            if ten_draw:
+                sets.append("diamond_ten_draws = diamond_ten_draws + 1")
             conn.execute(
                 f"UPDATE players SET {', '.join(sets)} WHERE id = ?",
                 (*params, player_id),
@@ -280,8 +356,7 @@ def handlers(
             "SELECT * FROM players WHERE id = ?", (player_id,)
         ).fetchone()
         res = registry.message_class("GachaRes")(
-            status=STATUS_OK, gold_next=0,
-            gold_gacha=0, diamond_ten_gacha=0, **_counters(cfg, after),
+            status=STATUS_OK, **_counters(cfg, after),
         )
         for entry in drops.to_prize_entries(registry, rolled):
             res.items.add().CopyFrom(entry)

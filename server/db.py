@@ -175,6 +175,8 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "angel_money", "INTEGER NOT NULL DEFAULT 0"),
     # Wave 2 A1: the day_key(5) of the last free supreme draw (O-W2-1).
     ("players", "diamond_free_day", "TEXT NOT NULL DEFAULT ''"),
+    # Wave 2 A2: supreme ten-pulls made; 0 rolls FIRST_TEN_TIMES_DIAMOND_GACHA.
+    ("players", "diamond_ten_draws", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

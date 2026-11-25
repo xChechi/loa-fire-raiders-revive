@@ -507,3 +507,147 @@ def test_gacha_info_next_counts_down_and_diamond_gacha_flag(
     res = _draw(reg, handlers, session)
     assert (res.diamond_gacha, res.next) == (1, 1)
     res.SerializeToString()
+
+
+# --- Wave 2 A2: tickets, the gold soul-stone interval, the first ten-pull ---
+
+GOLD_SINGLE = 1200000
+SUPREME_TEN = 2500000
+
+
+def _item(conn, pid, entry: int) -> int:
+    row = conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = ?", (pid, entry)
+    ).fetchone()
+    return int(row["amount"]) if row else 0
+
+
+def _item_notifies(session) -> list[tuple[int, int]]:
+    """(entry, amount) pairs of every ident-4 notify in the outbox: data is
+    flat (entry, new amount) pairs (notify.items_changed)."""
+    out = []
+    for (_s, c, m) in session.outbox:
+        if c == 2008 and m.ident == 4:
+            data = [int(v) for v in m.data]
+            out += list(zip(data[0::2], data[1::2]))
+    return out
+
+
+def _past_free_draw(reg, cfg, settings, diamond: int = 18888, gold: int = 1280000):
+    conn, pid, handlers, session, clock = _supreme_world(
+        reg, cfg, settings, 3, DAY1_10AM, diamond=diamond,
+        free_day=day_key(5, DAY1_10AM),
+    )
+    conn.execute("UPDATE players SET gold = ? WHERE id = ?", (gold, pid))
+    conn.commit()
+    return conn, pid, handlers, session
+
+
+def test_paid_supreme_single_spends_one_ticket_99_and_no_diamonds(
+    reg, cfg, settings
+) -> None:
+    """TavernFace.lua:210-237: floor(2000 / item_buy_info(99).rate 2000) = 1."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
+    grant_item(conn, pid, 99, 2)
+    res = _draw(reg, handlers, session)
+    assert res.status == 0
+    assert _item(conn, pid, 99) == 1
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert (99, 1) in _item_notifies(session)
+
+
+def test_paid_supreme_single_without_ticket_charges_2000_diamonds(
+    reg, cfg, settings
+) -> None:
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
+    res = _draw(reg, handlers, session)
+    assert res.status == 0
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 2000
+
+
+def test_supreme_ten_pull_spends_nine_tickets_when_owned(reg, cfg, settings) -> None:
+    """floor(18880 / 2000) = 9 tickets 99."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
+    grant_item(conn, pid, 99, 9)
+    res = _draw(reg, handlers, session, SUPREME_TEN)
+    assert res.status == 0
+    assert _item(conn, pid, 99) == 0
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert (99, 0) in _item_notifies(session)
+
+
+def test_gold_single_spends_crystal_100_before_gold(reg, cfg, settings) -> None:
+    """gacha_info 1200000: item 100, item_cost 1 (TavernFace2.lua:101-110)."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
+    conn.execute("UPDATE players SET gold_single_draws = 1 WHERE id = ?", (pid,))
+    conn.commit()
+    grant_item(conn, pid, 100, 1)
+    res = _draw(reg, handlers, session, GOLD_SINGLE)
+    assert res.status == 0
+    assert _item(conn, pid, 100) == 0
+    assert int(find_player(conn, "stefan")["gold"]) == 1280000
+    # Without a crystal the next one is paid in gold.
+    _draw(reg, handlers, session, GOLD_SINGLE)
+    assert int(find_player(conn, "stefan")["gold"]) == 1280000 - 20000
+
+
+def test_every_tenth_gold_single_pays_181000_and_gold_next_counts_down(
+    reg, cfg, settings, monkeypatch
+) -> None:
+    """O-W2-5: the n-th gold single (1-based, the tutorial draw included) pays
+    GOLD_GACHA_HEROSOULSTONE_GACHA when n % 10 == 0."""
+    seen = _spy_drop_ids(monkeypatch)
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings)
+    flags = []
+    for _ in range(11):
+        res = _draw(reg, handlers, session, GOLD_SINGLE)
+        assert res.status == 0
+        flags.append((res.gold_gacha, res.gold_next))
+    assert seen == [188000] + [190000] * 8 + [181000, 190000]
+    assert flags == [(1, n) for n in (9, 8, 7, 6, 5, 4, 3, 2, 1, 10, 9)]
+    info = handlers[(5, 2121)](session, reg.message_class("GachaInfoReq")())
+    assert (info.gold_gacha, info.gold_next) == (1, 9)
+
+
+def test_first_supreme_ten_pull_pays_183000_once(reg, cfg, settings, monkeypatch) -> None:
+    seen = _spy_drop_ids(monkeypatch)
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings, diamond=100000)
+    info = handlers[(5, 2121)](session, reg.message_class("GachaInfoReq")())
+    assert info.diamond_ten_gacha == 0
+    first = _draw(reg, handlers, session, SUPREME_TEN)
+    assert first.status == 0 and first.diamond_ten_gacha == 1
+    second = _draw(reg, handlers, session, SUPREME_TEN)
+    assert second.status == 0
+    assert seen == [183000, 400000]
+    assert int(find_player(conn, "stefan")["diamond_ten_draws"]) == 2
+    info = handlers[(5, 2121)](session, reg.message_class("GachaInfoReq")())
+    assert info.diamond_ten_gacha == 1
+
+
+def test_refused_draw_writes_nothing(reg, cfg, settings) -> None:
+    """Neither the tickets nor the currency suffice: refuse with the client's
+    own code and change nothing (no partial ticket spend, no count)."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session = _past_free_draw(reg, cfg, settings, diamond=10, gold=10)
+    conn.execute("UPDATE players SET gold_single_draws = 1 WHERE id = ?", (pid,))
+    conn.commit()
+    grant_item(conn, pid, 99, 8)          # one short of a supreme ten-pull
+    before = dict(find_player(conn, "stefan"))
+
+    res = _draw(reg, handlers, session, SUPREME_TEN)
+    assert res.status == 327938                     # language.db 钻石不足
+    assert len(res.items) == 0
+    res = _draw(reg, handlers, session, GOLD_SINGLE)
+    assert res.status == 327937                     # language.db 金币不足
+
+    assert dict(find_player(conn, "stefan")) == before
+    assert _item(conn, pid, 99) == 8
+    assert heroes_of(conn, pid) == []
+    assert session.outbox == []
