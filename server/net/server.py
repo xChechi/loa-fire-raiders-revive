@@ -93,6 +93,9 @@ class Session:
     # Extra frames a synchronous handler wants pushed after its reply, in order.
     # Dispatch drains this; handlers only append through queue().
     outbox: list[tuple[int, int, object]] = field(default_factory=list)
+    # Set by a handler whose queued frames must reach the client before its
+    # reply (events.award); dispatch clears it after every frame.
+    reply_last: bool = False
 
     def queue(self, service: int, cmd: int, msg) -> None:
         self.outbox.append((service, cmd, msg))
@@ -214,7 +217,10 @@ class Server:
             log.exception("handler %d_%d %s failed on %r", *key, name, str(req)[:500])
             res = stub_response(self.registry, *key, status=1)
         if res is not None:
+            if session.reply_last:
+                await self._flush(session)
             await self._reply(session, key, res)
+        session.reply_last = False
         await self._flush(session)
 
     async def _flush(self, session: Session) -> None:

@@ -153,6 +153,29 @@ def test_award_pays_drops_and_activates_child(reg, cfg, world) -> None:
     assert _award(reg, handlers, session, 10270).status == events.STATUS_UNKNOWN
 
 
+def test_a_single_claim_sends_its_task_notifies_before_the_res(
+    reg, cfg, settings, world
+) -> None:
+    """Run 11, MMTaskListView.lua:29: a task notify after EventAwardRes
+    reloads the daily list without the claimed row while its removal is still
+    animating, and the removal then indexes past the shortened list. The
+    notifies a claim causes (10100's 50 xp takes level 11 to 12, so 10430 and
+    41000 change) go out before the Res."""
+    conn, pid, _, session = world
+    _set_level(conn, pid, 11)
+    need = int(cfg.xp_for_level(11)["player_xp_for_next_level"])
+    conn.execute("UPDATE players SET xp = ? WHERE id = ?", (need - 50, pid))
+    conn.commit()
+    clock = [_at(25, 13)]                             # lunch 10580 stays claimable
+    handlers = _clocked(reg, settings, conn, cfg, clock)
+    events.bump(conn, cfg, reg, session, pid, events.KIND_HERO_LEVEL, now=clock[0])
+    events.refresh(conn, cfg, reg, session, pid, clock[0])
+    session.outbox.clear()
+    assert _award(reg, handlers, session, 10100).status == 0
+    assert session.reply_last is True
+    assert {10430, 41000} <= {m.refer for m in _task_notifies(session)}
+
+
 def test_award_not_done_refused_330754(reg, cfg, world) -> None:
     conn, pid, handlers, session = world
     _heroes(conn, pid, 2)

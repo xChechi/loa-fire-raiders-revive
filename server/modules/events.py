@@ -20,6 +20,22 @@ kind; each is logged once.
 TaskCtr:getAllTaskRewardReceiveHdr acts only when both drops and entrys are
 non-empty (TaskCtr.lua:387-402).
 
+A single claim's notifies go out before its EventAwardRes (session.reply_last;
+run 11, `MMTaskListView.lua:29: attempt to index local 'data'`). Paths under
+.stock/assets/scripts/app/game/. The Res handler drops the entry from
+g_roleData.events and starts a 1.1 s flash on the clicked row
+(view/ui/newtask/NewTaskUICtr.lua:280-321, TaskBasePanel.lua:222-236,322-332),
+whose end looks up the claimed row's next event in the list the panel built
+(TaskBasePanel.lua:238-258,279-297). A task notify after the Res reloads that
+list without the claimed row (NewTaskUICtr.lua:534-548 -> showBtnNum(true) ->
+NewTaskUI.lua:45-58 while any reward is claimable -> TaskBasePanel.lua:98-127,
+a framed reload), so the lookup finds nothing, removeCellByIndex shortens
+mData under the running framed load (utils/MMTaskListView.lua:55-58), and
+MMListView:createItemHdr hands nil to the cell callback for the old cellNum
+(utils/MMListView.lua:177-179, the traceback's :179). Sent first, the notifies reload the list while
+the claimed row and its child are still in it, which is the case
+getNextEventByEntry is written for.
+
 Daily tasks, Wave 2 (catalog 1): active once function 10430 is open, with
 valid = 1 and unlock_level <= the player level. Each row belongs to the day
 db.day_key(5) (O-W2-1, "次日5点" in 10580/10590); a row of another day starts
@@ -322,6 +338,7 @@ def handlers(
         _claim(pid, [entry])
         refresh(conn, cfg, registry, session, pid, now_of())  # activates the children
         log.info("player %d claimed event %d: %s", pid, entry, drops.as_triples(rolled))
+        session.reply_last = True  # the task notifies first; see the module docstring
         res = registry.message_class(name)(status=STATUS_OK, entry=entry)
         fill_required(res)
         return res

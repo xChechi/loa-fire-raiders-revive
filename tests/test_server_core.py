@@ -151,6 +151,36 @@ def test_handler_is_dispatched_by_service_and_cmd(reg, settings) -> None:
     assert seen == [(1, "1.0.0.5")]
 
 
+def test_reply_last_sends_the_queued_frames_before_the_reply(reg, settings) -> None:
+    """Default: the reply, then the queued frames. A handler that sets
+    session.reply_last gets them the other way round, for that frame only."""
+
+    def on_protocol(session: Session, req):
+        session.queue(5, 2008, reg.message_class("ClientNotification")(ident=6, refer=7))
+        session.reply_last = req.issue == "last"
+        return reg.message_class("ProtocolRes")(issue_required="ok")
+
+    def body(issue: str) -> bytes:
+        return reg.message_class("ProtocolReq")(issue=issue).SerializeToString()
+
+    async def scenario() -> list:
+        server = Server(reg, settings, {(3, 2005): on_protocol}, bind_host=BIND)
+        task, port = await _run_server(server)
+        client = await Client.connect(port)
+        order = []
+        for issue in ("last", "first"):
+            await client.send(3, 2005, body(issue))
+            order.append([((f := await client.recv()).service, f.cmd) for _ in range(2)])
+        await client.close()
+        await _stop(task)
+        return order
+
+    assert asyncio.run(scenario()) == [
+        [(5, 2008), (3, 2006)],
+        [(3, 2006), (5, 2008)],
+    ]
+
+
 def test_unknown_id_gets_a_zero_filled_res(reg, settings) -> None:
     async def scenario() -> None:
         server = Server(reg, settings, {}, bind_host=BIND)
