@@ -167,3 +167,34 @@ def test_train_info_is_valid_and_empty(reg, world) -> None:
     assert res.status == 0
     assert list(res.trains) == [] and list(res.items) == [] and list(res.logs) == []
     res.SerializeToString()
+
+
+# 5_2149 SellAllGoldStock. Junk per AllShopUI.lua:1099-1112: 1050 布料 and
+# 1000 毛皮 are class 90 (price 500, 2000); 1202000 圣诞糖棍 is class 99 with
+# auto_sell 2 and expire_time 1420041599, long past. 10000 粗布头巾 is not junk.
+
+
+def test_sell_all_sells_junk_and_keeps_the_rest(reg, world) -> None:
+    conn, pid, handlers, session = world
+    for entry, amount in ((1050, 3), (10000, 2), (1000, 1), (1202000, 4)):
+        grant_item(conn, pid, entry, amount)
+    res = _call(reg, handlers, session, 2149)
+    assert res.status == 0
+    assert int(_player(conn, pid)["gold"]) == 1000 + 3 * 500 + 2000 + 4 * 300
+    assert _items(conn, pid) == {10000: 2}
+    assert [list(m.data) for m in _notes(session, 4)] == [
+        [1050.0, 0.0, 1000.0, 0.0, 1202000.0, 0.0]
+    ]
+    assert [list(m.data) for m in _notes(session, 1)] == [[1000.0 + 4700]]
+    res.SerializeToString()
+
+
+def test_sell_all_with_no_junk_answers_ok_and_changes_nothing(reg, world) -> None:
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, 10000, 2)
+    res = _call(reg, handlers, session, 2149)
+    assert res.status == 0
+    assert _items(conn, pid) == {10000: 2}
+    assert int(_player(conn, pid)["gold"]) == 1000
+    assert session.outbox == []
+    res.SerializeToString()

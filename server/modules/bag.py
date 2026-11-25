@@ -1,9 +1,18 @@
-"""Bag: 5_2137 SellItemReq, 5_2131 UseItemReq, 5_2933 ItemBuyReq, and an
-empty 5_2139 QueryTrainInfoReq answer.
+"""Bag: 5_2137 SellItemReq, 5_2149 SellAllGoldStockReq, 5_2131 UseItemReq,
+5_2933 ItemBuyReq, and an empty 5_2139 QueryTrainInfoReq answer.
 
 Selling (BagCtr.lua:41-47,64-68): the client offers "sell" only when
 item_info.price > 0 (BagLeftPanel.lua:278-292) and reads `status` alone;
 SellItemRes has no `prizes` field, so the gold arrives as an ident-1 notify.
+
+Selling junk (BargainPanel.lua:127-147): on opening a shop the client walks
+its inventory and offers to sell the items it counts as junk
+(AllShopUI.lua:1099-1112, NormalShop.lua:197-210): item_info.class 90, or an
+expire_time > 0 with auto_sell 1 and not yet expired or auto_sell 2 and
+expired. It sends 5_2149 with no fields and reads `status` alone: 0 floats
+"获得N金币" from its own sum and closes the panel. The server sells every junk
+row at item_info.price, also past the five the panel lists. With no junk it
+answers 0 and changes nothing (the panel closes, nothing was lost).
 
 Using. The bag shows a "use" button per item_info.class (BagLeftPanel.lua:
 135-191) and the button does one of two things (BagLeftPanel.lua:581-612):
@@ -39,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 
 from server import db
 from server.config import Config
@@ -54,6 +64,7 @@ STATUS_NOT_ENOUGH_ITEMS = 327942   # language.db 没有足够道具
 STATUS_UNKNOWN_ITEM_TYPE = 327948  # language.db 未知的道具类型
 
 CLASS_PLAYER_XP = 45
+CLASS_JUNK = 90          # AllShopUI.lua:1108 "class==90"
 CATEGORY_PLAYER_XP = 11  # ClientPlayer.PLAYER_EXP_TYPE
 CATEGORY_ITEM = 20       # ClientPlayer.ITEM_TYPE
 
@@ -104,6 +115,35 @@ def handlers(
         notify.player_changed(registry, session, {"gold": int(_fresh(pid)["gold"])})
         log.info("player %d sold %dx %d for %d gold", pid, amount, entry, price * amount)
         return _res(name, status=STATUS_OK, item=entry, amount=amount)
+
+    def _is_junk(info, now: int) -> bool:
+        expire, auto_sell = int(info["expire_time"] or 0), int(info["auto_sell"] or 0)
+        return int(info["class"] or 0) == CLASS_JUNK or (expire > 0 and (
+            (auto_sell == 1 and expire > now) or (auto_sell == 2 and expire <= now)))
+
+    def sell_all(session: Session, req):
+        name = "SellAllGoldStockRes"
+        pid = int(_player(session)["id"])
+        now = int(time.time())
+        junk = []
+        for row in db.items_of(conn, pid):
+            info = cfg.item(int(row["entry"]))
+            if info is not None and int(row["amount"]) > 0 and _is_junk(info, now):
+                junk.append((int(row["entry"]), int(row["amount"]),
+                             int(info["price"] or 0)))
+        if not junk:
+            log.info("sell all by player %d: no junk, nothing changed", pid)
+            return _res(name, status=STATUS_OK)
+        for entry, amount, _price in junk:
+            db.take_item(conn, pid, entry, amount)
+        gold = sum(amount * price for _entry, amount, price in junk)
+        conn.execute("UPDATE players SET gold = gold + ? WHERE id = ?", (gold, pid))
+        conn.commit()
+        notify.items_changed(registry, session, [(entry, 0) for entry, _a, _p in junk])
+        notify.player_changed(registry, session, {"gold": int(_fresh(pid)["gold"])})
+        log.info("player %d sold all junk %s for %d gold", pid,
+                 [(e, a) for e, a, _p in junk], gold)
+        return _res(name, status=STATUS_OK)
 
     def use(session: Session, req):
         name = "UseItemRes"
@@ -174,6 +214,7 @@ def handlers(
 
     return {
         (5, 2137): sell,
+        (5, 2149): sell_all,
         (5, 2131): use,
         (5, 2933): item_buy,
         (5, 2139): train_info,
