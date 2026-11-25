@@ -46,6 +46,11 @@ STATUS_NOT_ENOUGH_STARS = 328197    # language.db 星级不够
 STATUS_RESET_LIMIT = 328202         # language.db 达到关卡重置限制
 STATUS_NOT_ENOUGH_DIAMOND = 327938  # language.db 钻石不足
 STATUS_MAX_TIMES = 328195           # language.db 已经达到最大次数
+STATUS_NOT_ENOUGH_ITEM = 327942     # language.db 没有足够道具
+
+# item_info 1300 精英扫荡券: 10 of them sweep an elite stage once
+# (CLEAN_ELITE_ITEM_NUM_EVERYTIME), up to CLEAN_ELITE_TIMES_LIMIT a day.
+CLEAN_ELITE_ITEM = 1300
 
 # vip_info 10100 (重置精英关卡次数): resets allowed per stage per day.
 VIP_RESET_ENTRY = 10100
@@ -60,18 +65,41 @@ def roll_urandom(rng: random.Random | None = None) -> list[int]:
     return [rng.randrange(URANDOM_SCALE) for _ in range(URANDOM_SIZE)]
 
 
-def frontier(cfg: Config, row: sqlite3.Row) -> int:
-    """The one stage the player may newly clear."""
-    last = int(row["last_level"])
-    return cfg.next_stage(last) if last else cfg.first_stage()
+CHAPTER_ELITE = 2   # chapter_info.type of the elite chapters 110000-127000
+
+
+def chapter_type(cfg: Config, lvl: int) -> int:
+    """chapter_info.type of a stage's chapter; 1 when the chapter is unknown."""
+    stage = cfg.stage(lvl)
+    chapter = None if stage is None else cfg.chapter(int(stage["chapter"]))
+    return 1 if chapter is None else int(chapter["type"])
+
+
+def frontier(cfg: Config, row: sqlite3.Row, type_: int = 1) -> int:
+    """The one stage the player may newly clear. Elite chapters follow
+    last_elite, the rest last_level (LevelManager.lua:409-444)."""
+    column = "last_elite" if type_ == CHAPTER_ELITE else "last_level"
+    last = int(row[column])
+    return cfg.next_stage(last) if last else cfg.first_stage(type_)
 
 
 def is_unlocked(
     cfg: Config, conn: sqlite3.Connection, row: sqlite3.Row, lvl: int
 ) -> bool:
-    if lvl == frontier(cfg, row):
+    type_ = chapter_type(cfg, lvl)
+    progress = db.level_progress(conn, int(row["id"]), lvl)
+    if type_ == CHAPTER_ELITE and (progress is None or int(progress["star"]) <= 0):
+        # An unstarred elite stage opens only once its relation_level normal
+        # stage has a star; a starred one is status 1 and stays open
+        # (LevelManager.lua:858-879, LevelBuildTouch.lua:163-185).
+        relation = db.level_progress(
+            conn, int(row["id"]), int(cfg.stage(lvl)["relation_level"] or 0)
+        )
+        if relation is None or int(relation["star"]) <= 0:
+            return False
+    if lvl == frontier(cfg, row, type_):
         return True
-    return db.level_progress(conn, int(row["id"]), lvl) is not None
+    return progress is not None
 
 
 def chapter_stars(
@@ -88,11 +116,12 @@ def chapter_stars(
 def roll_daily_counts(
     conn: sqlite3.Connection, player_id: int, now: int | None = None
 ) -> None:
-    """Every levels row whose deadline has passed gets count 0, reset_count 0
-    and the end of today as its new deadline."""
+    """Every levels row whose deadline has passed gets count 0, reset_count 0,
+    clean_elite_count 0 and the end of today as its new deadline."""
     now = int(time.time()) if now is None else int(now)
     conn.execute(
-        "UPDATE levels SET count = 0, reset_count = 0, deadline = ?"
+        "UPDATE levels SET count = 0, reset_count = 0, clean_elite_count = 0,"
+        " deadline = ?"
         " WHERE player_id = ? AND deadline < ?",
         (_end_of_today(), int(player_id), now),
     )
@@ -228,6 +257,7 @@ def handlers(
         # more after a 6 s timeout (BattleFactoryBase.lua:871-930).
         rolled = pending.pop(lvl)
         player_id = int(row["id"])
+        elite = chapter_type(cfg, lvl) == CHAPTER_ELITE
         star = max(0, min(3, int(req.star)))
         won = star > 0
 
@@ -266,7 +296,14 @@ def handlers(
                 angel_xp = db.add_angel_xp(
                     conn, cfg, player_id, int(req.angel), int(stage["angel_xp"] or 0)
                 )
-                if lvl == frontier(cfg, row):
+                if elite and lvl == frontier(cfg, row, CHAPTER_ELITE):
+                    # db.py has no setter and is not this task's file.
+                    conn.execute(
+                        "UPDATE players SET last_elite = ? WHERE id = ?",
+                        (lvl, player_id),
+                    )
+                    conn.commit()
+                elif not elite and lvl == frontier(cfg, row):
                     db.set_last_level(conn, player_id, lvl)
         except Exception:
             log.error(
@@ -311,12 +348,15 @@ def handlers(
             # First, so the absolute player values below are the last word.
             item.announce(registry, session, granted)
             notify.items_changed(registry, session, granted["items"])
-            notify.player_changed(registry, session, {
+            changed = {
                 "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
                 "xp": int(fresh["xp"]), "level": int(fresh["level"]),
                 "energy": int(fresh["energy"]), "max_energy": int(fresh["max_energy"]),
                 "last_level": int(fresh["last_level"]),
-            })
+            }
+            if elite:
+                changed["last_elite"] = int(fresh["last_elite"])
+            notify.player_changed(registry, session, changed)
             if xp_change["levelled"]:
                 before = xp_change["before"]
                 after = xp_change["after"]
@@ -567,10 +607,117 @@ def handlers(
                  lvl, player_id, used + 1, price)
         return _answer(0, used + 1)
 
+    def clean_elite(session: Session, req):
+        # UseCleanEliteItemRes has no status (LevelItemSweep.lua:79-139), so a
+        # refusal changes nothing, logs the language.db code it would have
+        # used and answers the unchanged count. O-W2-12: no energy, no
+        # maxcount; drops, gold and player xp as a 5_2205 sweep.
+        lvl, amount = int(req.level_entry), int(req.amount)
+        row = _player(session)
+        stage = cfg.stage(lvl)
+        per = cfg.variable_int("CLEAN_ELITE_ITEM_NUM_EVERYTIME", 10)
+        limit = cfg.variable_int("CLEAN_ELITE_TIMES_LIMIT", 9)
+        times = amount // per if per > 0 else 0
+
+        def _answer(count: int, done: int = 0):
+            return registry.message_class("UseCleanEliteItemRes")(
+                times=done, level_entry=lvl, level_clean_elite_count=count
+            )
+
+        def _refused(code: int, why: str, count: int = 0):
+            log.warning("5_2337 item sweep of stage %d with %d tickets refused"
+                        " (%d): %s", lvl, amount, code, why)
+            res = _answer(count)
+            fill_required(res)
+            return res
+
+        if row is None or stage is None:
+            return _refused(STATUS_STAGE_LOCKED, "no such stage")
+        player_id = int(row["id"])
+        session.player_id = player_id
+        roll_daily_counts(conn, player_id)
+        progress = db.level_progress(conn, player_id, lvl)
+        count = 0 if progress is None else int(progress["clean_elite_count"])
+        if times < 1:
+            return _refused(STATUS_STAGE_LOCKED, f"amount {amount} < {per}", count)
+        if progress is None or int(progress["star"]) < 3:
+            return _refused(STATUS_NOT_ENOUGH_STARS, "not 3-starred", count)
+        if count + times > limit:
+            return _refused(
+                STATUS_MAX_TIMES, f"count {count} + {times} > limit {limit}", count
+            )
+        cost = times * per
+        owned = conn.execute(
+            "SELECT amount FROM items WHERE player_id = ? AND entry = ?",
+            (player_id, CLEAN_ELITE_ITEM),
+        ).fetchone()
+        have = 0 if owned is None else int(owned["amount"])
+        if have < cost:
+            return _refused(
+                STATUS_NOT_ENOUGH_ITEM,
+                f"needs {cost} of item {CLEAN_ELITE_ITEM}, has {have}", count,
+            )
+
+        visible_id = _required(stage, "visible_drops", lvl)
+        invisible_id = _required(stage, "invisible_drops", lvl)
+        per_time = [
+            drops.roll(cfg, visible_id, rng=rng) + drops.roll(cfg, invisible_id, rng=rng)
+            for _ in range(times)
+        ]
+        gold = times * int(stage["gold"] or 0)
+        prizes = [t for rolled in per_time for t in drops.as_triples(rolled)]
+        prizes.append((item.CATEGORY_GOLD, 0, gold))
+        # grant_prizes vets the whole list before it writes, so it runs first.
+        granted = item.grant_prizes(conn, cfg, player_id, prizes)
+        tickets_left = db.take_item(conn, player_id, CLEAN_ELITE_ITEM, cost)
+        _ensure_row(conn, player_id, lvl)
+        conn.execute(
+            "UPDATE levels SET clean_elite_count = clean_elite_count + ?"
+            " WHERE player_id = ? AND level = ?", (times, player_id, lvl),
+        )
+        conn.commit()
+        new_count = count + times
+        xp_change = db.add_player_xp(
+            conn, cfg, player_id, times * int(stage["player_xp"] or 0)
+        )
+
+        res = _answer(new_count, times)
+        for rolled in per_time:
+            entry = res.drops.add()
+            for prize in drops.to_prize_entries(registry, rolled):
+                entry.drop.add().CopyFrom(prize)
+        item.mark_converted([d for e in res.drops for d in e.drop], granted)
+
+        fresh = conn.execute(
+            "SELECT * FROM players WHERE id = ?", (player_id,)
+        ).fetchone()
+        item.announce(registry, session, granted)
+        notify.items_changed(
+            registry, session, granted["items"] + [(CLEAN_ELITE_ITEM, tickets_left)]
+        )
+        notify.player_changed(registry, session, {
+            "gold": int(fresh["gold"]), "xp": int(fresh["xp"]),
+            "level": int(fresh["level"]), "energy": int(fresh["energy"]),
+            "max_energy": int(fresh["max_energy"]),
+        })
+        if xp_change["levelled"]:
+            before, after = xp_change["before"], xp_change["after"]
+            notify.level_up(
+                registry, session,
+                (before[0], before[2], before[3]), (after[0], after[2], after[3]),
+            )
+        log.info(
+            "stage %d item-swept x%d by player %d: %d tickets, %d gold, drops %s",
+            lvl, times, player_id, cost, gold, prizes[:-1],
+        )
+        fill_required(res)
+        return res
+
     return {
         (5, 2201): level_into,
         (5, 2203): level_out,
         (5, 2205): level_clean,
         (5, 2207): level_reset,
         (5, 2209): chapter_prize,
+        (5, 2337): clean_elite,
     }
