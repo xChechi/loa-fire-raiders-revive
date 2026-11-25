@@ -1658,3 +1658,47 @@ text = [130, 16, 310, 50]
 fill = ["#6e3a22", "#4c2212"]
 outline = "#fbeee0"
 stroke = 0.1
+
+# --- Plan B2 screens (24-11-2026): seen on the ACC-1 / ACC-2 runs -----------------
+
+[[image]]
+# Shop slot stamp (NormalShopRender.hadSoldImg). The glyphs float inside the
+# stamp frame, so "detached" takes every opaque shape but the frame; the
+# English is turned with the frame (about 28 degrees).
+preset = "screen_text"
+path = "ui/img/img_hadSold.png"
+zh = "已售"
+en = "Sold"
+mask = "detached"
+erase = [30, 30, 160, 125]
+text = [38, 58, 152, 100]
+rotate = 28
+stroke = 0.14
+
+[[image]]
+# Mail claimed stamp (EmailInfoPanel.lingqiImg), same frame as the Sold stamp.
+preset = "screen_text"
+path = "ui/ui_img_yilingqu.png"
+zh = "已领取"
+en = "Claimed"
+mask = "detached"
+erase = [30, 30, 160, 125]
+text = [38, 58, 152, 100]
+rotate = 28
+stroke = 0.14
+
+[[image]]
+# Sign-in screen, the ribbon over the cumulative check-in rewards (SignUI2).
+preset = "screen_plate"
+path = "ui/sign_gift_bg.png"
+zh = "累计签到礼包"
+en = "Total Check-in Gifts"
+mask = "lum"
+light = 150
+grow = 3
+halo = 2
+erase = [40, 158, 266, 206]
+text = [42, 161, 262, 203]
+fill = ["#fffbc0", "#ffd400"]
+outline = "#4a1c08"
+stroke = 0.14

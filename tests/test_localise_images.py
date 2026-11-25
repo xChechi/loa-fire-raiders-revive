@@ -248,6 +248,26 @@ def test_logo_mask_takes_the_blob_at_the_centre_not_specks_of_the_same_colour():
     assert not m[2:5, 72:76].any()
 
 
+def test_detached_mask_takes_the_glyphs_inside_a_stamp_frame_not_the_frame():
+    a = np.zeros((40, 80, 4), np.uint8)
+    a[2:38, 2:78] = (220, 60, 40, 255)  # the stamp frame, a ring
+    a[6:34, 6:74] = 0
+    a[12:28, 20:30] = (220, 60, 40, 255)  # two glyphs floating inside it
+    a[12:28, 40:60] = (220, 60, 40, 255)
+    e = Entry(path="x", zh="字", en="", group="g", mask="detached", erase=[0, 0, 80, 40])
+    m = text_mask(a, e)
+    assert m[12:28, 20:30].all() and m[12:28, 40:60].all()
+    assert m.sum() == 16 * 10 + 16 * 20
+
+
+def test_sold_and_claimed_stamps_and_the_check_in_ribbon_are_in_the_table():
+    entries = {e.path: e for e in load_table()}
+    assert entries["ui/img/img_hadSold.png"].en == "Sold"
+    assert entries["ui/ui_img_yilingqu.png"].en == "Claimed"
+    assert entries["ui/ui_img_yilingqu.png"].mask == "detached"
+    assert entries["ui/sign_gift_bg.png"].zh == "累计签到礼包"
+
+
 def test_logo_entry_draws_the_lines_centred_on_the_box_in_the_same_size(tmp_path: Path):
     a = _plate(300, 140)
     a[50:90, 100:200] = (255, 210, 40, 255)

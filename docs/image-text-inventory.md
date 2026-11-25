@@ -84,6 +84,17 @@ The story dialogue that stage 2 left out is now translated as a fifth text sourc
 compiles). On the emulator: `docs/screens/en-2026-11-24-stage3/` (opening battle and city
 story on a fresh character, Death Mine story, hero list, angels, stage story box).
 
+## Plan B2 screens (24-11-2026)
+
+Chinese seen on the screens Plan B2 opened (sign-in, mail, shop). All in group `on-screen`;
+before/after on the emulator: `docs/screens/en-2026-11-24-layout-b2/`.
+
+| image | Chinese | English | how |
+|---|---|---|---|
+| ui/img/img_hadSold.png (shop slot stamp) | 已售 | Sold | new mask `detached`: every opaque shape but the stamp frame, English turned 28 degrees with the frame |
+| ui/ui_img_yilingqu.png (mail claimed stamp) | 已领取 | Claimed | same |
+| ui/sign_gift_bg.png (sign-in, cumulative rewards) | 累计签到礼包 | Total Check-in Gifts | yellow glyphs inpainted from the blue ribbon |
+
 ## Files per group
 
 ### hero name images (img/hero/name) (78)

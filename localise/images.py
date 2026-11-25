@@ -23,6 +23,9 @@ Which pixels are text ("mask"):
             dark plate);
   "color"   pixels within `tol` of `color` (coloured glyphs);
   "opaque"  pixels with alpha above 0 (pure text images);
+  "detached" pixels with alpha above 0 apart from the largest opaque shape
+            of the image: glyphs floating inside a stamp's frame, where no
+            rectangle holds the glyphs without a piece of the frame;
   "logo"    the gold glyphs and flourish and the maroon plate of the stock
             女神联盟 logo: only the one blob nearest the box centre, so
             specks of orange background elsewhere in the box stay;
@@ -183,6 +186,24 @@ def _hex(c: str) -> tuple[int, int, int]:
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
 
 
+def _largest_shape(on: np.ndarray) -> np.ndarray:
+    """Boolean HxW: the largest 4-connected region of `on`."""
+    lab = Image.fromarray(np.where(on, -1, 0).astype(np.int32), "I")
+    n = 0
+    while True:
+        ys, xs = np.nonzero(np.asarray(lab) == -1)
+        if not len(ys):
+            break
+        n += 1
+        ImageDraw.floodfill(lab, (int(xs[0]), int(ys[0])), n)
+    arr = np.asarray(lab)
+    if n == 0:
+        return np.zeros(on.shape, bool)
+    sizes = np.bincount(arr.ravel(), minlength=n + 1)
+    sizes[0] = 0
+    return arr == int(np.argmax(sizes))
+
+
 def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
     """Boolean HxW: the Chinese text pixels (with their outline) inside the box."""
     h, w = rgba.shape[:2]
@@ -192,6 +213,8 @@ def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
         core = np.ones((h, w), bool)
     elif e.mask == "opaque":
         core = alpha > 0
+    elif e.mask == "detached":
+        core = (alpha > 0) & ~_largest_shape(alpha > 0)
     elif e.mask == "light":
         core = (rgb.min(axis=2) >= e.light) & (alpha > 128)
     elif e.mask == "lum":
@@ -212,7 +235,7 @@ def text_mask(rgba: np.ndarray, e: Entry) -> np.ndarray:
         x0, y0, x1, y1 = _box(b, w, h)
         inbox[y0:y1, x0:x1] = True
     core &= inbox
-    if e.grow > 0 and e.mask not in ("all", "opaque"):
+    if e.grow > 0 and e.mask not in ("all", "opaque", "detached"):
         m = Image.fromarray(core.astype(np.uint8) * 255).filter(
             ImageFilter.MaxFilter(2 * e.grow + 1))
         core = (np.asarray(m) > 0) & inbox
