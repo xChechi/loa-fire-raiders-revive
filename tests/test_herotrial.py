@@ -4,8 +4,9 @@ HerotrialsBattleResult.
 T0 is Wednesday 25-11-2026 10:00 local, so the client's weekday
 (getDay(-5*3600), 0 = Sunday, ServerTimeManager.lua:102-108) is 3. Wednesday's
 stages are the vocation-3 (ss) rows with weekday 3: 1200 (icon 1000, level 40)
-up to 7200. Stage 1200's grade row is herotrials_grade_info 1000 (cd 300);
-stage 5200's icon 5000 has no grade row, so HERO_TRIALS_COOLDOWN (0) applies.
+up to 7200. Stage 1200 is difficulty I (icon 1000), stage 5200 difficulty V
+(icon 5000). Every difficulty cools down for 60 s, the owner's choice of
+25-11-2026 (herotrial.HERO_TRIAL_COOLDOWN_S), not a client value.
 """
 
 import logging
@@ -118,14 +119,14 @@ def test_battle_echoes_entry_with_64_randoms(reg, world):
     assert len(res.Urandom) == 64
 
 
-def test_win_pays_star_drops_and_sets_cd_300(reg, world):
+def test_win_on_difficulty_I_sets_60s_cooldown(reg, world):
     conn, pid, handlers, session, _clock = world
     _battle(reg, handlers, session, SS_WEDNESDAY)
     res = _result(reg, handlers, session, SS_WEDNESDAY, star=3)
     assert res.success is True
     assert res.trialEntry == SS_WEDNESDAY
     assert (res.zs_trialTimes, res.fs_trialTimes, res.ss_trialTimes) == (0, 0, 1)
-    assert res.ss_cd == int(T0) + 300
+    assert res.ss_cd == int(T0) + 60
     assert (res.zs_cd, res.fs_cd) == (0, 0)
     assert len(res.prizes) > 0
     owned = _items(conn, pid)
@@ -137,16 +138,16 @@ def test_win_pays_star_drops_and_sets_cd_300(reg, world):
 
     info = _info(reg, handlers, session)
     assert info.ss_trialTimes == 1
-    assert info.ss_cd == int(T0) + 300
+    assert info.ss_cd == int(T0) + 60
 
 
-def test_stage_without_grade_row_uses_hero_trials_cooldown(reg, settings, cfg):
+def test_win_on_difficulty_V_sets_60s_cooldown(reg, settings, cfg):
     _conn, _pid, handlers, session, _clock = _world(settings, cfg, reg, level=75)
     _battle(reg, handlers, session, SS_WEDNESDAY_V)
     res = _result(reg, handlers, session, SS_WEDNESDAY_V, star=1)
     assert res.success is True
-    # HERO_TRIALS_COOLDOWN is 0: the cooldown ends the moment the run does.
-    assert res.ss_cd == int(T0)
+    # Icon 5000 has no herotrials_grade_info row; the cooldown is still 60 s.
+    assert res.ss_cd == int(T0) + 60
 
 
 def test_loss_counts_nothing_and_pays_nothing(reg, world):
@@ -160,11 +161,11 @@ def test_loss_counts_nothing_and_pays_nothing(reg, world):
     assert _items(conn, pid) == before
 
 
-def test_cooldown_refused_logged_333314(reg, world, caplog):
+def test_fight_inside_cooldown_refused(reg, world, caplog):
     _conn, _pid, handlers, session, clock = world
     _battle(reg, handlers, session, SS_WEDNESDAY)
     _result(reg, handlers, session, SS_WEDNESDAY, star=3)
-    clock["now"] = T0 + 299
+    clock["now"] = T0 + 59
     with caplog.at_level(logging.WARNING, logger="loa.herotrial"):
         res = _battle(reg, handlers, session, SS_WEDNESDAY)
     assert res.trialEntry == SS_WEDNESDAY
@@ -172,6 +173,9 @@ def test_cooldown_refused_logged_333314(reg, world, caplog):
     after = _result(reg, handlers, session, SS_WEDNESDAY, star=3)
     assert after.success is False
     assert after.ss_trialTimes == 1
+    clock["now"] = T0 + 60
+    _battle(reg, handlers, session, SS_WEDNESDAY)
+    assert _result(reg, handlers, session, SS_WEDNESDAY, star=3).success is True
 
 
 def test_fourth_run_refused_logged_333313(reg, world, caplog):

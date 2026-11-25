@@ -17,12 +17,19 @@ What the client reads (the spec):
   "服务器半夜5点更新" (HeroTryDetailUI.lua:99). A stage opens at the stage's
   own `level` (HeroTryTypeLevelItem.lua:159); the feature at function 10091
   英雄试炼 (FunctionType.lua:100).
-- herotrials_grade_info is read only by the legacy HeroTryUI.lua, which no UI
-  opens (UI_HERO_TRAIN is HeroTryTypeUI, SystemEventManager.lua:99). Its
-  `vocation` column is not the trial's vocation. A stage's `icon` names its
-  grade row, and only icons 1000-4000 have one; that row's `cd` is the
-  cooldown, and a stage without a grade row falls back to the variable
-  HERO_TRIALS_COOLDOWN.
+- The cooldown is per vocation (zs/fs/ss_cd, FunctionType.lua:511-513); the
+  live detail view counts cd - now (HeroTryDetailUI.lua:478-486), and its
+  commented-out line reads the cooldown from variables (GOLD_TRAILS_COOLDOWN,
+  :479). The live list reads only herotrials_stage_info; its
+  herotrials_grade_info read is commented out (HeroTryTypeUI.lua:51-52).
+  herotrials_grade_info (4 rows, icons 1000-4000, cd 300) is read only by the
+  legacy HeroTryUI.lua:32, a gold-trial copy (:2) that no UI opens
+  (UI_HERO_TRAIN is HeroTryTypeUI, SystemEventManager.lua:99); stages V-VII
+  (icons 5000-7000) have no grade row. variables.HERO_TRIALS_COOLDOWN is 0,
+  and the only 300 in live code is the commented developer mock at
+  FunctionType.lua:1315-1317. The client therefore gives no cooldown value:
+  HERO_TRIAL_COOLDOWN_S = 60 for every difficulty is the owner's choice of
+  25-11-2026 (plan B2 Wave 3, O-W3-1), not a client value.
 - 5_2334 (HeroTryLine.lua:67-112) starts the fight on any answer: its
   `msg.status` is the native header's 0, and an unknown trialEntry falls back
   to the stage the player clicked. A refusal therefore cannot be delivered on
@@ -67,6 +74,7 @@ FUNCTION_HERO_TRY = 10091   # FunctionType.HERO_TRY, 英雄试炼
 DAY_START_HOUR = 5          # getDay(-5*3600)
 VOCATIONS = {1: "zs", 2: "fs", 3: "ss"}
 STAR_DROPS = {1: "one_star_drops", 2: "two_star_drops", 3: "three_star_drops"}
+HERO_TRIAL_COOLDOWN_S = 60  # the owner's choice, 25-11-2026 (O-W3-1)
 
 PENDING_KEY = "herotrial_pending"
 
@@ -84,10 +92,7 @@ def _limit(cfg: Config) -> int:
 
 
 def _cooldown(cfg: Config, stage: sqlite3.Row) -> int:
-    grade = cfg.herotrials_grade(int(stage["icon"]))
-    if grade is not None:
-        return int(grade["cd"] or 0)
-    return cfg.variable_int("HERO_TRIALS_COOLDOWN", 0)
+    return HERO_TRIAL_COOLDOWN_S
 
 
 def handlers(
