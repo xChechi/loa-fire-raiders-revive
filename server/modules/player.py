@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import angel, events, hero, item
+from server.modules import angel, events, hero, item, mystery
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -214,7 +214,12 @@ def handlers(
         row = db.refresh_energy(conn, cfg, row)
         events.refresh(conn, cfg, registry, None, session.player_id)
         log.info("sending QueryMyselfRes for player id %d", session.player_id)
-        return build_query_myself_res(registry, cfg, conn, row)
+        res = build_query_myself_res(registry, cfg, conn, row)
+        # A merchant whose stay ran out while the player was away is told to
+        # leave after the Res: the 5_2022 listener reads g_roleData.player
+        # (RPGGame.lua:937-945), which this Res fills.
+        mystery.expire(registry, session, row, time.time())
+        return res
 
     def game_ready(session: Session, req):
         return registry.message_class("GameReadyRes")()

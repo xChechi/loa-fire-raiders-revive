@@ -412,3 +412,95 @@ def test_login_rolls_yesterdays_stage_counts(reg, settings, cfg) -> None:
     ).fetchone()
     assert (int(row["count"]), int(row["reset_count"])) == (0, 0)
     assert int(row["deadline"]) > int(time.time())
+
+
+# Every IMPL/ANS Req of the Wave 2 inventory (plan 2026-11-25, tables A-F);
+# the 5_2020/5_2022 pushes have no Req and are not handler keys.
+WAVE2_IDS = [
+    (5, 2121), (5, 2123), (5, 2103), (5, 2139), (5, 2119), (5, 2117), (5, 2125),
+    (5, 2165),
+    (5, 2323), (5, 2309),
+    (5, 2201), (5, 2203), (5, 2337),
+    (5, 2129),
+    (5, 2213), (5, 2215), (5, 2217),
+    (5, 2331), (5, 2333), (5, 2335),
+    *[(8, cmd) for cmd in range(2501, 2528, 2)],
+    (5, 2161), (5, 2565),
+    (5, 2241), (5, 2243),
+]
+
+
+def test_build_handlers_covers_wave2_ids(reg, settings) -> None:
+    from server.__main__ import build_handlers
+
+    assert len([k for k in WAVE2_IDS if k[0] == 8]) == 14
+    handlers = build_handlers(reg, settings)
+    assert [k for k in WAVE2_IDS if k not in handlers] == []
+
+
+def _merchant_world(reg, settings, cfg, mystery_energy: int):
+    """A level-16 player one stage entry (6 energy) short of
+    max_appeared_cost 600, so the merchant must appear (O-W2-11)."""
+    from server.db import create_player
+    from server.modules import level
+
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0, gold=1000, diamond=0)
+    conn.execute(
+        "UPDATE players SET level = 16, mystery_energy = ? WHERE id = ?",
+        (mystery_energy, pid),
+    )
+    conn.commit()
+    session = Session(writer=None, peer="t", bound_port=0)
+    session.player_id = pid
+    return conn, pid, level.handlers(reg, settings, conn, cfg), session
+
+
+def _merchant_pushes(session) -> list:
+    return [m for s, c, m in session.outbox if (s, c) == (5, 2020)]
+
+
+def test_stage_entry_feeds_the_merchant_roll(reg, settings, cfg) -> None:
+    conn, pid, handlers, session = _merchant_world(reg, settings, cfg, 594)
+    res = handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=10000))
+    assert res.flag == 0
+    pushes = _merchant_pushes(session)
+    assert len(pushes) == 1 and pushes[0].store.store == 2 and pushes[0].onEnergyCost
+    row = find_player(conn, "stefan")
+    assert int(row["energy_use"]) == 6
+    assert int(row["mystery_energy"]) == 0
+    assert int(row["mystery_shown"]) == 1
+
+
+def test_stage_sweep_feeds_the_merchant_roll(reg, settings, cfg) -> None:
+    from server.db import upsert_level
+
+    conn, pid, handlers, session = _merchant_world(reg, settings, cfg, 594)
+    upsert_level(conn, pid, 10000, star=3, count_delta=1)
+    res = handlers[(5, 2205)](
+        session, reg.message_class("LevelCleanReq")(level=10000, times=1)
+    )
+    assert res.flag == 0
+    assert len(_merchant_pushes(session)) == 1
+    assert int(find_player(conn, "stefan")["energy_use"]) == 6
+
+
+def test_query_myself_tells_an_expired_merchant_to_leave(reg, settings, cfg) -> None:
+    import time
+
+    from server.modules import player
+
+    conn, pid, _h, session = _merchant_world(reg, settings, cfg, 0)
+    handlers = player.handlers(reg, settings, conn, cfg)
+    req = reg.message_class("QueryMyselfReq")()
+    handlers[(5, 2005)](session, req)
+    assert [(s, c) for s, c, _m in session.outbox if (s, c) == (5, 2022)] == []
+
+    conn.execute(
+        "UPDATE players SET mystery_appear = ?, mystery_stay = 3600 WHERE id = ?",
+        (int(time.time()) - 3601, pid),
+    )
+    conn.commit()
+    handlers[(5, 2005)](session, req)
+    gone = [m for s, c, m in session.outbox if (s, c) == (5, 2022)]
+    assert len(gone) == 1 and gone[0].store == 2

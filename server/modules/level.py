@@ -21,7 +21,7 @@ import time
 
 from server import db
 from server.config import Config
-from server.modules import drops, events, hero, item, notify
+from server.modules import drops, events, hero, item, mystery, notify
 from server.modules.player import _end_of_today
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
@@ -207,6 +207,7 @@ def handlers(
         # Past here nothing can refuse, so the writes are safe to make.
         if cost:
             db.spend_energy(conn, int(row["id"]), cost)
+            mystery.on_energy_spent(conn, cfg, registry, session, int(row["id"]), cost)
         visible = drops.roll(cfg, _required(stage, "visible_drops", lvl), rng=rng)
         invisible = drops.roll(cfg, _required(stage, "invisible_drops", lvl), rng=rng)
         # One flat list for the whole entry: level_out grants it all at once.
@@ -506,6 +507,7 @@ def handlers(
         # grant_prizes vets the whole list before it writes, so it runs first.
         granted = item.grant_prizes(conn, cfg, player_id, prizes)
         db.spend_energy(conn, player_id, cost)
+        mystery.on_energy_spent(conn, cfg, registry, session, player_id, cost)
         _ensure_row(conn, player_id, lvl)
         new_count = int(
             db.upsert_level(conn, player_id, lvl, count_delta=times)["count"]
