@@ -268,6 +268,16 @@ def test_sold_and_claimed_stamps_and_the_check_in_ribbon_are_in_the_table():
     assert entries["ui/sign_gift_bg.png"].zh == "累计签到礼包"
 
 
+def test_quality_up_panel_words_and_angel_badges_are_in_the_table():
+    entries = {e.path: e for e in load_table()}
+    assert entries["ui/role_progressBd7.png"].zh == "进阶成功"
+    assert entries["ui/role_progressBd11.png"].en == "Power:"
+    assert entries["ui/role_progressBd5.png"].zh == "技能觉醒:"
+    for kind in ("icon", "bar"):
+        assert [entries[f"ui/angel_type_{kind}_{n}.png"].en for n in (1, 2, 3)] == [
+            "Damage", "Heal", "Control"]
+
+
 def test_logo_entry_draws_the_lines_centred_on_the_box_in_the_same_size(tmp_path: Path):
     a = _plate(300, 140)
     a[50:90, 100:200] = (255, 210, 40, 255)

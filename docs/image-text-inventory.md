@@ -94,6 +94,10 @@ before/after on the emulator: `docs/screens/en-2026-11-24-layout-b2/`.
 | ui/img/img_hadSold.png (shop slot stamp) | 已售 | Sold | new mask `detached`: every opaque shape but the stamp frame, English turned 28 degrees with the frame |
 | ui/ui_img_yilingqu.png (mail claimed stamp) | 已领取 | Claimed | same |
 | ui/sign_gift_bg.png (sign-in, cumulative rewards) | 累计签到礼包 | Total Check-in Gifts | yellow glyphs inpainted from the blue ribbon |
+| ui/role_progressBd7.png (hero quality-up success title) | 进阶成功 | Advanced! | text-only image, redrawn in the colours of 突破成功 "Breakthrough!" |
+| ui/role_progressBd11.png (same panel, before the power digits) | 战斗力: | Power: | text-only image |
+| ui/role_progressBd5.png (same panel, before the awakened skill) | 技能觉醒: | Skill Awakened: | text-only image, blue glow kept |
+| ui/angel_type_icon_1-3.png (angel cards) and ui/angel_type_bar_1-3.png (angel panel name bar) | 输出 / 治疗 / 控制 | Damage / Heal / Control | coloured glyphs inpainted from the dark badge |
 
 ## Files per group
 

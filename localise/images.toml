@@ -1702,3 +1702,102 @@ text = [42, 161, 262, 203]
 fill = ["#fffbc0", "#ffd400"]
 outline = "#4a1c08"
 stroke = 0.14
+
+[[image]]
+# Hero quality-up success panel (ProgressSucPanel), the title over the ribbon.
+preset = "word"
+group = "on-screen"
+path = "ui/role_progressBd7.png"
+zh = "进阶成功"
+en = "Advanced!"
+text = [4, 2, 305, 76]
+fill = ["#fff6a0", "#ff9a10"]
+outline = "#5a1c00"
+shadow = 3
+
+[[image]]
+# ProgressSucPanel, before the old and new power digits.
+preset = "word"
+group = "on-screen"
+path = "ui/role_progressBd11.png"
+zh = "战斗力:"
+en = "Power:"
+text = [1, 1, 126, 37]
+fill = ["#fff6a0", "#ff9a10"]
+outline = "#5a1c00"
+
+[[image]]
+# ProgressSucPanel, before the icon of the skill the new quality awakens.
+preset = "word"
+group = "on-screen"
+path = "ui/role_progressBd5.png"
+zh = "技能觉醒:"
+en = "Skill Awakened:"
+text = [4, 4, 175, 52]
+fill = ["#ffffff", "#9fd4ff"]
+outline = "#0a2a7a"
+glow = "#2a6aff"
+glow_radius = 4
+
+# Angel role badge on the angel cards (MMBigCard / MMMediumCard) and on the
+# left end of the name bar of the angel panel (AngelBasePanel, angel_type_bar_N),
+# one per angel_type: 1 输出 damage, 2 治疗 heal, 3 控制 control.
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_icon_1.png"
+zh = "输出"
+en = "Damage"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
+
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_icon_2.png"
+zh = "治疗"
+en = "Heal"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
+
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_icon_3.png"
+zh = "控制"
+en = "Control"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
+
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_bar_1.png"
+zh = "输出"
+en = "Damage"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
+
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_bar_2.png"
+zh = "治疗"
+en = "Heal"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
+
+[[image]]
+preset = "badge"
+group = "on-screen"
+path = "ui/angel_type_bar_3.png"
+zh = "控制"
+en = "Control"
+light = 80
+erase = [16, 10, 71, 41]
+text = [14, 11, 73, 41]
