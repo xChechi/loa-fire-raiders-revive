@@ -442,3 +442,184 @@ def test_crash_level_clears_to_crash_level(world, reg):
     # A buff-shop floor is no fight to crash.
     _set_level(conn, pid, 2)
     assert _crash(reg, handlers, session).newLevel == 2
+
+
+# --- commit 3: the buff and treasure shops --------------------------------------
+
+# Floor 2's group 2: 9101 聚能 energy, 9102 生命 hp 0.3, 9103 强攻 attack 0.03
+# (team-wide, effect 2); each costs 1 star.
+ENERGY_BUFF, HP_BUFF, ATTACK_BUFF = 9101, 9102, 9103
+
+
+def _buff_floor(conn, pid, reg, handlers, session, stars):
+    _start(reg, handlers, session)
+    _set_level(conn, pid, 2)
+    _event(reg, handlers, session, 2, 3)
+    pending = json.loads(_row(conn, pid)["pending"])
+    pending["offers"] = [HP_BUFF, ATTACK_BUFF, ENERGY_BUFF]
+    conn.execute(
+        "UPDATE angeltrials SET pending = ?, stars = ? WHERE player_id = ?",
+        (json.dumps(pending), stars, pid),
+    )
+    conn.commit()
+
+
+def _buy_buff(reg, handlers, session, index, unit_entry=None):
+    fields = {"index": index}
+    if unit_entry is not None:
+        fields.update(unitType=1, unitEntry=unit_entry)
+    return _call(reg, handlers, session, 2509, "AngeltrialsBuyBuffReq", **fields)
+
+
+def _set_units(conn, pid, units):
+    conn.execute(
+        "UPDATE angeltrials SET units = ? WHERE player_id = ?", (json.dumps(units), pid)
+    )
+    conn.commit()
+
+
+def test_buff_costs_stars_and_refused_329737(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=0)
+    # No status on AngeltrialsBuyBuffRes: a shortfall answers buff 0 and the
+    # unchanged stars (AngelTryCtr.lua:200-216 adds nothing for buff 0).
+    res = _buy_buff(reg, handlers, session, 1)
+    assert (res.angeltrialsBuff, res.newStars) == (0, 0)
+    assert json.loads(_row(conn, pid)["buffs"]) == []
+    conn.execute("UPDATE angeltrials SET stars = 5 WHERE player_id = ?", (pid,))
+    conn.commit()
+    res = _buy_buff(reg, handlers, session, 1)
+    assert (res.angeltrialsBuff, res.newStars) == (ATTACK_BUFF, 4)
+    assert not res.HasField("unit")
+    listed = _call(reg, handlers, session, 2507, "QueryAngeltrialsBuffReq")
+    assert list(listed.angeltrialsBuffs) == [ATTACK_BUFF]
+
+
+def test_team_buff_reaches_the_fight_buff_effects(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=5)
+    _buy_buff(reg, handlers, session, 1)
+    _call(reg, handlers, session, 2521, "AngeltrialsEndBuyBuffReq")
+    _set_level(conn, pid, 3)
+    _event(reg, handlers, session, 3, 2)
+    res = _fight(reg, handlers, session, 1)
+    assert list(res.buffEffects) == pytest.approx([0, 0, 0.03, 0, 0, 0])
+
+
+def test_hp_buff_heals_the_chosen_hero(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=5)
+    _set_units(conn, pid, [{"type": 1, "refer": KNIGHT, "hp": 100, "energy": 0,
+                            "max_hp": 877, "max_energy": 1000}])
+    res = _buy_buff(reg, handlers, session, 0, unit_entry=KNIGHT)
+    assert (res.angeltrialsBuff, res.newStars) == (HP_BUFF, 4)
+    # effect_value 0.3 of max hp 877.
+    assert (res.unit.refer, res.unit.hp) == (KNIGHT, 363)
+    assert json.loads(_row(conn, pid)["buffs"]) == []
+    live = _call(reg, handlers, session, 2515, "AngeltrialsFightLiveReq")
+    assert [(u.refer, u.hp) for u in live.units] == [(KNIGHT, 363)]
+
+
+def test_hp_buff_on_a_dead_hero_changes_nothing(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=5)
+    _set_units(conn, pid, [{"type": 1, "refer": KNIGHT, "hp": 0, "energy": 0,
+                            "max_hp": 877, "max_energy": 1000}])
+    res = _buy_buff(reg, handlers, session, 0, unit_entry=KNIGHT)
+    assert (res.angeltrialsBuff, res.newStars) == (0, 5)
+
+
+def test_rebuying_a_card_changes_nothing(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=5)
+    _buy_buff(reg, handlers, session, 1)
+    res = _buy_buff(reg, handlers, session, 1)
+    assert (res.angeltrialsBuff, res.newStars) == (0, 4)
+    assert json.loads(_row(conn, pid)["buffs"]) == [ATTACK_BUFF]
+
+
+def test_end_buy_buff_moves_to_the_next_floor(world, reg):
+    conn, pid, handlers, session, _ = world
+    _buff_floor(conn, pid, reg, handlers, session, stars=0)
+    res = _call(reg, handlers, session, 2521, "AngeltrialsEndBuyBuffReq")
+    res.SerializeToString()
+    assert res.newLevel == 3
+    # A second end without a shop on floor 3 keeps the floor.
+    assert _call(reg, handlers, session, 2521, "AngeltrialsEndBuyBuffReq").newLevel == 3
+
+
+def _treasure_floor(conn, pid, reg, handlers, session):
+    _start(reg, handlers, session)
+    _set_level(conn, pid, 4)
+    _event(reg, handlers, session, 4, 1)
+
+
+def _buy_treasure(reg, handlers, session, count=None):
+    fields = {} if count is None else {"count": count}
+    return _call(reg, handlers, session, 2523, "AngeltrialsBuyTreasureReq", **fields)
+
+
+def _diamond(conn, pid):
+    return conn.execute("SELECT diamond FROM players WHERE id = ?", (pid,)).fetchone()[0]
+
+
+def test_treasure_cost_steps_up_per_open(world, reg):
+    conn, pid, handlers, session, _ = world
+    _treasure_floor(conn, pid, reg, handlers, session)
+    start = _diamond(conn, pid)
+    res = _buy_treasure(reg, handlers, session)
+    assert res.buyCount == 1 and len(res.prizes) == 1
+    # angeltrials_treasure_cost 1..4 = 100, 200, 200, 400 diamonds.
+    assert _diamond(conn, pid) == start - 100
+    _buy_treasure(reg, handlers, session)
+    assert _diamond(conn, pid) == start - 300
+    res = _buy_treasure(reg, handlers, session, count=2)
+    assert res.buyCount == 4 and len(res.prizes) == 2
+    assert _diamond(conn, pid) == start - 900
+    # The free floor prize plus four bought ones.
+    assert res.treasure_cum_count == 5
+
+
+def test_treasure_without_diamonds_changes_nothing(world, reg):
+    conn, pid, handlers, session, _ = world
+    _treasure_floor(conn, pid, reg, handlers, session)
+    conn.execute("UPDATE players SET diamond = 99 WHERE id = ?", (pid,))
+    conn.commit()
+    res = _buy_treasure(reg, handlers, session)
+    assert (res.buyCount, list(res.prizes)) == (0, [])
+    assert _diamond(conn, pid) == 99
+
+
+def test_treasure_pays_its_rows_and_angel_money(world, reg, cfg):
+    conn, pid, handlers, session, _ = world
+    _treasure_floor(conn, pid, reg, handlers, session)
+    res = _buy_treasure(reg, handlers, session, count=10)
+    rows = {
+        (int(r["drop_type"]), int(r["drop_entry"]))
+        for r in cfg.angeltrials_treasure_drops()
+        # angeltrials_level_info(4).arg5 = 9; player level 20, VIP 0.
+        if int(r["drop_group"]) == 9 and r["min_lvl"] <= 20 <= r["max_lvl"]
+        and r["min_vip"] <= 0 <= r["max_vip"]
+    }
+    assert all((p.category, p.refer) in rows for p in res.prizes)
+    money = sum(p.amount for p in res.prizes if p.category == 52)
+    owned = conn.execute("SELECT angel_money FROM players WHERE id = ?", (pid,)).fetchone()
+    assert owned["angel_money"] == money
+
+
+def test_treasure_without_the_event_changes_nothing(world, reg):
+    conn, pid, handlers, session, _ = world
+    _start(reg, handlers, session)
+    start = _diamond(conn, pid)
+    res = _buy_treasure(reg, handlers, session)
+    assert (res.buyCount, list(res.prizes)) == (0, [])
+    assert _diamond(conn, pid) == start
+
+
+def test_end_buy_treasure_moves_to_the_next_floor(world, reg):
+    conn, pid, handlers, session, _ = world
+    _treasure_floor(conn, pid, reg, handlers, session)
+    res = _call(reg, handlers, session, 2525, "AngeltrialsEndBuyTreasureReq")
+    res.SerializeToString()
+    assert res.newLevel == 5
+    assert _query(reg, handlers, session).level == 5
