@@ -133,3 +133,106 @@ def test_elite_maxcount_3_flag_2(reg, cfg, world) -> None:
     assert res.flag == level.FLAG_MAX_TIMES
     assert res.star == 3
     assert int(find_player(conn, "stefan")["energy"]) == 60
+
+
+# --- the elite item sweep, 5_2337 (O-W2-12) ---------------------------------
+TICKET = 1300               # 精英扫荡券, CLEAN_ELITE_ITEM_NUM_EVERYTIME 10 a time
+
+
+def _tickets(conn, pid):
+    row = conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = ?", (pid, TICKET)
+    ).fetchone()
+    return 0 if row is None else int(row["amount"])
+
+
+def _item_sweep(handlers, session, reg, lvl, amount):
+    return handlers[(5, 2337)](
+        session,
+        reg.message_class("UseCleanEliteItemReq")(level_entry=lvl, amount=amount),
+    )
+
+
+def _assert_unchanged(conn, pid, session, res, clean, tickets):
+    assert res.level_entry == ELITE
+    assert res.level_clean_elite_count == clean
+    assert list(res.drops) == []
+    assert int(_progress(conn, pid, ELITE)["clean_elite_count"]) == clean
+    assert _tickets(conn, pid) == tickets
+    row = find_player(conn, "stefan")
+    assert (int(row["gold"]), int(row["xp"])) == (1280000, 0)
+    assert session.outbox == []
+    res.SerializeToString()
+
+
+def test_item_sweep_three_times_takes_30_tickets_and_counts(reg, cfg, world) -> None:
+    from server.db import grant_item
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, 10000, star=3, count=1)
+    _set_progress(conn, pid, ELITE, star=3, count=3)
+    grant_item(conn, pid, TICKET, 35)
+    res = _item_sweep(handlers, session, reg, ELITE, 30)
+    assert res.level_entry == ELITE
+    assert res.level_clean_elite_count == 3
+    assert res.times == 3
+    assert len(res.drops) == 3
+    assert list(res.reward) == []
+    assert _tickets(conn, pid) == 5
+    prog = _progress(conn, pid, ELITE)
+    # No energy and no maxcount: count stays 3, energy stays 60.
+    assert (int(prog["clean_elite_count"]), int(prog["count"])) == (3, 3)
+    row = find_player(conn, "stefan")
+    assert int(row["energy"]) >= 60
+    assert int(row["gold"]) == 1280000 + 3 * 1036
+    # 3 x player_xp 12 = 36 xp: level 1 -> 2 costs 12, 2 -> 3 costs 12 more.
+    assert int(row["level"]) > 1
+    sent = [(s, c) for (s, c, _m) in session.outbox]
+    assert (5, 2036) in sent
+    item_pairs = [
+        list(m.data) for (s, c, m) in session.outbox
+        if (s, c) == (5, 2008) and m.ident == notify.IDENT_ITEM
+    ]
+    assert any(p[i:i + 2] == [TICKET, 5] for p in item_pairs for i in range(0, len(p), 2))
+    res.SerializeToString()
+
+
+def test_item_sweep_past_limit_9_changes_nothing(reg, cfg, world, caplog) -> None:
+    from server.db import grant_item
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3, clean=7)
+    grant_item(conn, pid, TICKET, 30)
+    res = _item_sweep(handlers, session, reg, ELITE, 30)   # 7 + 3 > 9
+    assert "328195" in caplog.text
+    _assert_unchanged(conn, pid, session, res, clean=7, tickets=30)
+
+
+def test_item_sweep_needs_three_stars(reg, cfg, world, caplog) -> None:
+    from server.db import grant_item
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=2)
+    grant_item(conn, pid, TICKET, 10)
+    res = _item_sweep(handlers, session, reg, ELITE, 10)
+    assert "328197" in caplog.text
+    _assert_unchanged(conn, pid, session, res, clean=0, tickets=10)
+
+
+def test_item_sweep_without_the_tickets_changes_nothing(reg, cfg, world, caplog) -> None:
+    from server.db import grant_item
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3)
+    grant_item(conn, pid, TICKET, 29)
+    res = _item_sweep(handlers, session, reg, ELITE, 30)
+    assert "327942" in caplog.text
+    _assert_unchanged(conn, pid, session, res, clean=0, tickets=29)
+
+
+def test_clean_elite_count_resets_after_deadline(reg, cfg, world) -> None:
+    from server.db import grant_item
+    conn, pid, handlers, session = world
+    _set_progress(conn, pid, ELITE, star=3, clean=9, deadline=1)
+    level.roll_daily_counts(conn, pid)
+    assert int(_progress(conn, pid, ELITE)["clean_elite_count"]) == 0
+    grant_item(conn, pid, TICKET, 10)
+    res = _item_sweep(handlers, session, reg, ELITE, 10)
+    assert res.level_clean_elite_count == 1
+    assert _tickets(conn, pid) == 0
