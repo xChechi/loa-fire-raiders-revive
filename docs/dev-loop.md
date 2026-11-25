@@ -852,6 +852,82 @@ Logs and DB copies (not in the repo): `C:/tmp/loa-accw21/server.err.log`, `serve
 `db-after-restart.db`, `db-end.db`, fight frames `f1-*.png`, `tapper.sh`, `cycle.sh`, `pour.sh`,
 `shooter.sh`. Frames: `docs/screens/en-2026-11-25-acc-w2-1/01-...` to `34-...` (JPEG q85).
 
+### Run 11 (Plan B2 Wave 2 ACC-W2-2, 25-11-2026): the Wave 2 systems
+
+Same AVD `LOA_API30`, warm (still up from run 10), same English APK (versionName 1.0.0.5,
+installed 24-11-2026 18:24). No rebuild: its assets were built at 18:23 and already hold
+patch 28 (`CCSize(196, 62)` in `MMAwardDropItem.lua`), the last client commit (`cd54e40`).
+Server HEAD `cebf90b` on `master`. The ACC-W2-1 world continues: `data/player.db` was
+**copied** to `data/player.db.pre-w2-acc2`. SHA-1 `62c197ee07fa3e8c752e02c9ba58218373d1b049`
+before the run and the same after it, because **every row ran on a copy** in
+`C:/tmp/loa-accw22/`, served by run 8's `throwaway_server.py <db>`. The level-8 rows (1 and 9)
+ran on `world.db`, a plain copy of the world. The raised-level rows ran on throwaway copies,
+each built from the previous row's end state with `players.level` raised. First banner
+`25-11-2026 15:02:26 INFO loa.net listening on 0.0.0.0:8112`. Fights used the five-card row
+`552/784/1016/1248/1480 x 900`, the angel card `164 900` and the wave point `1938 530`.
+
+**Outcome: 8 of 10 rows pass. Row 8 (hero trial) is partial: entry, team, fight and result
+work, but the fight was lost twice. Row 10 fails on logcat with 4 client `LUA ERROR`s on a
+daily-task claim. The server has 0 `Traceback`/`ERROR` and no new unanswered id; `5_2323` has
+left the list.**
+
+| # | Assertion | Result | Evidence |
+|---|---|---|---|
+| 1 | Angel spell and aura upgrade (level ≥ 6) | **PASS** | `world.db`, level 8. `15:04:29 loa.angel angel 500000 of player 1: spell0 5000000 -> 5000001 for 50 gold`, `15:04:40 ... spell1 5010000 -> 5010001 for 50 gold`, `15:04:57 ... aura0 5020000 -> 5020001 for 50 gold`. The panel shows Lv2 / Lv2 and the aura Lv2 at 100 (`03-...`, `04-...`). DB: `angels (500000, level 27, spell0_lv 2, spell1_lv 2, aura0_lv 2, aura1_lv 1)`, gold 1,320,648 → 1,320,498. Aura 1 (star 2) is blocked by the client, so no request is sent. Angel Power still reads 0. |
+| 2 | Elite 110000 opens and clears; item sweep (copy, level 9, item 1300 as `QA-DELETE-ME`, then removed) | **PASS** | `throwaway-elite.db`, level 9. The elite tab shows Eagle Watchpost (Elite) open (`05-...`). `15:08:24 stage 110000 entered ... 12 energy spent`, `5_2327 fight_type 2 ... team of 5`, `15:09:22 stage 110000 finished by player 1 with 3 star(s), won=True` (`06-...`). Then `players.last_elite` = 110000 and Battleaxe Fortress (Elite) opened. Item 1300 x10 was inserted as `items.id 99999` (marker file `QA-DELETE-ME-item1300.txt`). The map reads "Sweep Ticket (10)". Bag → Elite Sweep Ticket → Use opens LevelItemSweep, then Skeleton King (301000) → Eagle Watchpost → Sweep 1x (`10-...`): `15:17:41 stage 110000 item-swept x1 by player 1: 10 tickets, 1036 gold, drops []`. DB: `levels(110000).clean_elite_count 1`, the source reads 8/9, and energy is unchanged. Row 99999 was deleted by the server at 0 left. Every copy checked afterwards has 0 rows with id 99999 or entry 1300 (`11-...`, `12-...`). The stage panel's own "Sweep" is the energy sweep: `15:12:39 ... swept x1 ... 12 energy` (`09-...`). |
+| 3 | Daily tasks list, count and claim (level 10) | **PASS** | Same copy. The elite win took it to level 10, which "Unlocks: Daily Quests" (`07-...`), and the item sweep took it to 11. The list shows Hero Level Up (claimable), Deluxe Lunch (claimable after 12:00), Stage Slayer 1/10, Elite Stage Slayer 1/5, World Chat 0/1 and Hero Skill Upgrade 0/1 (`13-...`, `14-...`). Counting: `15:09:22 daily task 10070: 1/10`, `10080: 1/5`, `10100: 1/1`. Single claim: `15:19:13 claimed event 10100: [(11, 0, 50), (1, 0, 18000)]`, to level 12 (`15-...`). Claim-all: `15:20:22 claimed events [10580] of catalog 1`, rewards panel "Stamina 80" (`16-...`). DB `events` rows carry `day '2026-11-25'`: 10100 and 10580 are `done 1, claimed 1`. See finding 2 for the 80 stamina. |
+| 4 | The mystery merchant appears after enough energy and sells (copy, level 16) | **PASS** | `throwaway-mystery.db`, level 16, `mystery_energy` preset to **590** (deviation: 600 energy of real play is 50 elite entries). One 12-energy sweep: `15:22:52 loa.mystery mystery merchant appeared for player 1 after 602 energy (stay 3600)`. The merchant's line (`17-...`), the 神秘商人 sign and the stall in the city (`18-...`, `19-...`), and the shop with 12 slots and "Time Left 00:58:19" (`20-...`). `15:24:32 loa.shop player 1 bought merchandise 200020 (store 2 slot 0) for 560 in 9`: diamonds 17,488 → 16,928, `stores(2)` 12 slots with slot 0 `buy 1`, item 100000 +2. `mystery_shown 1`, `mystery_stay 3600`, `energy_use 36`. The stall was still in the city after a relaunch on the next copy. |
+| 5 | Angel trials: start, one event, one fight (copy, level 20) | **PASS** | `throwaway-angeltrial.db`, level 20. `15:26:24 8_2501 player 1: opened 0 ...`, `angel trials opened for player 1 on 25-11-2026` (`21-...`, `22-...`). Floor 1: `8_2505 player 1 floor 1 event 2`, mirror of the five heroes (`23-...`). `8_2511 ... difficulty 0`, `5_2327 fight_type 4`, then `15:28:43 8_2513 ... won True with 1 star(s); points 62, stars 1, floor now 2` (`24-...`, `25-...`). Floor 2 buff shop: `8_2505 ... floor 2 event 3`, offers `[9101, 9103, 9104]`, `15:29:49 8_2509 player 1 bought buff 9103 (effect 2) for 1 star(s)`, `AngeltrialsEndBuyBuffRes player 1 moves on to floor 3` (`26-...`, `27-...`). DB `angeltrials (opened 1, level 3, points 62, stars 0, buffs [9103])`. |
+| 6 | Gold trial run and prize (copy, level 25) | **PASS (manual); auto pays 0** | `throwaway-goldtrial.db`, level 25 (`28-...`, `29-...`). Manual run: `15:32:23 5_2213 ... stage 1000020`, `5_2327 fight_type 3`, `15:33:57 5_2215 player 1 run 1: damage 6892 (today 6892), gold 18608 + 1488 for 8 stars`. The end screen shows the same numbers, 20,096 (`30-...`), and gold rose by exactly 20,096. Auto run: `15:35:07 WARNING loa.goldtrial 5_2215 auto fight for player 1 sends damage 0; the server does not simulate fights, so it pays on that`, `run 2: damage 0 ... gold 0 + 0` (`32-...`). Prize: the 20,000 rung was not reached (`31-...`), so `gold_trails_best` was preset to 20000 (deviation). `15:37:24 5_2217 player 1 claimed rows [0] for 30000 gold, flags 0x1`, and the row is stamped 已领取. |
+| 7 | Rune feed (copy, level 35) | **PASS** | `throwaway-rune.db`, level 35, Rose Knight preset to hero level 30 (rune 1's `unlock_level`; deviation). Bag → Rune Crystal (S) → Use opens the rune circle (`33-...`). Select Hero shows "Rune Level Cap 4" (`34-...`, `35-...`). Two crystals, then Charge: `15:42:16 loa.rune hero 100000 of player 1 rune 0 op 1: level 0 -> 1, rune_val 0, 2000 gold, 0 diamonds`, HP +60 (`36-...`, `37-...`). DB `runes (1, 100000, 0, level 1, 0)`, both 1200 gone, gold −2,000. **No crash**: logcat `LUA ERROR` 0 over the whole rune capture. |
+| 8 | Hero trial (copy, level 36) | **PARTIAL** | `throwaway-herotrial.db`. At **36** no stage opens: Difficulty I (1200, marksman, Wednesday) has `herotrials_stage_info.level 40` (`HeroTryTypeLevelItem.lua:159`, `39-...`). Raised to 40 (deviation): Challenges 3/3 (`40-...`, `41-...`). `15:47:23 5_2333 trial 1200 entered`, `5_2327 fight_type 8`, `15:47:52 5_2335 trial 1200 lost by player 1, no run used` (`42-...`). Heroes then preset to level 40 and fought again: `15:51:57 ... lost ..., no run used` (`43-...`). Counters `herotrials_ss 0`, cd 0, energy unchanged (`44-...`). No win, so prizes and the cooldown were not seen. |
+| 9 | Relaunch and server-restart persistence | **PASS** | `world.db` again. Relaunch `15:54:26 login ok, player id 1`; the angel panel keeps skills Lv2/Lv2 and aura Lv2 (`45-...`, `46-...`). Server killed and restarted (`15:55:26` banner): `15:56:12 login ok, player id 1`, `created character` count 0 (`47-...`). DB before/after the restart: every table identical except `players.energy_at`, `angels.exp` 848 → 928 and `trains.cal_time`/`addxp` (the passive train settlement). |
+| 10 | Both greps = 0; unanswered ids diffed against run 10 | **server PASS (0); logcat FAIL (4); ids: one fewer, none new** | `grep -cE "Traceback\|ERROR"` = **0** in all 18 server logs (`server-{world,elite,mystery,angeltrial,goldtrial,rune,herotrial,world-2,restart}.{err,out}.log`). Logcat (12 captures, 241,439 lines): `FATAL` 0, `LUA ERROR` **4**, all `15:19:13 MMTaskListView.lua:29: attempt to index local 'data' (a nil value)` in `mCellCreateCallBack`, at the single claim of 10100, when the claimed row leaves the list. Unanswered: `5_2039` (9, one per login) and `5_2623` (2). Against run 10 (`5_2039`, `5_2623`, `5_2323`): **`5_2323` gone, nothing new**. |
+
+Findings (none blocked a row; no server code was changed in this run):
+
+1. **Gold-trial auto fight pays 0.** The client's auto fight sends `damage 0`, and
+   `goldtrial` pays on the request's damage, so the run costs an attempt and pays nothing. The
+   cause is confirmed. The fix needs a damage estimate or a simulation, so it is not a one-liner.
+2. **Deluxe Lunch at full energy pays nothing.** `db.add_energy` clamps at `max_energy`
+   (`UPDATE players SET energy = MIN(cap, energy + amount)`). The claim at 82/82 left energy at
+   82 while the panel said "Stamina 80". Whether the original lets prize energy pass the cap is
+   a decision for you.
+3. **The guide_id burst follows every fight type.** It came 5 s after the elite win
+   (`15:09:27`) and after the angel-trial win (`15:28:45`): 10160, 10159, 10290, 10330, 10380,
+   10500, 10540, 10580, and `guide_id` fell to 10380 (as runs 8 and 10).
+4. **The angel trains past the hero cap.** At the first login, `train slot 2 ... 195 ticks,
+   15648 xp to angel 500000` took Idol Angel from 19 to 27 (29 at the end; "Level Cap 40").
+5. **The sweeps do not count for Stage Slayer.** One elite fight plus an energy sweep and an
+   item sweep left 10070 at 1/10. Elite achievement kind 3342353 ("完成精英关卡 ... 3次") is not
+   counted either (log "not counted in Wave 1").
+6. **Hero trial: the plan's level 36 opens the menu, not a stage.** The first stage needs 40.
+   Even at hero level 40 the 1-star team lost in 27 s and 44 s. Stages V-VII (level 75-90) were
+   not reachable, so the **0 s cooldown question stays open**.
+7. **Not exercised:** the draw screen's "Again" ticket check (no gacha in this run), and
+   `hero_rune_develop_info` (W3). The rune panel opened, listed, fed and closed with no
+   `LUA ERROR`, so the suspected crash did not reproduce on op 1.
+8. **Untranslated / layout (client):** 普通/精英 (map tabs), 扫荡完成！, 获取途径, 联盟EXP and
+   一键领取 (quests), 神秘商人/神秘商店, 规则/奖励, 未达成/已领取 (gold ladder), 佣兵, 简单/普通/
+   困难, 添加英雄, 战士斗场/法师学院/射手丛林. Overlaps: "Idol's PowLv1" and "Upg2Star Unlock"
+   (aura), "SweepSweep 2 times", the quest rows' "Completed/Claimable" and progress over the
+   desc, the merchant's slot names, the rune and hero-trial "... Lv. to Unlock" rows, and "Total
+   Stars / Gold Bonus" on the gold line-up.
+
+Copies and their raised values (all in `C:/tmp/loa-accw22/`, never served from `data/`):
+`world.db` (level 8); `throwaway-elite.db` (9; play took it to 12); `throwaway-mystery.db`
+(16, `mystery_energy` 590); `throwaway-angeltrial.db` (20); `throwaway-goldtrial.db` (25,
+`gold_trails_best` 20000 after the runs); `throwaway-rune.db` (35, hero 100000 level 30);
+`throwaway-herotrial.db` (36 → 40, all heroes 40 before the second fight).
+
+Logs and DB copies (not in the repo): `C:/tmp/loa-accw22/server-*.{err,out}.log`,
+`logcat-part1-world.txt` to `logcat-part9-restart.txt`, `db-start.db`, `db-after-angel.db`,
+`db-after-elite-daily.db`, `db-after-mystery.db`, `db-after-angeltrial.db`,
+`db-after-goldtrial.db`, `db-after-rune.db`, `db-after-herotrial.db`, `db-before-restart.db`,
+`db-after-restart.db`, the `throwaway-*.db` files, `QA-DELETE-ME-item1300.txt`, and the helpers
+`h.sh`, `start.sh`, `stop.sh`, `switch.sh`, `snap.py`, `tapper.sh`, `throwaway_server.py`.
+Frames: `docs/screens/en-2026-11-25-acc-w2-2/01-...` to `47-...` (JPEG q85).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are

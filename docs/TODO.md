@@ -115,6 +115,22 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       screen does not refresh passive xp until it reopens; the post-fight guide burst also follows
       a win (`guide_id` 11208 → 10380); fight xp banks past the hero cap (Risk 5); angel levels
       pass the heroes' cap in training.
+      **Status 25-11-2026, evening (Wave 2 B1-B7, W2 wiring and E2 daily tasks at `cebf90b`;
+      ACC-W2-2 = run 11 in `docs/dev-loop.md` section 7, every row on a copy, `data/player.db`
+      SHA-1 unchanged):** angel spell and aura upgrades, elite 110000 (3 stars, the frontier
+      moves) with the elite item sweep (10 tickets, no energy), daily tasks (count, single claim
+      and claim-all), the mystery merchant (appears at 600 energy, sells from store 2), angel
+      trials (open, fight floor won, buff bought), the gold trial (manual run and the 20,000 rung)
+      and the rune feed (no crash) pass, and so do relaunch and server restart. The hero trial
+      enters, fights and logs a loss without using a run, but it was lost twice, and its first
+      stage needs player level **40**, not 36. Server greps 0. `5_2323` has left the unanswered
+      list and nothing new appeared. Logcat has 4 `LUA ERROR`s: `MMTaskListView.lua:29` on a
+      single daily claim. Open from that run: the gold-trial **auto fight pays 0** (the client
+      sends damage 0); **Deluxe Lunch claimed at full energy pays nothing** (`db.add_energy`
+      clamps at the cap); the post-fight guide burst follows elite and angel-trial wins too;
+      the angel passes the hero cap through passive training (19 → 29); sweeps do not count for
+      Stage Slayer; the hero-trial V-VII cooldown and the draw "Again" ticket check were not
+      reachable in this run.
       Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
