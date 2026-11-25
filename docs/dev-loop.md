@@ -928,6 +928,115 @@ Logs and DB copies (not in the repo): `C:/tmp/loa-accw22/server-*.{err,out}.log`
 `h.sh`, `start.sh`, `stop.sh`, `switch.sh`, `snap.py`, `tapper.sh`, `throwaway_server.py`.
 Frames: `docs/screens/en-2026-11-25-acc-w2-2/01-...` to `47-...` (JPEG q85).
 
+### Run 12 (Plan B2 Wave 3 A1, 25-11-2026): the level-up guides at 15-40 against the Wave 2 server
+
+Same AVD `LOA_API30`, warm (still up from run 11), same English APK (versionName 1.0.0.5), no
+rebuild. Server code: `master` HEAD **`717b87a`** at the start of the run, exported with
+`git archive` to `C:/tmp/loa-w3a1/srv/` (with read-only junctions to `.stock` and `data/en`) so
+the parallel Phase A commits could not change the served code mid-run. `master` moved to
+`d58d667` during the run (`16377ca`, `818e16a`, `d58d667`); none of those was served.
+`data/player.db` was **copied** to `C:/tmp/loa-w3a1/world.db` (level 8, `guide_id` 10490, the
+run-11 world). SHA-1 `62c197ee07fa3e8c752e02c9ba58218373d1b049` before the run and the same
+after it. Each level ran on its own copy `throwaway-L<L>.db` built from `world.db` with
+`players.level = L − 1` and `xp` = `xp_for_level(L − 1).player_xp_for_next_level − 6`, so the
+6 xp of stage 10012 lands exactly on L. Served with run 8's `throwaway_server.py <db>`; first
+banner `25-11-2026 17:29:30 INFO loa.net listening on 0.0.0.0:8112`. Every fight was 10012
+(Battleaxe Fortress) with the five-card row, all won with 3 stars.
+
+The guide each level fires is the client's own `functions.db` row (`function.unlock_level` →
+`new_player_guide_id`, read by `MMPlayerUpgradePanel.lua:147-175`, which sends `5_2041` through
+`setNewFunGuideId`). Chains below are the client's "准备播放引导" lines (every step played); the
+server line `guide_id N saved` appears only for rows with `is_save = 1`.
+
+**Outcome: no level locks the city. Five guides (20, 25, 30, 35, 36) run to 99999. Two stop
+part-way, at 15 (arena, step 11710) and 40 (guild vault, step 14203), because the next step's
+node never exists on our server/client. Both leave a saved `guide_id` whose `jump_id` replays
+the guide at every login, and that replay masks the city until the player taps the pointed
+button (Arena or Guild) once and backs out. Server `Traceback|ERROR` 0, logcat `LUA ERROR` 0.**
+
+| L | Guide chain (client) | City usable? (Bag, then Hero) | Unanswered ids | `LUA ERROR` | Evidence |
+|---|---|---|---|---|---|
+| 15 | 11700 → 11710 **(no node)**; stops. `guide_id` 11700 | **Yes** after the guide; **masked at every login** until Arena is tapped (see 1) | `5_2039`, `5_2623`, **`7_3001`**, **`7_3009`** | 0 (31,090 + 16,825 lines) | `L15-01-...` to `L15-13-...` |
+| 20 | 11800 → 11810 → 11820 → 99999. `guide_id` 11820 | Yes | `5_2039`, `5_2623` | 0 (25,938) | `L20-01-...` to `L20-92-...` |
+| 25 | 11600 → 11630 → 11640 → 99999. `guide_id` 11640 | Yes | `5_2039`, `5_2623` | 0 (25,143) | `L25-01-...` to `L25-92-...` |
+| 30 | 13002 → 13003 → 99999. `guide_id` 13003 | Yes | `5_2039`, `5_2623`, **`5_2403`** | 0 (24,562) | `L30-01-...` to `L30-92-...` |
+| 35 | 12610 → 12611 → 12620 → 12630 → 12640 → 12650 → 12660 → 12670 → 12680 → 99999. `guide_id` 12680 | Yes | `5_2039`, `5_2623` | 0 (29,737) | `L35-01-...` to `L35-92-...` |
+| 36 | 12710 → 12730 → 12740 → 99999. `guide_id` 12740 | Yes | `5_2039`, `5_2623` | 0 (25,548) | `L36-01-...` to `L36-92-...` |
+| 40 | 14202 → (14203 never checked); stops. `guide_id` 14202 | **Yes** after the guide; **masked at every login** until Guild is tapped (see 2) | `5_2039`, `5_2623`, **`5_2403`** | 0 (24,496 + 9,232) | `L40-01-...` to `L40-95-...` |
+
+`grep -cE "Traceback|ERROR"` = **0** in all 14 server logs (`server-L<L>.{err,out}.log`). Logcat
+`FATAL` 0 in all nine captures. "Unanswered" counts both the silent `5_2039` and the zero-stubbed
+ids; `5_2039` and `5_2623` are answered on `master` since `d58d667`, which this run did not serve.
+
+Findings (no server code was changed in this run):
+
+1. **Arena guide, level 15: 11710 has no node.** The Arena button opens the 2x2 arena hub (Arena /
+   Ancient Arena / Cross-Server Showdown / Cross-Server Peak Battle). Guide 11710's check point is
+   registered only by `TryTypeSelectBasePanel:initGuidePoint` (`TryTypeSelectBasePanel.lua:228`),
+   which is the Trial carousel. The arena hub never registers it, so logcat says
+   `没有找到对应引导的node 11710` and the chain stops. 11720 (Defense, `TopButtonPanel.lua:90`) is
+   registered when the arena opens but is refused, because the guide is still waiting for 11710.
+   No server answer can register 11710's node. The exact sequence:
+   - `17:32:31 stage 10012 finished ... won=True`;
+   - `17:33:19 guide_id 11700 saved` (level-up panel);
+   - OK → city, Princess "The Arena is open!", hand on Arena; **Bag is ignored** under this mask;
+   - tap Arena → `17:33:48 guide_id 11700 saved`, client `准备播放引导..11710`,
+     `没有找到对应引导的node 11710`; the hub opens with no hand;
+   - tap Arena (door) → `17:34:21 no handler for 7_3001 ArenaJoinReq, answering a zero stub`:
+     Rank 0, Power 0, Attempts 5/5, four empty opponent cards (`L15-06-...`);
+   - by hand, Defense (防守) → lineup → Confirm → `17:34:54 no handler for 7_3009
+     ArenaAdjustRoleReq, answering a zero stub`; the panel then shows Power 5000 (`L15-07-...`);
+   - back ×2 → city free; Bag and Heroes open (`L15-08-...`, `L15-09-...`).
+
+   After a relaunch the saved 11700 jumps to 11701 (`jump_id`), so the client replays
+   11701 → 11700 at login. The city is masked again (Bag ignored, `L15-12-...`) until Arena is
+   tapped and backed out of (`17:37:53 guide_id 11700 saved`, Bag opens, `L15-13-...`). This
+   repeats at every login.
+2. **Guild-vault guide, level 40: 14203 is never reached.** 14202 points at Guild, which opens the
+   guild list (`18:05:42 no handler for 5_2403 QueryGuildReq, answering a
+   zero stub`, "You haven't joined a Guild yet", empty list). 14203's check point is in
+   `ConsortiaBuild.lua:37`, the guild scene, which a player without a guild never opens. The
+   saved 14202 has `jump_id` 14201, so the relaunch replays "The Guild Vault is open" with the hand
+   on Guild and the same mask (`L40-93-...`, `L40-94-...`). Guild → back frees the city
+   (`18:08:06 guide_id 14202 saved`, Bag opens, `L40-95-...`). 14201 itself (`is_over 0`,
+   `nextid` 14202) is only the login re-entry, not a level-up step.
+3. **The guild guide at 30 finishes even with no guild.** 13002 → Guild → `5_2403` zero stub →
+   13003 (talk) → 99999. Nothing replays, because 13003's `nextid` is 99999.
+4. **The trial guides find their nodes.** The Trial button opens `TryTypeSelectBasePanel`, which
+   registers 11810, 11630 and 12730. Angel trial (`8_2501`, `17:42:16 angel trials opened`), gold
+   trial and hero trial each open on their card. At 36 the hero-trial guide ends on the menu (Trial
+   Grounds 战士斗场/法师学院/射手丛林); no stage opens below level 40 (run 11, finding 6).
+5. **The rune guide at 35 performs a real feed.** 12650/12660 point at the first bag item (the
+   finger sits on item 2 but points left at item 1; a tap on item 2 does nothing). Two crystals,
+   then Charge: `17:57:00 loa.rune hero 209000 of player 1 rune 0 op 1: level 0 -> 1, rune_val 0,
+   2000 gold, 0 diamonds`. Daily task 14010 counted 1/1. No `LUA ERROR`.
+6. **The post-fight burst fix holds.** After every 10012 win the client sent 10160, 10159, 10290,
+   10330, 10380, 10500, 10540 and 10580. The server logged `... is not the next step of 10490, not
+   saved` or `has no new_player_guide_info row, refused`, and `guide_id` stayed at 10490 until the
+   level-up guide saved its own id (`ff8ce25`, never seen on the emulator before).
+7. **The copies' heroes levelled at login.** The world's three `trains` rows settled hours of
+   passive ticks at each first login (e.g. `17:30:18 train slot 1 ... 342 ticks, 5445 xp to hero
+   104000`), so the trained heroes arrived at 21-33 instead of 17. That came from the copy's age,
+   not from the guides.
+8. **Untranslated / layout (client):** 规则/奖励 on the arena and trial cards, 防守/商店/排行/战报/
+   积分 and 换一批 in the arena, 添加英雄 (rune circle), the gold-trial princess bubbles, the
+   hero-trial ground names, the "Lv. to Unlock" overlaps on the rune hero list, and "Max Stamina"
+   drawn with a broken digit font on some level-up panels (`L15-03-...`).
+
+**O-W3-2 outcome: no hard wedge.** The arena (15) and guild-vault (40) guides each leave a
+login-time mask that one tap on the pointed button clears. Whether that counts as a wedge for
+A1b is your decision. A1b's planned `7_3001`/`7_3009` answers would not complete 11700 either,
+because the missing step 11710 is a client node the arena hub never creates. The only server
+lever is how a saved 11700/14202 is treated at login.
+
+Copies (all in `C:/tmp/loa-w3a1/`, never served from `data/`): `world.db` (the start snapshot),
+`throwaway-L{15,20,25,30,35,36,40}.db` (level L − 1, xp 6 short) and their end states
+`db-after-L<L>.db`. Logs: `server-L<L>.{err,out}.log`, `logcat-L<L>.txt`,
+`logcat-L15-relaunch.txt`, `logcat-L40-relaunch.txt`. Helpers: `h.sh`, `start.sh`, `stop.sh`,
+`switch.sh`, `fight.sh`, `citycheck.sh`, `save.sh`, `snap.py`, `tapper.sh`,
+`throwaway_server.py`, and `srv/` (the `717b87a` export). Frames:
+`docs/screens/en-2026-11-26-w3-a1/L<L>-NN-...` (80 frames, JPEG q85).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are

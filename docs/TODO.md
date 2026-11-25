@@ -139,6 +139,14 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       sweeps count `times` toward Stage Slayer 10070 / 10080 (`7b1081a`); the draw screen's "Again"
       on a ticket card is refused without the tickets instead of charging diamonds (`589e039`).
       Ready for your emulator pass, not done.
+      **Status 25-11-2026, night (Wave 3 A1 = run 12 in `docs/dev-loop.md` section 7, server
+      `717b87a`, every level on a copy, `data/player.db` SHA-1 unchanged):** the level-up guides
+      at 20, 25, 30, 35 and 36 run to the end, and the city stays usable at every level. The
+      arena guide (15) stops at 11710, whose node only the Trial carousel registers, and the
+      guild-vault guide (40) stops before 14203 in the guild scene. Both saved ids replay at
+      every login and mask the city until Arena or Guild is tapped once (O-W3-2: no hard wedge;
+      A1b is your call). Server greps 0, logcat `LUA ERROR` 0; new unanswered ids `7_3001`,
+      `7_3009` (15) and `5_2403` (30, 40).
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)
 
