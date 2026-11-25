@@ -550,6 +550,37 @@ PATCHES: tuple[Patch, ...] = (
           'timeStr = timeTab.year .. "-" .. timeTab.month .. "-"..timeTab.day;',
           'timeStr = string.format("%02d-%02d-%04d", timeTab.day, timeTab.month, '
           "timeTab.year);"),
+    # 27. NormalShopRender: the item name under a 210-wide shop slot is one
+    #     unbounded line; "Soul Stone (Lunar Priestess)" ran into the next
+    #     slot's name. A 216 x 56 box, centred both ways: patch 12 wraps it
+    #     onto two lines (size 16-20) no wider than 186 (its 0.86 of 216).
+    #     The store's clip edge sits about 88 left of the first column's
+    #     slot centre (it cut "ul Stone" in stock), so the widest drawn line,
+    #     measured with a plain probe label plus the 2 per glyph of its
+    #     stroke (as patch 12 counts it), is scaled to at most 168; a 200
+    #     box instead put long names on three tiny lines. Patch 12 squeezes a
+    #     box under 1.8 line heights onto one line, and msyh.ttf at 22 is 30
+    #     high: a 46-high box ran the name onto one line at the minimum size
+    #     and the engine broke it mid-word ("Knig|ht") on the AVD. Two lines
+    #     at 20 (about 27 each, 1.37 of the size) did not fit under the slot:
+    #     measured on the AVD
+    #     the price plate ends near y -79, the next row's slot starts near
+    #     -131 and the scroll view clips the bottom row near -122. The name
+    #     moves up to -100 and is scaled so its lines take at most 40.
+    Patch("scripts/app/game/view/ui/normalShop/NormalShopRender.lua",
+          'self.nameTfd = g_cocoGUI_creator:createMMLabel("", 22, ccp(102, -105));',
+          'self.nameTfd = g_cocoGUI_creator:createMMLabel("", 22, ccp(102, -100), '
+          "CCSize(216, 56), ui.TEXT_ALIGN_CENTER); "
+          "self.nameTfd:setVerticalAlignment(kCCVerticalTextAlignmentCenter);"),
+    Patch("scripts/app/game/view/ui/normalShop/NormalShopRender.lua",
+          "    self.nameTfd:setString(itemData.itemVo.name);\n",
+          "    self.nameTfd:setString(itemData.itemVo.name);\n"
+          '    local lines, widest = 0, 0; '
+          'for line in (self.nameTfd:getString() .. "\\n"):gmatch("(.-)\\n") do '
+          "lines = lines + 1; widest = math.max(widest, CCLabelTTF:create(line, "
+          "self.nameTfd:getFontName(), self.nameTfd:getFontSize()):getContentSize().width + 2 * #line) end; "
+          "local h = lines * self.nameTfd:getFontSize() * 1.37; "
+          "self.nameTfd:setScale(math.min(1, 40 / h, 168 / math.max(widest, 1)))\n"),
 )
 
 COPY_DIRS = ("res", "scripts", "fonts")

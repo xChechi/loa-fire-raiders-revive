@@ -27,6 +27,7 @@ TOUCHED = (
     "scripts/app/game/view/ui/angel/AngelPreviewDes.lua",
     "scripts/app/game/view/ui/email/EmailRenderBox.lua",
     "scripts/app/game/utils/MMTools.lua",
+    "scripts/app/game/view/ui/normalShop/NormalShopRender.lua",
 )
 
 
@@ -533,4 +534,23 @@ def test_patch_26_dates_read_day_month_year(assets: Path) -> None:
     assert ('timeStr = string.format("%02d-%02d-%04d", timeTab.day, timeTab.month, '
             "timeTab.year);") in tools
     assert 'timeTab.year .. "-" .. timeTab.month' not in tools
+
+
+def test_patch_27_wraps_shop_slot_names_to_the_slot_width(assets: Path) -> None:
+    apply_patches(assets, server_ip="10.0.2.2", username="stefan", port=8112)
+    render = (assets / "scripts/app/game/view/ui/normalShop/NormalShopRender.lua").read_text(
+        encoding="utf-8"
+    )
+    assert ('self.nameTfd = g_cocoGUI_creator:createMMLabel("", 22, ccp(102, -100), '
+            "CCSize(216, 56), ui.TEXT_ALIGN_CENTER); "
+            "self.nameTfd:setVerticalAlignment(kCCVerticalTextAlignmentCenter);") in render
+    # the wrapped lines are scaled to the 40 between the price plate and the
+    # clip below, and the widest line to the 168 inside the store's clip edge
+    scale = ('for line in (self.nameTfd:getString() .. "\\n"):gmatch("(.-)\\n") do '
+             "lines = lines + 1; widest = math.max(widest, CCLabelTTF:create(line, "
+             "self.nameTfd:getFontName(), self.nameTfd:getFontSize()):getContentSize().width + 2 * #line) end; "
+             "local h = lines * self.nameTfd:getFontSize() * 1.37; "
+             "self.nameTfd:setScale(math.min(1, 40 / h, 168 / math.max(widest, 1)))")
+    assert render.count(scale) == 1
+    assert render.index("self.nameTfd:setString(itemData.itemVo.name);") < render.index(scale)
 
