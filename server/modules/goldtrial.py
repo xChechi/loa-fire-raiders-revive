@@ -60,7 +60,7 @@ from datetime import date
 
 from server import db
 from server.config import Config
-from server.modules import item, level, notify
+from server.modules import events, item, level, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -213,6 +213,7 @@ def handlers(
             _pay_gold(session, pid, gold + addition)
         else:
             conn.commit()
+        events.bump(conn, cfg, registry, session, pid, events.KIND_FIGHT, events.FIGHT_GOLD_TRIAL)
         log.info(
             "5_2215 player %d run %d: damage %d (today %d), gold %d + %d for %d stars",
             pid, times, damage, total, gold, addition, stars,

@@ -378,6 +378,7 @@ def handlers(
             {"gold": changed["gold"], "diamond": changed["diamond"]},
         )
         events.refresh(conn, cfg, registry, session, player_id)
+        events.bump(conn, cfg, registry, session, player_id, events.KIND_GACHA, now=now_of())
         log.info(
             "banner %s drawn for player %d: %s", gacha_id, player_id,
             [(d.category, d.refer, d.amount) for d in rolled],

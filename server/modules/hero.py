@@ -738,6 +738,7 @@ def handlers(
         conn.commit()
         notify.player_changed(registry, session, {"gold": _gold(pid)})
         notify.hero_changed(registry, session, int(row["entry"]), {f"spell{index}": spell})
+        events.bump(conn, cfg, registry, session, pid, events.KIND_HERO_SKILL)
         log.info("hero %d of player %d skill %d to level %d (%d) for %d gold",
                  row["entry"], pid, index, level, spell, cost)
         return _res(name, STATUS_OK, **echo)

@@ -35,7 +35,7 @@ from datetime import date
 
 from server import db
 from server.config import Config
-from server.modules import notify
+from server.modules import events, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -202,6 +202,7 @@ def handlers(
         notify.player_changed(registry, session, {
             "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
         })
+        events.bump(conn, cfg, registry, session, pid, events.KIND_BUY_GOLD, n=times)
         log.info("player %d bought gold x%d for %d diamonds: %s crit %s (%d/%d today)",
                  pid, times, price, list(res.gold), list(res.crit), used + times, most)
         return res

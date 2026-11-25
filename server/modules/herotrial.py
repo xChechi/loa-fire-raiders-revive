@@ -52,7 +52,7 @@ from typing import Callable
 
 from server import db
 from server.config import Config
-from server.modules import drops, item, level, notify
+from server.modules import drops, events, item, level, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -241,6 +241,8 @@ def handlers(
             item.mark_converted(res.prizes, granted)
             item.announce(registry, session, granted)
             notify.items_changed(registry, session, granted["items"])
+            events.bump(conn, cfg, registry, session, pid, events.KIND_FIGHT,
+                        events.FIGHT_HERO_TRIAL, now=now)
             notify.player_changed(registry, session, {
                 "gold": granted["gold"], "diamond": granted["diamond"],
             })

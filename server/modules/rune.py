@@ -32,7 +32,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import hero, notify
+from server.modules import events, hero, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -242,6 +242,7 @@ def handlers(
             registry, session, entry,
             {k: v for k, v in fields.items() if k in {"ability", *hero.STAT_NAMES}},
         )
+        events.bump(conn, cfg, registry, session, pid, events.KIND_HERO_RUNE)
         log.info("hero %d of player %d rune %d op %d: level %d -> %d, rune_val %d,"
                  " %d gold, %d diamonds", entry, pid, idx, op, level, new_level,
                  new_exp, gold, diamond)

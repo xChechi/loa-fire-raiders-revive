@@ -97,7 +97,7 @@ from collections.abc import Callable
 
 from server import db
 from server.config import Config
-from server.modules import drops, item, level as stage, notify, team
+from server.modules import drops, events, item, level as stage, notify, team
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -722,6 +722,7 @@ def handlers(
             }
             pending["difficulty"] = -1
         save_state(conn, pid, state)
+        events.bump(conn, cfg, registry, session, pid, events.KIND_ANGEL_TRIAL, now=now_of())
         log.info(
             "8_2513 player %d floor %d difficulty %d: won %s with %d star(s); "
             "points %d, stars %d, floor now %d",

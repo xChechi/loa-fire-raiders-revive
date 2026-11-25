@@ -6,7 +6,9 @@ At level 1 the active catalog-0 roots are 10270 / 21000 (kind 1, own 5 heroes),
 child is 10280 (own 6 heroes); 10270 pays drop 150260 = 3x item 1110.
 """
 
+import logging
 import random
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -224,6 +226,157 @@ def test_a_done_event_pushes_the_done_flag(reg, cfg, world) -> None:
     events.refresh(conn, cfg, reg, session, pid)
     done = [m for m in _task_notifies(session) if m.refer == 10270]
     assert [m.flags for m in done] == [0b100]
+
+
+# --- daily tasks (catalog 1, Wave 2 E2) ------------------------------------------
+# Function 10430 opens the daily tab at level 10. Active then: 10022 potion,
+# 10060 gacha x3, 10070 any stage x10, 10080 elite x5, 10100 hero level,
+# 10101 hero skill, 10580 / 10590 lunch / dinner (kind 4), 53010 chat (unmapped).
+
+DAILY_AT_10 = {10022, 10060, 10070, 10080, 10100, 10101, 10580, 10590, 53010}
+
+
+def _at(day: int, hour: int, minute: int = 0) -> float:
+    """A local timestamp in November 2026."""
+    return datetime(2026, 11, day, hour, minute).timestamp()
+
+
+def _set_level(conn, pid, lvl) -> None:
+    conn.execute("UPDATE players SET level = ? WHERE id = ?", (lvl, pid))
+    conn.commit()
+
+
+def _daily_rows(conn, pid) -> dict:
+    return {
+        int(r["entry"]): r for r in conn.execute(
+            "SELECT * FROM events WHERE player_id = ? AND day != ''", (pid,)
+        )
+    }
+
+
+def _clocked(reg, settings, conn, cfg, clock):
+    return events.handlers(reg, settings, conn, cfg, rng=random.Random(1),
+                           clock=lambda: clock[0])
+
+
+def test_daily_rows_appear_at_their_unlock_level(reg, cfg, world) -> None:
+    conn, pid, _, _ = world
+    now = _at(25, 10)
+    _set_level(conn, pid, 9)                          # 10100 unlocks at 9, the tab at 10
+    events.refresh(conn, cfg, reg, None, pid, now)
+    assert _daily_rows(conn, pid) == {}
+    _set_level(conn, pid, 10)
+    events.refresh(conn, cfg, reg, None, pid, now)
+    rows = _daily_rows(conn, pid)
+    assert set(rows) == DAILY_AT_10                   # 10030 / 10040 wait for level 18
+    assert {r["day"] for r in rows.values()} == {"2026-11-25"}
+    assert all(_state(conn, pid, e) == (0, 0, 0) for e in DAILY_AT_10)
+
+
+def test_bump_stage_win_counts_normal_and_elite(reg, cfg, settings, world) -> None:
+    from server.modules import level
+
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    handlers = level.handlers(reg, settings, conn, cfg, rng=random.Random(1))
+
+    def fight(lvl, star):
+        handlers[(5, 2201)](session, reg.message_class("LevelIntoReq")(level=lvl))
+        handlers[(5, 2203)](
+            session, reg.message_class("LevelOutReq")(level=lvl, star=star, angel=0)
+        )
+
+    fight(10000, 0)                                   # a lost stage counts nothing
+    assert _row(conn, pid, 10070) is None or _state(conn, pid, 10070) == (0, 0, 0)
+    fight(10000, 3)                                   # normal: 10070 only
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((1, 0, 0), (0, 0, 0))
+    session.outbox.clear()
+    fight(110000, 3)                                  # elite: 10070 and 10080
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((2, 0, 0), (1, 0, 0))
+    assert {10070, 10080} <= {m.refer for m in _task_notifies(session)}
+    # direct bumps: the gold and hero trials (arg1 3 / 4) are other rows
+    events.bump(conn, cfg, reg, session, pid, events.KIND_FIGHT, events.FIGHT_GOLD_TRIAL)
+    assert _state(conn, pid, 10070) == (2, 0, 0)
+    # a bump stops at arg0 and marks it done
+    events.bump(conn, cfg, reg, session, pid, events.KIND_FIGHT, events.FIGHT_ELITE, n=9)
+    assert (_state(conn, pid, 10070), _state(conn, pid, 10080)) == ((10, 1, 0), (5, 1, 0))
+
+
+def test_daily_resets_at_5am(reg, cfg, settings, world) -> None:
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    clock = [_at(25, 4, 59)]                          # still the day of 24-11-2026
+    handlers = _clocked(reg, settings, conn, cfg, clock)
+    for _ in range(3):
+        events.bump(conn, cfg, reg, session, pid, events.KIND_GACHA, now=clock[0])
+    assert _state(conn, pid, 10060) == (3, 1, 0)
+    assert _row(conn, pid, 10060)["day"] == "2026-11-24"
+    assert _award(reg, handlers, session, 10060).status == 0
+    assert _state(conn, pid, 10060) == (3, 1, 1)
+    assert _award(reg, handlers, session, 10060).status == events.STATUS_UNKNOWN
+    session.outbox.clear()
+    clock[0] = _at(25, 5, 0)
+    events.refresh(conn, cfg, reg, session, pid, clock[0])
+    assert _state(conn, pid, 10060) == (0, 0, 0)
+    assert _row(conn, pid, 10060)["day"] == "2026-11-25"
+    assert 10060 in [m.refer for m in _task_notifies(session)]
+    # an achievement is not a daily row: its state survives the boundary
+    assert _row(conn, pid, 10270)["day"] == ""
+
+
+def test_lunch_energy_claimable_only_after_12(reg, cfg, settings, world) -> None:
+    from server.db import find_player
+
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    clock = [_at(25, 11, 59)]
+    handlers = _clocked(reg, settings, conn, cfg, clock)
+    conn.execute("UPDATE players SET energy = 0 WHERE id = ?", (pid,))
+    conn.commit()
+    assert _award(reg, handlers, session, 10580).status == events.STATUS_NOT_DONE
+    clock[0] = _at(25, 12, 0)
+    assert _award(reg, handlers, session, 10580).status == 0
+    # drop 150430 is 80 energy; db.add_energy clips at the level's max_energy
+    cap = int(cfg.xp_for_level(10)["max_energy"])
+    assert int(find_player(conn, "stefan")["energy"]) == min(80, cap)
+    assert _award(reg, handlers, session, 10590).status == events.STATUS_NOT_DONE
+    clock[0] = _at(26, 4, 59)                         # dinner is open until 05:00
+    assert _award(reg, handlers, session, 10590).status == 0
+    clock[0] = _at(26, 5, 0)                          # a new day: lunch is not open yet
+    events.refresh(conn, cfg, reg, None, pid, clock[0])
+    assert _state(conn, pid, 10580) == (0, 0, 0)
+
+
+def test_award_all_type1_claims_only_daily(reg, cfg, settings, world) -> None:
+    conn, pid, _, session = world
+    _set_level(conn, pid, 10)
+    _heroes(conn, pid, 5)                             # achievement 10270 is done too
+    clock = [_at(25, 10)]
+    handlers = _clocked(reg, settings, conn, cfg, clock)
+    events.bump(conn, cfg, reg, session, pid, events.KIND_GACHA, n=3, now=clock[0])
+    res = handlers[(5, 2243)](session, reg.message_class("AllEventAwardReq")(type=1))
+    res.SerializeToString()
+    assert (res.eventNum, res.type, list(res.entrys)) == (1, 1, [10060])
+    assert len(res.drops) > 0
+    assert _state(conn, pid, 10060)[2] == 1
+    assert _state(conn, pid, 10270) == (5, 1, 0)
+    again = handlers[(5, 2243)](session, reg.message_class("AllEventAwardReq")(type=0))
+    assert 10060 not in again.entrys and 10270 in again.entrys
+
+
+def test_unmapped_kinds_stay_zero_logged_once(reg, cfg, world, monkeypatch, caplog) -> None:
+    conn, pid, _, session = world
+    _set_level(conn, pid, 22)        # 10090 arena, 14030-14070 guild, 20000+ nobility
+    monkeypatch.setattr(events, "_logged_kinds", set())
+    caplog.set_level(logging.INFO, logger="loa.events")
+    now = _at(25, 10)
+    events.refresh(conn, cfg, reg, session, pid, now)
+    events.bump(conn, cfg, reg, session, pid, 3604487, now=now)
+    events.refresh(conn, cfg, reg, session, pid, now)
+    for entry in (10090, 14030, 14060, 53010, 20000):  # 20000 has arg0 0: still not done
+        assert _state(conn, pid, entry) == (0, 0, 0)
+    logged = [r for r in caplog.records if "daily task kind 3604487" in r.getMessage()]
+    assert len(logged) == 1
 
 
 # --- call sites ---------------------------------------------------------------

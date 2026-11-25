@@ -264,6 +264,7 @@ def handlers(
 
         granted = {"gold": int(row["gold"]), "diamond": int(row["diamond"]), "items": []}
         hero_xp: list[tuple[int, int, int]] = []
+        levels_before: dict[int, int] = {}
         angel_xp: tuple[int, int] | None = None
         xp_change = {"before": None, "after": None, "levelled": False}
         prizes: list[tuple[int, int, int]] = []
@@ -291,6 +292,10 @@ def handlers(
                 xp_change = db.add_player_xp(
                     conn, cfg, player_id, int(stage["player_xp"] or 0)
                 )
+                levels_before = {  # reversed: the lowest id wins, as in add_hero_xp
+                    int(h["entry"]): int(h["level"])
+                    for h in reversed(db.heroes_of(conn, player_id))
+                }
                 hero_xp = db.add_hero_xp(
                     conn, cfg, player_id, list(req.heroes), int(stage["unit_xp"] or 0)
                 )
@@ -390,6 +395,12 @@ def handlers(
         )
         if won:
             events.refresh(conn, cfg, registry, session, player_id)
+            events.bump(conn, cfg, registry, session, player_id, events.KIND_FIGHT,
+                        events.FIGHT_ELITE if elite else events.FIGHT_NORMAL)
+            levelled = sum(1 for e, lv, _ in hero_xp if lv > levels_before.get(e, lv))
+            if levelled:
+                events.bump(conn, cfg, registry, session, player_id,
+                            events.KIND_HERO_LEVEL, n=levelled)
         fill_required(res)
         return res
 

@@ -36,7 +36,7 @@ from collections.abc import Callable
 
 from server import db
 from server.config import Config
-from server.modules import hero, notify
+from server.modules import events, hero, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -198,6 +198,8 @@ def apply_xp(
                 registry, session, int(entry),
                 hero.hero_notify_fields_with_runes(registry, cfg, row, hero.runes_of(conn, row)),
             )
+        if int(row["level"]) != before_level:
+            events.bump(conn, cfg, registry, session, pid, events.KIND_HERO_LEVEL)
     else:
         level, exp = db.add_angel_xp(conn, cfg, pid, entry, gain)
         if always or level != before_level:
@@ -437,6 +439,7 @@ def handlers(
         notify.items_changed(registry, session, [(entry, left)])
         given = apply_xp(registry, cfg, conn, session, player, kind, refer, used * per,
                          always=True)
+        events.bump(conn, cfg, registry, session, pid, events.KIND_XP_POTION, now=now_of())
         log.info("player %d uses %dx %d (of %d asked) on train slot %d: %d xp",
                  pid, used, entry, amount, train, given)
         return _res(name, STATUS_OK, pid, train)
