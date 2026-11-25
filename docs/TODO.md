@@ -83,6 +83,25 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       still unreached; sweep needs level 8. A lost fight's guide burst can lower `guide_id` until
       the next relaunch re-saves it. Fixed on 25-11-2026: `5_2149` sell-all is answered
       (`56038c6`), and 累计签到礼包 / 已领取 / 已售 are in English (`b044af3`).
+      **Status 25-11-2026 (boss 10022 diagnosis = run 9 in `docs/dev-loop.md` section 7, 605
+      tests):** the loss is **not a server bug**. The server's `unit` block is what the client
+      fights with and what the Attributes tab shows (level growth, gear and quality all land;
+      `Power 1000` is cosmetic), the enemies come from the client's own tables, and by the engine's
+      formula the three level-3 one-star heroes are about five times too weak for the wave-3 dragon
+      (1,189 HP, 37 attack; two more losses, `09:06:29` and `09:11:38`). The original's levers for
+      this point are listed in run 9 and are **design decisions for you**, none implemented:
+      `5_2103 HeroSkillUpReq` (no handler; `spell_level_up` allows skill level 2 at hero level 3),
+      Train with XP potions (`5_2139` is a stub), the free daily diamond draw (`gacha_info`
+      2400000 `free_times 1`; charged 2,000 diamonds today) scripted by
+      `FIRST_DIAMOND_GACHA_AFTER_NEWGUIDE` 182000 to pay a level-5 2-star hero (ignored today),
+      `NEW_PLAYER_PRIZE` 10003800 (200 XP potions, 600 diamonds, 200,000 gold, a hero's worth of
+      stones; delivery unknown, not granted), and extending the support NPC to 10022 (the memo
+      says stages 1-2). One bug fixed on the way: a prize hero (7-day gift day 2's 3-star 304000,
+      the 182000 pool) was born at star 1 level 1 instead of `hero_info.star`/`init_level`
+      (`de0d03a`). Two corrections to the facts above: the boss stage shows a **2:30 timer per
+      wave**, and the **angel's rage never rose** from its 50 % start in either fight (stock
+      client path, not chased). The chapter chest, achievement kind 2 and guide 10400 stay behind
+      10022 until one of the levers is chosen.
       Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)

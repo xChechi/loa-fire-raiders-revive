@@ -650,6 +650,127 @@ Logs and DB copies (not in the repo): `C:/tmp/loa-acc2/server.log`, `server-rest
 `real-before-throwaway.db`, `throwaway-{mail,shop,gift}.db`. Frames:
 `docs/screens/en-2026-11-24-acc2/01-...` to `25-...` (JPEG q85).
 
+### Run 9 (boss 10022 diagnosis, 25-11-2026): why the chapter-1 boss is lost, and what the original does
+
+Same AVD `LOA_API30`, warm, same English APK (versionName 1.0.0.5), no rebuild (no Lua change).
+Branch `plan-b2-wave1`, server HEAD `fd1a303` for the diagnosis, `de0d03a` after the one fix.
+The ACC-2 world continues: `data/player.db` was **copied** to `data/player.db.pre-boss-diag`
+(SHA-1 `837c9693...`, identical before the run). Server banner
+`25-11-2026 08:59:22 INFO loa.net listening on 0.0.0.0:8112`, `09:00:40 login ok, player id 1`.
+Fights were driven with `C:/tmp/loa-boss/tapper9.sh` over the measured three-card row
+`787 895 / 1018 895 / 1250 895`, the angel card `163 895` and the wave point `1938 530`.
+
+**Outcome: 10022 lost twice more (`09:06:29` and `09:11:38`, 0 stars, 12 energy). The loss is
+not a server bug. Every stat the server sends is what the client fights with, level growth,
+gear and quality all reach the fight, and by the engine's own damage formula three level-3
+one-star heroes are about five times too weak for the wave-3 dragon (1,189 HP, 37 attack).
+The original expects a new player to grow before this stage; the levers it offers are
+Train (hero XP potions), Skill Upgrade, the free daily diamond draw that is scripted to pay a
+3-star hero right after the guide, and the 7-day gift hero, and the first three of those do
+nothing on our server. One real bug was found on the way and fixed: a prize hero was born at
+star 1, level 1 instead of `hero_info.star` / `init_level` (`de0d03a`).**
+
+**1. Do gear, quality and level reach the battle stats? Yes.** The client applies the server's
+`unit` block verbatim: `BattleUnit:initByPropertyUnit(unit)` copies the 24 stats one for one
+(BattleUnit.lua:4145-4171), and the campaign factory refreshes the local hero from the 5_2327
+answer (`BattleFactoryBase:initUnitData` → `ClientHero:refreshFightData(serverInfo)` →
+`unit:refresh(data.unit)`, BattleFactoryBase.lua:215-231, ClientHero.lua:232-246). The hero's
+Attributes tab shows the same numbers (`04-rose-knight-attributes-match-server-unit.jpg`):
+
+| Rose Knight 100000, q20, L3 (ACC-2 row) | server `unit` | Attributes tab |
+|---|---|---|
+| max_hp / power / defence / magic_defence | 211 / 31.69 / 15.13 / 14.60 | HP 211 / P.ATK 32 / P.DEF 15 / M.DEF 15 |
+| agility / hit / dodge / crit / tenacity / block | 13.28 / 0.66 / 7.84 / 1.10 / 4.36 / 3.74 | 13 / 1 / 7 / 1 / 4 / 3 |
+
+Variants (`server.modules.hero.build_client_hero` on a read-only copy of the ACC-2 DB):
+
+| hero / variant | proto | max_hp | power | defence | spells |
+|---|---|---|---|---|---|
+| 100000 L1 q10 no gear | 100000 | 100 | 15.0 | 5.0 | [1000000] |
+| 100000 L3 q10 no gear | 100000 | 181 | 25.7 | 12.1 | [1000000] |
+| 100000 L3 q10 + the six q10 items | 100000 | 466 | 60.7 | 26.1 | [1000000] |
+| **100000 L3 q20 no gear (now)** | 100010 | 211 | 31.7 | 15.1 | [1000000, 1001000] |
+| 100000 L6 q20 no gear | 100010 | 334 | 47.7 | 25.8 | [1000000, 1001000] |
+| 104000 L1 / **L3 + 10030 (now)** | 104000 | 200 / 358 | 7.0 / 22.0 | 2.0 / 7.5 | [1040000] |
+| 210000 L1 / **L3 + 10000 (now)** | 210000 | 200 / 269 | 7.0 / 24.6 | 0.0 / 7.3 | [2100000] |
+
+Level growth is additive, `npc_info + (level-1) x hero_growth(hero, star)`, and that matches the
+real server's own dump in ClientHero.lua:249-288 (hero 300000, L80, star 5, q43): our formula
+gives `hit_base` 85.16 against the dump's 86.24 (the rest is level-80 gear/runes the dump
+includes). Nothing is missing, unscaled or double-counted. `Power 1000` is cosmetic: `ability`
+is stored (`setValue(BattleDefine.ability)`) and never read by the damage path, which uses
+`power`/`magic` against `defence`/`magic_defence` (`BattleUnit:EA/ED`, BattleEngine.lua:486-523).
+Note that quality-up **lowered** the knight's working stats for now: q10 with the six q10 items
+is 466 HP / 60.7 power, q20 with empty slots is 211 / 31.7 (the q20 set is 20010/20020/10120/
+10150/10040/10000, none owned).
+
+**2. The enemy.** `stage_info` 10022 死亡矿洞 (idx 5, `once` 0, `catalog` 3, three groups, energy 6):
+
+| wave | group | units (npc_info: HP / atk / def, skills) |
+|---|---|---|
+| 1 | 100220 | 骷髅射手 1002007: 152 / 34 / 6, strike 107000 + 1070000 (3 hits) |
+| 2 | 100221 | 4 x 骷髅怪 1002001: 37 / 16 / 24; 骷髅王 1002008: 198 / 31 / 7, 3010000 |
+| 3 | 100222 | **魔龙 1002009: 1,189 / 37 / 10**, strike 900000 = 2 hits on **all** (target 1999, code 999 = 全体), 龙息 10070000 = 4 hits x (0.75 x dmg + 1.6) on all |
+
+Total 1,687 HP over three waves; stage 10020, won with 3 stars the day before, is 564 HP over
+two waves with a 153 / 27 / 7 boss. Enemies come from the client's own tables
+(`BattleFactoryLevel:getDefendersByCurIndex` → `npc_group_info` → `npc_info`,
+BattleFactoryLevel.lua:195-233); the server never touches them.
+
+**3. The formula and the matchup.** `damage = atk x ATT_PARA(1) - def x DEF_PARA(1)`, floor
+`0.1 x atk`, then `x spell_damage_add_scale + spell_damage_add_value` of the strike or the
+ultimate (BattleEngine.lua:486-559, variables ATT_PARA/DEF_PARA = 1). Against the dragon our
+three normal attacks are 21.7 + 12.0 + 14.6 = **48 per round, 25 rounds** to kill it; the dragon's
+two strike hits per round are 44 / 59 / 59 on the knight / mage / ranger, so each dies in **4.5
+to 6 rounds** before the breath (another 72-96 each per cast). Observed: waves 1 and 2 cleared
+at full HP (`08-`, `09-`), the dragon entered at 02:23 of the wave timer, the Rose Knight was
+dead and the other two at ~15 % at 02:06 (`10-fight1-wave3-24s-rose-knight-dead.jpg`), Defeat
+at ~02:00. Fight 2 the same (`13-`, `14-`). Two corrections to the "known facts": the stage **has
+a 2:30 timer per wave** on the HUD (`07-fight1-wave1-timer-0229.jpg`), and the **angel's rage bar
+never moved** from its 50 % start in either fight (initial_energy 250 of 500;
+`Battle:onafterround` is meant to add ANGEL_ANGER_ADD_PERROUND 250 per round, Battle.lua:1771-1782),
+so her 40-point no-defence judgment and 40-point group heal were never available. That path is
+the stock client's and runs the same against the original server; noted, not chased.
+
+**4. What the original does for a new player here.** The Defeat screen itself says it
+(`12-defeat-tips-train-aura-skill-upgrade.jpg`): "You can boost your power by: Train, Aura
+Upgrade, Skill Upgrade". The stock config behind that, and our state:
+
+| lever | stock evidence | our server |
+|---|---|---|
+| Skill levels | `spell_level_up`: skill0 may be level 2 at hero level 3, 3 at 5, 4 at 7; the client sends `5_2103 HeroSkillUpReq {hero, index, spell_entry}` with gold `spell_info.upgrade_cost` (500, 1000, ...); the real server sends the levelled entries (`spells = 3000039, 3001026, ...` in ClientHero.lua:253-258) | **no handler**; `spells` is always `npc_info.skill0..4` at level 1 |
+| Train (hero XP) | item 1100 小经验药水 = 60 hero XP "used in Train"; `xp_for_level.hero_max_level` 12 at player level 3; stage 10022's invisible drop is 3 x 1100 | `5_2139 train_info` is a stub, no train request handled |
+| Free diamond draw after the guide | `gacha_info` 2400000: `free_times 1`, `free_cooldown_cycle 86400`; `variables.FIRST_DIAMOND_GACHA_AFTER_NEWGUIDE` 182000 = "the 3-star hero the first diamond single draw after the newbie guide must drop": pool of ten 2-star heroes (105000, 203000-209000, 211000, 301000) born at level 5 with 372-404 HP / 47-54 attack / 17-22 defence each; then `DIAMOND_SINGLE_GACHA_FIRST_INTERVAL` 1 → the next draw pays a hero from 182100 | the free draw is **charged 2,000 diamonds** and the second diamond draw rolls the normal pool 300000 (146 rows, mostly items); the player owns 17,888 diamonds, so he can still buy draws |
+| 7-day gift day 2 | `LOGIN_AWARD` drop 700010: hero 304000 月神祭司 (3-star, init level 5) + 3,000 diamonds + 40 x 202000 + 2,000,000 gold | works (calendar-gated); until `de0d03a` the hero would have arrived at star 1 level 1 |
+| Opening gift | `NEW_PLAYER_PRIZE` drop 10003800: 600 diamonds, **200 x 1100 (12,000 hero XP)**, 200,000 gold, 30 x 205000 (= one summon of 闪电幽魂); `NEW_PLAYER_PRIZE2` 90041000: 10 soul stones of six heroes. Memo 开服奖励, no client reference, so the delivery (mail at creation?) is the server's | not granted |
+| Support NPC | `NEW_FIGHT_HELP_HERO` memo says stages 1-2 only | as the memo: 10000 and 10010 |
+| 4th hero | guide 10399-10450: after the chapter-1 **achievement** pays soul stones, "click here to summon", "a strong ally joins" — i.e. after 10022, not before | n/a |
+| Lineup | `LineFrame:startFight` warns below 5 heroes; six hero slots were open on the lineup screen (`06-`) | no cap in `team.py`; the player owns three heroes |
+
+So the original new player who reaches 10022 with the tutorial trio alone loses too; the game
+expects at least one of: the post-guide free draw's level-5 2-star hero, a few skill levels,
+potions through Train, or a replay grind of the `once = 0` stages (hero XP 20-22 per run).
+
+**5. Fix landed.** `de0d03a fix(item): a prize hero starts at hero_info.star and init_level` —
+`grant_prizes` gave every category-30 hero star 1, level 1, while the soul-stone summon already
+used `hero_info.star`/`init_level`. Test `test_granted_hero_starts_at_hero_info_star_and_init_level`
+(red first: `assert 1 == 3`). It does not change the current trio (all 1-star, init_level 1).
+
+Greps, verbatim: `grep -cE "Traceback|ERROR"` on `C:/tmp/loa-boss/server.err.log` and
+`server.out.log` → **0** and **0**; logcat (43,918 lines) `LUA ERROR` **0**, `FATAL EXCEPTION`
+**0**. Unanswered ids this run: `5_2039`, `5_2623` (as run 8). Suite after the fix: `py -3.14 -m
+pytest -q --basetemp=C:/tmp/pytest-loa-boss` → **605 passed in 110.15s** (604 before).
+
+Real-world changes (start → end): energy 64 → 53 (two entries, one regen tick), `guide_id`
+10390 → **10380** (the known post-defeat 5_2041 burst, run 8), `levels` 10022 still `star 0`,
+`count` **2** (the count is not raised by a loss). `heroes`, `angels`, `items`, `chapters`, gold
+and diamonds unchanged. The third allowed attempt was not spent: no server change can affect
+this team, and the two losses reproduce runs 7 and 8 exactly.
+
+Frames: `docs/screens/en-2026-11-25-boss-10022/01-...` to `14-...` (JPEG q85). Logs and
+frames kept outside the repo: `C:/tmp/loa-boss/server.err.log`, `server.out.log`,
+`logcat-run9.txt`, `f1-*.png`, `f2-*.png`, `tapper9.sh`, `shooter9.sh`, `shots.txt`.
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
