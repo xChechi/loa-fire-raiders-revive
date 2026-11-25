@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 import random
 import sqlite3
+import time
+from collections.abc import Callable
 
 from server import db
 from server.config import Config
@@ -46,21 +48,85 @@ SINGLE_DRAW_BANNERS = {1200000: COST_GOLD, 2400000: COST_DIAMOND}
 FIRST_DRAW_VARIABLE = {COST_GOLD: "FIRST_GOLD_GACHA", COST_DIAMOND: "FIRST_DIAMOND_GACHA"}
 DRAW_COUNT_COLUMN = {COST_GOLD: "gold_single_draws", COST_DIAMOND: "diamond_single_draws"}
 
+# The supreme card's single draw (TavernFace idx 4). Its free draw is "the
+# first draw after 05:00 each day" (z00512 每日5:00后首抽免费,
+# Language_cn.lua:696; TavernFace.lua:58-75): the client still sends
+# 5_2123 {gacha = 2400000} and only marks the draw free on its side
+# (TavernFace.lua:171-191).
+SUPREME_SINGLE = 2400000
+FREE_DRAW_DAY_HOUR = 5
 
-def build_gacha_info(registry: Registry, cfg: Config):
+
+def _variable(cfg: Config, key: str) -> int:
+    """A variables.db value the draw sequence cannot work without."""
+    raw = cfg.variable(key)
+    if raw is None or raw == "":
+        raise KeyError(f"variables.{key} is missing")
+    return int(float(raw))
+
+
+def _supreme_guaranteed(cfg: Config, k: int) -> bool:
+    """O-W2-3: 182100 at k = 1 + FIRST_INTERVAL, then every NORMAL_INTERVAL."""
+    first = 1 + _variable(cfg, "DIAMOND_SINGLE_GACHA_FIRST_INTERVAL")
+    normal = _variable(cfg, "DIAMOND_SINGLE_GACHA_NORMAL_INTERVAL")
+    return k >= first and (k - first) % normal == 0
+
+
+def supreme_single_drop(cfg: Config, k: int, banner_drop: int) -> int:
+    """The drop id of the supreme single draw made with k earlier ones."""
+    if k == 0:
+        return _variable(cfg, FIRST_DRAW_VARIABLE[COST_DIAMOND])
+    if k == 1:
+        return _variable(cfg, "FIRST_DIAMOND_GACHA_AFTER_NEWGUIDE")
+    if _supreme_guaranteed(cfg, k):
+        return _variable(cfg, "DIAMOND_GACHA_HERO_GACHA")
+    return int(banner_drop)
+
+
+def supreme_next(cfg: Config, k: int) -> int:
+    """GachaInfoRes.next: 0 at k = 1 (the "first draw -> 2-star hero" tip,
+    TavernFace4.lua:105-111), otherwise the draws left until the next
+    guaranteed k, inclusive ("再抽 N 次必得英雄", TavernFace4.lua:65-79)."""
+    if k == 1:
+        return 0
+    first = 1 + _variable(cfg, "DIAMOND_SINGLE_GACHA_FIRST_INTERVAL")
+    normal = _variable(cfg, "DIAMOND_SINGLE_GACHA_NORMAL_INTERVAL")
+    if k <= first:
+        target = first
+    else:
+        target = first + -(-(k - first) // normal) * normal
+    return target - k + 1
+
+
+def _counters(cfg: Config, row) -> dict[str, int]:
+    """The tavern tip fields both Res carry; TavernUI:synData copies them from
+    every GachaRes (TavernUI.lua:190-198)."""
+    k = int(row["diamond_single_draws"]) if row is not None else 0
+    return {"diamond_gacha": 1 if k >= 1 else 0, "next": supreme_next(cfg, k)}
+
+
+def build_gacha_info(registry: Registry, cfg: Config, row=None, now: float | None = None):
     res = registry.message_class("GachaInfoRes")(
-        status=STATUS_OK, week=0, next=0, gold_next=0,
-        gold_gacha=0, diamond_gacha=0, diamond_ten_gacha=0,
+        status=STATUS_OK, week=0, gold_next=0,
+        gold_gacha=0, diamond_ten_gacha=0, **_counters(cfg, row),
     )
     # Open question F of the plan: todays stays empty and week stays 0. The
     # daily/weekly soul counters are not tracked in Plan B1, and TavernBase
     # tolerates their absence.
-    for row in cfg.gachas():
+    for banner in cfg.gachas():
         info = res.gachaInfos.add()
-        info.gacha = int(row["entry"])
-        # No cooldown is being tracked in Plan B1: a free draw is always ready.
+        info.gacha = int(banner["entry"])
+        # cooldown drives nothing: every branch that reads it is commented
+        # out (TavernUtil.lua:198-207, TavernCD.lua:44-64).
         info.cooldown = 0
-        info.freetimes = int(row["free_times"] or 0)
+        if info.gacha == SUPREME_SINGLE:
+            k = int(row["diamond_single_draws"]) if row is not None else 0
+            used = row["diamond_free_day"] if row is not None else ""
+            # O-W2-2: the tutorial draw (k = 0) never uses the day's free draw.
+            free = k == 0 or used != db.day_key(FREE_DRAW_DAY_HOUR, now)
+            info.freetimes = 1 if free else 0
+        else:
+            info.freetimes = int(banner["free_times"] or 0)
     fill_required(res)
     return res
 
@@ -80,7 +146,10 @@ def handlers(
     conn: sqlite3.Connection,
     cfg: Config,
     rng: random.Random | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> dict[tuple[int, int], Handler]:
+    now_of = clock or time.time
+
     def _player(session: Session):
         if session.player_id is not None:
             return conn.execute(
@@ -94,7 +163,7 @@ def handlers(
         return res
 
     def gacha_info(session: Session, req):
-        return build_gacha_info(registry, cfg)
+        return build_gacha_info(registry, cfg, _player(session), now_of())
 
     def gacha(session: Session, req):
         gacha_id = int(req.gacha)
@@ -111,15 +180,25 @@ def handlers(
                 f"gacha_info row {gacha_id} has cost_type {cost_type},"
                 " which is not implemented in Plan B1"
             )
-        if cost_type == COST_GOLD and int(row["gold"]) < cost:
-            return _refused(STATUS_NOT_ENOUGH_GOLD)
-        if cost_type == COST_DIAMOND and int(row["diamond"]) < cost:
-            return _refused(STATUS_NOT_ENOUGH_DIAMOND)
-
         player_id = int(row["id"])
         drop_id = _required(banner, "drop_id", gacha_id)
         single_draw_column = None
-        if gacha_id in SINGLE_DRAW_BANNERS:
+        free_day = None
+        supreme = None
+        if gacha_id == SUPREME_SINGLE:
+            single_draw_column = DRAW_COUNT_COLUMN[COST_DIAMOND]
+            k = int(row[single_draw_column])
+            drop_id = supreme_single_drop(cfg, k, drop_id)
+            today = db.day_key(FREE_DRAW_DAY_HOUR, now_of())
+            # O-W2-2: k = 0 is free and keeps the day's free draw; otherwise
+            # the first draw of the day is free and uses it up.
+            free = k == 0 or row["diamond_free_day"] != today
+            if free:
+                cost = 0
+                if k > 0:
+                    free_day = today
+            supreme = (k, free)
+        elif gacha_id in SINGLE_DRAW_BANNERS:
             single_draw_column = DRAW_COUNT_COLUMN[cost_type]
             if int(row[single_draw_column]) == 0:
                 key = FIRST_DRAW_VARIABLE[cost_type]
@@ -133,6 +212,15 @@ def handlers(
                     "gold" if cost_type == COST_GOLD else "diamond",
                     player_id, drop_id, key,
                 )
+        if cost_type == COST_GOLD and int(row["gold"]) < cost:
+            return _refused(STATUS_NOT_ENOUGH_GOLD)
+        if cost_type == COST_DIAMOND and int(row["diamond"]) < cost:
+            return _refused(STATUS_NOT_ENOUGH_DIAMOND)
+        if supreme is not None:
+            log.info(
+                "supreme single k=%d for player %d: drop %d, free=%s",
+                supreme[0], player_id, drop_id, supreme[1],
+            )
         rolled = drops.roll(cfg, drop_id, rng=rng)
         if not rolled:
             # TavernUI hands items to g_tools:randomTable, so never answer
@@ -161,7 +249,7 @@ def handlers(
         # hero id with no config row) leaves the player's balances untouched
         # instead of charging for prizes that never arrive.
         changed = item.grant_prizes(conn, cfg, player_id, drops.as_triples(rolled))
-        if cost or single_draw_column:
+        if cost or single_draw_column or free_day:
             # Every column name below is a literal from this module, never
             # request data.
             sets, params = [], []
@@ -173,6 +261,9 @@ def handlers(
                 # Scripted or rolled, a single draw counts; a refusal or a
                 # raised grant never gets here.
                 sets.append(f"{single_draw_column} = {single_draw_column} + 1")
+            if free_day:
+                sets.append("diamond_free_day = ?")
+                params.append(free_day)
             conn.execute(
                 f"UPDATE players SET {', '.join(sets)} WHERE id = ?",
                 (*params, player_id),
@@ -185,9 +276,12 @@ def handlers(
             ).fetchone()
             changed["gold"] = int(charged["gold"])
             changed["diamond"] = int(charged["diamond"])
+        after = conn.execute(
+            "SELECT * FROM players WHERE id = ?", (player_id,)
+        ).fetchone()
         res = registry.message_class("GachaRes")(
-            status=STATUS_OK, next=0, gold_next=0,
-            gold_gacha=0, diamond_gacha=0, diamond_ten_gacha=0,
+            status=STATUS_OK, gold_next=0,
+            gold_gacha=0, diamond_ten_gacha=0, **_counters(cfg, after),
         )
         for entry in drops.to_prize_entries(registry, rolled):
             res.items.add().CopyFrom(entry)

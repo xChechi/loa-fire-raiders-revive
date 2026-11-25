@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from server.config import Config
-from server.db import connect, create_player, find_player, heroes_of, items_of
+from server.db import connect, create_player, day_key, find_player, heroes_of, items_of
 from server.modules import drops, gacha
 from server.net.registry import Registry
 from server.net.server import Session
@@ -112,7 +112,13 @@ def test_a_gold_draw_costs_the_configured_gold(reg, cfg, world) -> None:
 
 
 def test_a_diamond_draw_costs_the_configured_diamonds(reg, cfg, world) -> None:
+    """Past the tutorial draw and with the day's free draw used (Wave 2 A1)."""
     conn, pid, handlers, session = world
+    conn.execute(
+        "UPDATE players SET diamond_single_draws = 3, diamond_free_day = ?"
+        " WHERE id = ?", (day_key(5), pid),
+    )
+    conn.commit()
     handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=2400000))
     row = find_player(conn, "stefan")
     assert int(row["diamond"]) == 18888 - 2000
@@ -135,6 +141,12 @@ def test_too_few_diamonds_is_refused_with_the_client_status(
 ) -> None:
     conn = connect(settings.db_path)
     pid = create_player(conn, "stefan", "stefan", guide_id=0, gold=0, diamond=10)
+    # Past the free tutorial draw and the day's free draw (Wave 2 A1).
+    conn.execute(
+        "UPDATE players SET diamond_single_draws = 3, diamond_free_day = ?"
+        " WHERE id = ?", (day_key(5), pid),
+    )
+    conn.commit()
     handlers = gacha.handlers(reg, settings, conn, cfg)
     session = Session(writer=None, peer="t", bound_port=0)
     session.player_id = pid
@@ -242,14 +254,15 @@ def test_the_first_gold_single_draw_is_the_scripted_hero(reg, cfg, world) -> Non
 
 
 def test_the_first_diamond_single_draw_is_the_scripted_hero(reg, cfg, world) -> None:
-    """variables.FIRST_DIAMOND_GACHA = 189000 → hero 210000 (丛林游侠)."""
+    """variables.FIRST_DIAMOND_GACHA = 189000 → hero 210000 (丛林游侠). Free
+    since Wave 2 A1 (O-W2-2)."""
     conn, pid, handlers, session = world
     res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=2400000))
     assert res.status == 0
     assert [(e.category, e.refer, e.amount) for e in res.items] == [(30, 210000, 1)]
     assert [int(h["entry"]) for h in heroes_of(conn, pid)] == [210000]
     row = find_player(conn, "stefan")
-    assert int(row["diamond"]) == 18888 - 2000
+    assert int(row["diamond"]) == 18888
     assert int(row["diamond_single_draws"]) == 1
     assert int(row["gold_single_draws"]) == 0
 
@@ -344,4 +357,153 @@ def test_a_drawn_duplicate_hero_is_flagged_as_soul_stones(reg, cfg, world, monke
     res = handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=1200000))
     assert [(e.category, e.refer, e.extra.type) for e in res.items] == [(30, 101000, 1)]
     assert len(heroes_of(conn, pid)) == 1
+    res.SerializeToString()
+
+
+# --- Wave 2 A1: the daily free supreme draw and the supreme hero sequence ---
+
+from datetime import datetime  # noqa: E402
+
+SUPREME = 2400000
+DAY1_10AM = datetime(2026, 11, 25, 10, 0).timestamp()
+
+
+def _supreme_world(reg, cfg, settings, k: int, now: float, diamond: int = 18888,
+                   free_day: str = ""):
+    conn = connect(settings.db_path)
+    pid = create_player(
+        conn, "stefan", "stefan", guide_id=0, gold=1280000, diamond=diamond
+    )
+    conn.execute(
+        "UPDATE players SET diamond_single_draws = ?, diamond_free_day = ?"
+        " WHERE id = ?", (k, free_day, pid),
+    )
+    conn.commit()
+    clock = {"now": now}
+    handlers = gacha.handlers(reg, settings, conn, cfg, clock=lambda: clock["now"])
+    session = Session(writer=None, peer="t", bound_port=0)
+    session.player_id = pid
+    return conn, pid, handlers, session, clock
+
+
+def _spy_drop_ids(monkeypatch) -> list[int]:
+    seen: list[int] = []
+    real = drops.roll
+
+    def spy(cfg_, drop_id, rng=None):
+        seen.append(int(drop_id))
+        return real(cfg_, drop_id, rng=rng)
+
+    monkeypatch.setattr(drops, "roll", spy)
+    return seen
+
+
+def _supreme_info(reg, handlers, session):
+    res = handlers[(5, 2121)](session, reg.message_class("GachaInfoReq")())
+    return res, next(g for g in res.gachaInfos if g.gacha == SUPREME)
+
+
+def _draw(reg, handlers, session, banner: int = SUPREME):
+    return handlers[(5, 2123)](session, reg.message_class("GachaReq")(gacha=banner))
+
+
+def test_tutorial_supreme_draw_is_free_and_keeps_the_daily_free_draw(
+    reg, cfg, settings
+) -> None:
+    """O-W2-2: guide 10081 can only send a free draw (no ticket 99 in the
+    start kit), so k = 0 is free and the day's free draw stays."""
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 0, DAY1_10AM)
+    res = _draw(reg, handlers, session)
+    assert res.status == 0
+    assert [(e.category, e.refer) for e in res.items] == [(30, 210000)]
+    row = find_player(conn, "stefan")
+    assert int(row["diamond"]) == 18888
+    assert int(row["diamond_single_draws"]) == 1
+    assert row["diamond_free_day"] == ""
+    _, info = _supreme_info(reg, handlers, session)
+    assert info.freetimes == 1
+
+
+def test_post_guide_supreme_draw_pays_a_182000_hero_at_star2_level5_free(
+    reg, cfg, settings
+) -> None:
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 1, DAY1_10AM)
+    res = _draw(reg, handlers, session)
+    assert res.status == 0
+    pool = {int(r["item_id"]) for r in cfg.drop_rows(182000)}
+    assert len(res.items) == 1 and res.items[0].category == 30
+    assert res.items[0].refer in pool
+    hero_rows = heroes_of(conn, pid)
+    assert [(int(h["entry"]), int(h["star"]), int(h["level"])) for h in hero_rows] == [
+        (res.items[0].refer, 2, 5)
+    ]
+    row = find_player(conn, "stefan")
+    assert int(row["diamond"]) == 18888
+    assert row["diamond_free_day"] == day_key(5, DAY1_10AM)
+    _, info = _supreme_info(reg, handlers, session)
+    assert info.freetimes == 0
+
+
+def test_second_supreme_draw_same_day_is_charged_2000(reg, cfg, settings) -> None:
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 1, DAY1_10AM)
+    _draw(reg, handlers, session)
+    res = _draw(reg, handlers, session)
+    assert res.status == 0
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888 - 2000
+
+
+def test_free_draw_returns_after_5am_next_day(reg, cfg, settings) -> None:
+    conn, pid, handlers, session, clock = _supreme_world(
+        reg, cfg, settings, 1, DAY1_10AM
+    )
+    _draw(reg, handlers, session)
+    clock["now"] = datetime(2026, 11, 26, 4, 59).timestamp()
+    assert _supreme_info(reg, handlers, session)[1].freetimes == 0
+    clock["now"] = datetime(2026, 11, 26, 5, 0).timestamp()
+    assert _supreme_info(reg, handlers, session)[1].freetimes == 1
+    _draw(reg, handlers, session)
+    assert int(find_player(conn, "stefan")["diamond"]) == 18888
+    assert _supreme_info(reg, handlers, session)[1].freetimes == 0
+
+
+def test_third_supreme_single_pays_182100(reg, cfg, settings, monkeypatch) -> None:
+    seen = _spy_drop_ids(monkeypatch)
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 0, DAY1_10AM)
+    for _ in range(3):
+        assert _draw(reg, handlers, session).status == 0
+    assert seen == [189000, 182000, 182100]
+
+
+def test_supreme_guarantee_repeats_every_8th_single(
+    reg, cfg, settings, monkeypatch
+) -> None:
+    """DIAMOND_SINGLE_GACHA_FIRST_INTERVAL 1 puts the first guarantee at k = 2,
+    NORMAL_INTERVAL 8 repeats it at k = 10, 18, ..."""
+    seen = _spy_drop_ids(monkeypatch)
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 9, DAY1_10AM)
+    for _ in range(10):
+        assert _draw(reg, handlers, session).status == 0
+    assert seen == [300000, 182100] + [300000] * 7 + [182100]
+
+
+def test_gacha_info_next_counts_down_and_diamond_gacha_flag(
+    reg, cfg, settings
+) -> None:
+    """TavernFace4.lua:105-117: diamond_gacha 1 shows the tips, next 0 is
+    "first draw → 2-star hero", next N is "N more draws → a hero"."""
+    conn, pid, handlers, session, _ = _supreme_world(reg, cfg, settings, 0, DAY1_10AM)
+    expected = {0: (0, None), 1: (1, 0), 2: (1, 1), 3: (1, 8), 9: (1, 2),
+                10: (1, 1), 11: (1, 8)}
+    for k, (flag, nxt) in expected.items():
+        conn.execute("UPDATE players SET diamond_single_draws = ? WHERE id = ?", (k, pid))
+        conn.commit()
+        res, _ = _supreme_info(reg, handlers, session)
+        assert res.diamond_gacha == flag, k
+        if nxt is not None:
+            assert res.next == nxt, k
+    # GachaRes carries the post-draw values: a draw at k = 1 leaves k = 2.
+    conn.execute("UPDATE players SET diamond_single_draws = 1 WHERE id = ?", (pid,))
+    conn.commit()
+    res = _draw(reg, handlers, session)
+    assert (res.diamond_gacha, res.next) == (1, 1)
     res.SerializeToString()

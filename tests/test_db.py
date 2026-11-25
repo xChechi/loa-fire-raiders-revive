@@ -413,3 +413,15 @@ def test_angels_unique_per_player_entry(tmp_path) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         grant_angel(conn, pid, 500000, level=1, star=1)
     assert len(angels_of(conn, pid)) == 1
+
+
+def test_day_key_rolls_at_5am() -> None:
+    """O-W2-1: the free draw, daily tasks and angel trials roll at 05:00 local
+    (z00512 每日5:00后首抽免费, Language_cn.lua:696)."""
+    from datetime import datetime
+
+    from server.db import day_key
+
+    assert day_key(5, datetime(2026, 11, 25, 4, 59).timestamp()) == "2026-11-24"
+    assert day_key(5, datetime(2026, 11, 25, 5, 0).timestamp()) == "2026-11-25"
+    assert day_key(0, datetime(2026, 11, 25, 0, 0).timestamp()) == "2026-11-25"

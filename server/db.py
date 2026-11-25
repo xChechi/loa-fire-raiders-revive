@@ -173,7 +173,17 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # ClientPlayer.lua:35-37,150-151: login gift days 5 and 3 pay them.
     ("players", "arena_point", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "angel_money", "INTEGER NOT NULL DEFAULT 0"),
+    # Wave 2 A1: the day_key(5) of the last free supreme draw (O-W2-1).
+    ("players", "diamond_free_day", "TEXT NOT NULL DEFAULT ''"),
 )
+
+
+def day_key(hour: int, now: float | None = None) -> str:
+    """The local ISO date of `now` minus `hour` hours: the day a daily counter
+    belongs to when the day starts at hour:00 (O-W2-1, 05:00 for the free
+    draw, daily tasks and angel trials)."""
+    now = time.time() if now is None else float(now)
+    return datetime.fromtimestamp(now - int(hour) * 3600).date().isoformat()
 
 
 def ensure_columns(conn: sqlite3.Connection) -> None:
