@@ -264,6 +264,9 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("angels", "aura5_lv", "INTEGER NOT NULL DEFAULT 1"),
     # E2: the day_key(5) a daily-task row's progress belongs to.
     ("events", "day", "TEXT NOT NULL DEFAULT ''"),
+    # Run 11 fix: the highest damage of one manual gold-trial run, any day;
+    # the auto fight pays it (goldtrial module docstring).
+    ("players", "gold_trails_top", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 

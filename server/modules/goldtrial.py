@@ -21,6 +21,19 @@ What the client reads (paths under .stock/assets/scripts/app/game/):
   GoldTryUI.lua:26-28 adds 1 to stats.gold_trails_times and sets
   player.gold_trails_cooldown to now itself. The auto fight (CoinLine.lua:
   75-103,106-148) sends damage 0 and hands the Res to GoldTryAutoResult.
+- The auto fight ("自动战斗", x05083, CoinLine.lua:176-187,213-221) is a fight
+  the original server ran itself: getAutoFightResultParam sends only the
+  line-up, `damage = 0` and `auto = true` (CoinLine.lua:75-103), the Res
+  carries the server's `fight` report (GoldTrailsResultRes field 13), and the
+  client shows the Res's own `gold` / `addition_gold` (GoldTryAutoResult.lua:
+  23-31) and replays it as GOLD_TRY_AUTO (BattleFactoryCoinTryAuto.lua:20).
+  This server has no fight simulation, so an auto run pays the player's best
+  manual run (players.gold_trails_top, any day) as its damage, whatever the
+  request says; the stars still come from the line-up it sends. With no
+  manual run on record the auto run is refused with STATUS_NOT_MET and no
+  run is used: a non-zero status floats its language text
+  (MMMsgDispatcher.lua:110-113) and onAutoFightResult returns (CoinLine.lua:
+  109), so the line-up stays open. `fight` is left unset (no report to replay).
 - GoldTrailsPrizeRes (5_2218), no status field: `prize` (the new flags,
   GoldTryUI.lua:104), `prizeEntries` (the get-all reward panel,
   GoldTryAwardUI.lua:75-76); a single claim shows the row's own gold
@@ -70,7 +83,7 @@ log = logging.getLogger("loa.goldtrial")
 STATUS_OK = 0
 STATUS_FUNCTION_LOCKED = 327957      # language.db 未满足此玩法的等级
 STATUS_NO_TRIES = 331014             # language.db 挑战次数不够
-STATUS_NOT_MET = 330245              # language.db 未满足领取该奖励的条件 (logged only)
+STATUS_NOT_MET = 330245              # language.db 未满足领取该奖励的条件 (prize: logged only)
 
 FUNCTION_GOLD_TRIAL = 10070
 TIMES_KEY = "GOLD_TRAILS_TIMES"
@@ -190,11 +203,19 @@ def handlers(
             fill_required(res)
             return res
         damage = max(0, int(req.damage))
+        top = int(row["gold_trails_top"])
         if req.auto:
-            log.warning(
-                "5_2215 auto fight for player %d sends damage %d; the server "
-                "does not simulate fights, so it pays on that", pid, damage,
-            )
+            if top <= 0:
+                log.info("5_2215 auto fight for player %d refused %d: no manual run on record",
+                         pid, STATUS_NOT_MET)
+                res = registry.message_class(name)(status=STATUS_NOT_MET)
+                fill_required(res)
+                return res
+            log.info("5_2215 auto fight for player %d pays its best manual run, damage %d "
+                     "(the request says %d)", pid, top, damage)
+            damage = top
+        else:
+            top = max(top, damage)
         bands = [(int(r["damage"]), int(r["gold"])) for r in cfg.gold_trails_exchange()]
         gold = coin_by_damage(bands, damage)
         limit = cfg.gold_trails_limit(int(row["level"]))
@@ -206,8 +227,8 @@ def handlers(
         times, total = times + 1, total + damage
         conn.execute(
             "UPDATE players SET gold_trails_times = ?, gold_trails_best = ?,"
-            " gold_trails_prize = ?, gold_trails_day = ? WHERE id = ?",
-            (times, total, flags, today, pid),
+            " gold_trails_prize = ?, gold_trails_day = ?, gold_trails_top = ? WHERE id = ?",
+            (times, total, flags, today, top, pid),
         )
         if gold + addition > 0:
             _pay_gold(session, pid, gold + addition)

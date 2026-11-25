@@ -69,9 +69,9 @@ def _info(reg, handlers, session, level=STAGE):
     return res
 
 
-def _result(reg, handlers, session, damage, heroes=(0, 0, 0, 0, 0, 0), angel=0):
+def _result(reg, handlers, session, damage, heroes=(0, 0, 0, 0, 0, 0), angel=0, auto=False):
     req = reg.message_class("GoldTrailsResultReq")(
-        level=STAGE, angel=angel, star=1, damage=damage,
+        level=STAGE, angel=angel, star=1, damage=damage, auto=auto,
     )
     req.heroes.extend(heroes)
     res = handlers[(5, 2215)](session, req)
@@ -245,3 +245,52 @@ def test_query_myself_reports_todays_total_and_flags(reg, cfg, world) -> None:
     assert res.gold_trails.damage == 55000
     assert res.gold_trails.prize == 0b11
     assert res.stats.gold_trails_times == 2
+
+
+# --- auto fight (run 11 finding 1) --------------------------------------------
+# CoinLine:getAutoFightResultParam sends damage 0 and auto true (CoinLine.lua:
+# 75-103); the original server fought it (GoldTrailsResultRes.fight, field 13).
+# This server pays the player's best manual run instead.
+
+
+def test_auto_pays_the_best_manual_run(reg, world) -> None:
+    conn, pid, handlers, session, clock = world
+    _result(reg, handlers, session, 6892)
+    clock["today"] = DAY2
+    before = _gold(conn, pid)
+    res = _result(reg, handlers, session, 0, auto=True)
+    assert res.status == 0
+    assert res.damage == 6892
+    assert res.gold == 18608                  # run 11's manual 6892 paid 18608
+    assert res.all_damage == 6892
+    assert res.times == 1
+    assert _gold(conn, pid) == before + 18608
+    assert int(_row(conn, pid)["gold_trails_top"]) == 6892
+
+
+def test_auto_ignores_the_damage_the_client_sends(reg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    _result(reg, handlers, session, 6892)
+    res = _result(reg, handlers, session, 900000, auto=True)
+    assert res.damage == 6892
+    assert res.all_damage == 6892 * 2
+
+
+def test_auto_without_a_manual_run_is_refused_and_keeps_the_run(reg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    res = _result(reg, handlers, session, 0, auto=True)
+    assert res.status == goldtrial.STATUS_NOT_MET
+    assert _gold(conn, pid) == GOLD0
+    row = _row(conn, pid)
+    assert int(row["gold_trails_times"]) == 0
+    assert int(row["gold_trails_best"]) == 0
+
+
+def test_best_run_keeps_the_highest_manual_damage(reg, world) -> None:
+    conn, pid, handlers, session, clock = world
+    _result(reg, handlers, session, 30000)
+    _result(reg, handlers, session, 25000)
+    assert int(_row(conn, pid)["gold_trails_top"]) == 30000
+    clock["today"] = DAY2
+    _result(reg, handlers, session, 40000)
+    assert int(_row(conn, pid)["gold_trails_top"]) == 40000
