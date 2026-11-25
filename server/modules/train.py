@@ -47,6 +47,9 @@ STATUS_OK = 0
 STATUS_INTERNAL_ERROR = 327681       # 系统内部错误
 STATUS_NOT_ENOUGH_DIAMOND = 327938   # 钻石不足
 STATUS_NO_HERO = 327941              # 英雄不存在
+STATUS_NOT_ENOUGH_ITEMS = 327942     # 没有足够道具
+STATUS_UNIT_FULL = 327945            # 英雄经验值已经满了
+STATUS_UNKNOWN_ITEM = 327948         # 未知的道具类型
 STATUS_VIP_TOO_LOW = 327951          # VIP等级不足
 STATUS_FUNCTION_LOCKED = 327957      # 未满足此玩法的等级
 STATUS_NO_ANGEL = 328457             # 女神不存在
@@ -65,6 +68,9 @@ OP_PLACE = 1
 OP_REMOVE = 2
 OP_QUERY_AND_CLEAR = 2               # QueryTrainInfoReq.op 2 zeroes addxp
 TRAIN_TYPE_NORMAL = 1                # train_type 2 slots are nobility (TrainCell.lua:138-140)
+POTION_CLASS = 44                    # item_info.class of the xp potions
+PRICE_GOLD = 1                       # merchandise_info.price_type
+PRICE_DIAMOND = 9
 
 XP_COLUMN = {REFER_HERO: "hero_xp_for_next_level", REFER_ANGEL: "angel_xp_for_next_level"}
 
@@ -172,10 +178,11 @@ def per_tick(cfg: Config, player, quality: int, train: int) -> float:
 
 def apply_xp(
     registry: Registry, cfg: Config, conn: sqlite3.Connection, session: Session,
-    player, kind: int, entry: int, amount: int,
+    player, kind: int, entry: int, amount: int, always: bool = False,
 ) -> int:
     """Give up to `amount` xp, clipped at the cap's need - 1; push the hero or
-    angel notify when a level changed. Returns the xp actually given."""
+    angel notify when a level changed (or on any gain when `always`, as for a
+    potion). Returns the xp actually given."""
     pid = int(player["id"])
     state = unit_state(cfg, conn, player, kind, entry)
     if state is None:
@@ -186,13 +193,13 @@ def apply_xp(
     if kind == REFER_HERO:
         db.add_hero_xp(conn, cfg, pid, [entry], gain)
         row = _unit(conn, pid, kind, entry)
-        if int(row["level"]) != before_level:
+        if always or int(row["level"]) != before_level:
             notify.hero_changed(
                 registry, session, int(entry), hero.hero_notify_fields(registry, cfg, row)
             )
     else:
         level, exp = db.add_angel_xp(conn, cfg, pid, entry, gain)
-        if level != before_level:
+        if always or level != before_level:
             notify.angel_changed(registry, session, int(entry), {"level": level, "exp": exp})
     return gain
 
@@ -389,8 +396,100 @@ def handlers(
         notify.player_changed(registry, session, {"diamond": int(_fresh(pid)["diamond"])})
         return _res(name, STATUS_OK, pid, train)
 
+    def speed_up(session: Session, req):
+        """5_2125 {item, train, amount}: each potion gives item_info.arg0 x
+        train_quality.effect (TrainCtr.lua:316-333,445-464). A long press
+        sends big amounts (TrainCtr.lua:396-451), so only the potions the cap
+        leaves room for are consumed (Risk 4)."""
+        name = "TrainSpeedUpRes"
+        player = _player(session)
+        pid = int(player["id"])
+        entry, train, amount = int(req.item), int(req.train), int(req.amount)
+        item_row = cfg.item(entry)
+        if item_row is None or int(item_row["class"] or 0) != POTION_CLASS:
+            return _refused(name, STATUS_UNKNOWN_ITEM, f"item {entry} is not a potion")
+        slot = _slot(pid, train)
+        if slot is None or not int(slot["refer_id"]):
+            return _refused(name, STATUS_SLOT_EMPTY, f"slot {train} empty")
+        if amount <= 0:
+            return _refused(name, STATUS_INTERNAL_ERROR, f"amount {amount}")
+        owned = conn.execute(
+            "SELECT amount FROM items WHERE player_id = ? AND entry = ?", (pid, entry)
+        ).fetchone()
+        if owned is None or int(owned["amount"]) < amount:
+            return _refused(name, STATUS_NOT_ENOUGH_ITEMS, f"{amount}x {entry}")
+        kind, refer = int(slot["refer_type"]), int(slot["refer_id"])
+        # The passive ticks are paid first, so the cap is judged on them too.
+        settle(registry, cfg, conn, session, player, now_of())
+        player = _fresh(pid)
+        state = unit_state(cfg, conn, player, kind, refer)
+        if state is None or state[4] <= 0:
+            return _refused(name, STATUS_UNIT_FULL, f"slot {train} unit is full")
+        quality = cfg.train_quality(train, int(slot["quality"]))
+        if quality is None:
+            raise KeyError(f"train_quality has no row for train {train} quality {slot['quality']}")
+        per = int(item_row["arg0"] or 0) * int(quality["effect"] or 0)
+        if per <= 0:
+            raise ValueError(f"potion {entry} on slot {train} gives {per} xp")
+        used = min(amount, -(-state[4] // per))
+        left = db.take_item(conn, pid, entry, used)
+        notify.items_changed(registry, session, [(entry, left)])
+        given = apply_xp(registry, cfg, conn, session, player, kind, refer, used * per,
+                         always=True)
+        log.info("player %d uses %dx %d (of %d asked) on train slot %d: %d xp",
+                 pid, used, entry, amount, train, given)
+        return _res(name, STATUS_OK, pid, train)
+
+    def buy_xp_item(session: Session, req):
+        """5_2165 {merchandise, amount = groups} (TrainBuyItemPanel.lua:255-268).
+        BuyXpItemRes has no status, so a shortfall changes nothing and logs
+        the code it would have sent (TrainCtr.lua:90-97)."""
+        name = "BuyXpItemRes"
+        player = _player(session)
+        pid = int(player["id"])
+        groups = int(req.amount)
+        row = next(
+            (m for m in cfg.merchandise(STORE_XP_ITEMS) if int(m["entry"]) == int(req.merchandise)),
+            None,
+        )
+        empty = registry.message_class(name)()
+        fill_required(empty)
+        if row is None or groups <= 0:
+            log.warning("5_2165 for merchandise %s x%d, not in store %d; nothing changed",
+                        req.merchandise, groups, STORE_XP_ITEMS)
+            return empty
+        if int(row["min_level"] or 0) > int(player["level"]):
+            log.warning("5_2165 merchandise %d needs level %d, player %d is %d"
+                        " (327943 玩家等级不够); nothing changed",
+                        row["entry"], row["min_level"], pid, player["level"])
+            return empty
+        cost = int(row["price"] or 0) * groups
+        price_type = int(row["price_type"] or 0)
+        if price_type == PRICE_GOLD:
+            short, spend, code = int(player["gold"]) < cost, {"gold": cost}, 327937
+        elif price_type == PRICE_DIAMOND:
+            short, spend, code = int(player["diamond"]) < cost, {"diamond": cost}, 327938
+        else:
+            raise ValueError(f"merchandise {row['entry']} has price_type {price_type}")
+        if short:
+            log.warning("5_2165 merchandise %d x%d costs %d (%d); nothing changed",
+                        row["entry"], groups, cost, code)
+            return empty
+        db.spend(conn, pid, **spend)
+        item_entry = int(row["item"])
+        total = int(row["amount"] or 0) * groups
+        new_amount = db.grant_item(conn, pid, item_entry, total)
+        fresh = _fresh(pid)
+        notify.items_changed(registry, session, [(item_entry, new_amount)])
+        notify.player_changed(registry, session, {k: int(fresh[k]) for k in spend})
+        log.info("player %d buys %dx %d for %d %s", pid, total, item_entry, cost,
+                 next(iter(spend)))
+        return empty
+
     return {
         (5, 2139): query,
         (5, 2119): use,
         (5, 2117): quality_up,
+        (5, 2125): speed_up,
+        (5, 2165): buy_xp_item,
     }

@@ -298,3 +298,200 @@ def test_angel_in_slot2_gains_angel_xp_and_pushes_ident3(reg, world) -> None:
     notes = _notes(session, 3)
     assert len(notes) == 1 and notes[0].refer == GODDESS
     assert _decode(notes[0], notify.ANGEL_FIELDS) == {"level": 11, "exp": 142}
+
+
+# --- Wave 2 A5: xp potions on a slot (5_2125) and buying them (5_2165) -------
+# item_info 1100 小经验药水 is class 44 with arg0 60; train_quality(1, 1).effect
+# is 1. merchandise_info store 999: 9999000 = 1100 x1 for 300 gold (price_type
+# 1), 9999020 = 1120 for 15 diamonds from min_level 30.
+
+
+def _speed_up(reg, handlers, session, item=1100, slot=1, amount=1):
+    res = handlers[(5, 2125)](session, reg.message_class("TrainSpeedUpReq")(
+        item=item, train=slot, amount=amount,
+    ))
+    res.SerializeToString()
+    return res
+
+
+def _buy(reg, handlers, session, merchandise, amount):
+    res = handlers[(5, 2165)](session, reg.message_class("BuyXpItemReq")(
+        merchandise=merchandise, amount=amount,
+    ))
+    res.SerializeToString()
+    return res
+
+
+def _owned(conn, pid, entry) -> int:
+    row = conn.execute(
+        "SELECT amount FROM items WHERE player_id = ? AND entry = ?", (pid, entry)
+    ).fetchone()
+    return int(row["amount"]) if row else 0
+
+
+def _hero_on_slot1(reg, conn, pid, handlers, session, level=1, xp=0):
+    grant_hero(conn, pid, KNIGHT, 10, level=level, xp=xp)
+    _query(reg, handlers, session)
+    assert _use(reg, handlers, session, 1).status == 0
+    session.outbox.clear()
+
+
+def test_guide_11205_one_1100_on_slot1_adds_60_xp(reg, world) -> None:
+    """TrainList.lua:47-57 sends {item, train = slot 1, amount = 1}."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 3)
+    _hero_on_slot1(reg, conn, pid, handlers, session)
+    res = _speed_up(reg, handlers, session)
+    assert res.status == 0
+    assert (res.train.train, res.train.refer_id) == (1, KNIGHT)
+    assert (res.train.level, res.train.exp) == (3, 10)      # 60 = 20 + 30 + 10
+    assert _owned(conn, pid, 1100) == 2
+    hero_row = heroes_of(conn, pid)[0]
+    assert (int(hero_row["level"]), int(hero_row["xp"])) == (3, 10)
+
+
+def test_potions_level_the_hero_and_push_one_hero_notify(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 10)
+    _hero_on_slot1(reg, conn, pid, handlers, session)
+    res = _speed_up(reg, handlers, session, amount=5)          # 300 xp
+    assert res.status == 0
+    assert [m.ident for (_s, c, m) in session.outbox if c == 2008] == [4, 2]
+    assert [list(m.data) for m in _notes(session, 4)] == [[1100.0, 5.0]]
+    fields = _decode(_notes(session, 2)[0], notify.HERO_FIELDS)
+    # 20+30+40+50+60+70 = 270 for levels 1-6, 30 left at level 7.
+    assert (fields["level"], fields["xp"]) == (7, 30)
+    assert "ability" in fields and "max_hp" in fields
+
+
+def test_potion_amount_clipped_at_the_cap_consumes_only_what_is_needed(reg, world) -> None:
+    """Risk 4: a long press sends big amounts. Level 16 -> 17 with 899 of 900
+    is 1699 xp, ceil(1699 / 60) = 29 potions."""
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 100)
+    _hero_on_slot1(reg, conn, pid, handlers, session, level=16)
+    res = _speed_up(reg, handlers, session, amount=100)
+    assert res.status == 0
+    assert _owned(conn, pid, 1100) == 71
+    assert (res.train.level, res.train.exp, res.train.maxexp) == (17, 899, 900)
+    hero_row = heroes_of(conn, pid)[0]
+    assert (int(hero_row["level"]), int(hero_row["xp"])) == (17, 899)
+
+
+def test_potion_on_a_full_hero_refused_327945(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 5)
+    _hero_on_slot1(reg, conn, pid, handlers, session, level=17, xp=899)
+    res = _speed_up(reg, handlers, session)
+    assert res.status == 327945                     # 英雄经验值已经满了
+    assert _owned(conn, pid, 1100) == 5
+    assert session.outbox == []
+
+
+def test_non_potion_item_refused_327948(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1300, 5)                  # 精英扫荡券, class 60
+    _hero_on_slot1(reg, conn, pid, handlers, session)
+    assert _speed_up(reg, handlers, session, item=1300).status == 327948
+    assert _owned(conn, pid, 1300) == 5
+
+
+def test_potion_on_an_empty_slot_refused_329220(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 5)
+    _query(reg, handlers, session)
+    assert _speed_up(reg, handlers, session, slot=2).status == 329220
+    assert _speed_up(reg, handlers, session, slot=9).status == 329220
+    assert _owned(conn, pid, 1100) == 5
+
+
+def test_more_potions_than_owned_refused_327942(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 2)
+    _hero_on_slot1(reg, conn, pid, handlers, session)
+    assert _speed_up(reg, handlers, session, amount=3).status == 327942
+    assert _owned(conn, pid, 1100) == 2
+    assert int(heroes_of(conn, pid)[0]["xp"]) == 0
+
+
+def test_potion_on_an_angel_pushes_ident3(reg, world) -> None:
+    from server.db import grant_item
+
+    conn, pid, handlers, session, _ = world
+    grant_item(conn, pid, 1100, 1)
+    grant_angel(conn, pid, GODDESS, level=1, star=1)
+    _query(reg, handlers, session)
+    _use(reg, handlers, session, 2, refer_type=2, refer_id=GODDESS)
+    session.outbox.clear()
+    res = _speed_up(reg, handlers, session, slot=2)
+    assert res.status == 0
+    assert (res.train.refer_type, res.train.level, res.train.exp) == (2, 3, 10)
+    assert _decode(_notes(session, 3)[0], notify.ANGEL_FIELDS) == {"level": 3, "exp": 10}
+
+
+def test_buy_ten_1100_costs_3000_gold(reg, world) -> None:
+    """TrainBuyItemPanel.lua:255-268: amount is groups of merchandise.amount."""
+    conn, pid, handlers, session, _ = world
+    res = _buy(reg, handlers, session, 9999000, 10)
+    assert res.ListFields() == []
+    assert _owned(conn, pid, 1100) == 10
+    row = conn.execute("SELECT gold FROM players WHERE id = ?", (pid,)).fetchone()
+    assert int(row["gold"]) == 100000 - 3000
+    assert [list(m.data) for m in _notes(session, 4)] == [[1100.0, 10.0]]
+    assert _decode(_notes(session, 1)[0], notify.PLAYER_FIELDS) == {"gold": 97000}
+
+
+def test_buy_1120_below_level30_changes_nothing(reg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    _buy(reg, handlers, session, 9999020, 1)
+    assert _owned(conn, pid, 1120) == 0
+    row = conn.execute("SELECT diamond FROM players WHERE id = ?", (pid,)).fetchone()
+    assert int(row["diamond"]) == 1000
+    assert session.outbox == []
+
+
+def test_buy_1120_at_level30_costs_15_diamonds(reg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    conn.execute("UPDATE players SET level = 30 WHERE id = ?", (pid,))
+    conn.commit()
+    _buy(reg, handlers, session, 9999020, 2)
+    assert _owned(conn, pid, 1120) == 2
+    row = conn.execute("SELECT diamond FROM players WHERE id = ?", (pid,)).fetchone()
+    assert int(row["diamond"]) == 1000 - 30
+
+
+def test_buy_without_gold_changes_nothing(reg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    conn.execute("UPDATE players SET gold = 2999 WHERE id = ?", (pid,))
+    conn.commit()
+    _buy(reg, handlers, session, 9999000, 10)
+    assert _owned(conn, pid, 1100) == 0
+    row = conn.execute("SELECT gold FROM players WHERE id = ?", (pid,)).fetchone()
+    assert int(row["gold"]) == 2999
+    assert session.outbox == []
+
+
+def test_buy_merchandise_outside_store_999_changes_nothing(reg, cfg, world) -> None:
+    conn, pid, handlers, session, _ = world
+    other = next(
+        int(r["entry"]) for r in cfg.conn("merchandise_info").execute(
+            "SELECT entry FROM merchandise_info WHERE store = 1 ORDER BY entry"
+        )
+    )
+    _buy(reg, handlers, session, other, 1)
+    _buy(reg, handlers, session, 1, 1)
+    assert session.outbox == []
