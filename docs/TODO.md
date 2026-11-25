@@ -102,6 +102,19 @@ Nothing is shipped and nothing is confirmed until you drive it yourself.
       wave**, and the **angel's rage never rose** from its 50 % start in either fight (stock
       client path, not chased). The chapter chest, achievement kind 2 and guide 10400 stay behind
       10022 until one of the levers is chosen.
+      **Status 25-11-2026, later (branch `plan-b2-wave2`, Wave 2 A1-A5 at `bdfc89c`, 667 tests;
+      ACC-W2-1 = run 10 in `docs/dev-loop.md` section 7):** a fresh character **wins 10022** with
+      3 stars on the first try. It got there through the free post-guide draw (`k=1`, 182000 →
+      2-star 209000 at level 5), a stage-10012 grind to player level 8, skill upgrades (`5_2103`,
+      skill0 Lv.9), and training with 242 potions of 1100 (233 bought for 69,900 gold) to hero
+      level 17 "EXP Full". The chapter-1 chest, the kind-2 achievement (event 10920 via guide
+      10400-10410) and guide 10451 (the fifth hero, 202000) follow, and relaunch and server
+      restart keep spell levels, `trains` and `diamond_free_day`. Server greps 0. Logcat has 2
+      `LUA ERROR`s: the known `RoleEquipGetEquipPanel:44`, and `AngelSkill:97` from the unbuilt
+      `5_2323` (task B1), which is new in the unanswered list. Open from that run: the train
+      screen does not refresh passive xp until it reopens; the post-fight guide burst also follows
+      a win (`guide_id` 11208 → 10380); fight xp banks past the hero cap (Risk 5); angel levels
+      pass the heroes' cap in training.
       Ready for your emulator pass, not done.
 
 ## Done — Plan A "boot to main city" (master, 41 commits, 98 tests)

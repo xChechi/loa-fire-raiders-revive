@@ -771,6 +771,87 @@ Frames: `docs/screens/en-2026-11-25-boss-10022/01-...` to `14-...` (JPEG q85). L
 frames kept outside the repo: `C:/tmp/loa-boss/server.err.log`, `server.out.log`,
 `logcat-run9.txt`, `f1-*.png`, `f2-*.png`, `tapper9.sh`, `shooter9.sh`, `shots.txt`.
 
+### Run 10 (Plan B2 Wave 2 ACC-W2-1, 25-11-2026): a fresh character wins 10022
+
+Same AVD `LOA_API30`, warm, same English APK (versionName 1.0.0.5), no rebuild (no client change
+in this plan). Branch `plan-b2-wave2`, server HEAD `bdfc89c` (A1-A5, suite 667 passed). Fresh
+world: `data/player.db` **moved** to `data/player.db.pre-w2-acc1`. Server banner
+`25-11-2026 10:13:55 INFO loa.net listening on 0.0.0.0:8112`, `10:14:40 created character
+'stefan' as player id 1 with hero 100000, 1280000 gold, 18888 diamonds`. Fights were driven with
+a tap loop over the card row and the wave point `1938 530`: the four-card row
+`667/901/1134/1368 x 901` for the newbie stages, then the measured rows for 3, 4 and 5 cards
+(`784/1016/1248 x 900`; `668/900/1132/1364 x 900`; `552/784/1016/1248/1480 x 900`) plus the angel
+card `164 900`.
+
+**Outcome: 10022 won with 3 stars on the first attempt (`11:33:43`, 80 s), with four level-17
+heroes, skill0 at Lv.9 on all four and the level-17 angel. The chapter-1 chest paid, the kind-2
+achievement was claimed through guide 10400-10410, and guide 10451 summoned the fifth hero.
+Relaunch and server restart keep spell levels, `trains` and `diamond_free_day`. Server greps are
+0; logcat has 2 `LUA ERROR`s (one known stock quirk, one from the unbuilt `5_2323`).**
+
+| # | Assertion | Result | Evidence |
+|---|---|---|---|
+| 1 | Tutorial supreme draw: diamonds 18,888, log `k=0 ... free=True` | **PASS** | `10:16:58 loa.gacha supreme single k=0 for player 1: drop 189000, free=True`, pays 210000; HUD 18,888 (`03-...`). Afterwards the supreme card already shows the 2-star tip (`04-...`, see finding 1). |
+| 2 | After the guide: 今日首抽免费 + 2-star tip; `k=1 ... drop 182000, free=True`; star-2 level-5 hero, diamonds unchanged | **PASS** | At 10390 the card reads "First Draw Free Today" and 首次单抽 必得二星英雄 (`05-...`, `06-...`). `10:37:04 supreme single k=1 for player 1: drop 182000, free=True`, pays 209000 Astral Hunter; DB `heroes(209000) = star 2, level 5`, diamonds 18,888 (`07-...`, `08-...`, `C:/tmp/loa-accw21/db-after-post-guide-draw.db`). |
+| 3 | Two `5_2103` lines; the knight's skill Lv.3, `heroes.spell0_lv = 3`; gold -2,500 | **PASS (on two heroes)** | Guide 11300→11411→11412 (`10:46:42`, `10:47:49`, `10:48:04`) picked the **first card in the hero list**, which is now the 2-star Astral Hunter: `10:47:49 hero 209000 ... skill 0 to level 2 (2090001) for 1000 gold`, `10:48:04 ... to level 3 (2090002) for 1500 gold` (`11-...`). The knight was then raised by hand: `10:48:48 hero 100000 ... skill 0 to level 2 (1000001) for 1000 gold`, `10:48:51 ... level 3 (1000002) for 1500 gold`, Rose Blade Lv.3 (`12-...`); DB `spell0_lv = 3` on both (`db-after-skills.db`). 11413 was never saved; `guide_id` stayed 11412. |
+| 4 | Train guide: `5_2119` slot 1 hero, `5_2125 {1100, 1, 1}`, `5_2119` slot 2 angel; level and exp bar | **PASS** | `10:59:06 guide_id 11200`; `11:00:17 places hero 210000 on train slot 1`; `11:00:43 guide_id 11205`, `uses 1x 1100 (of 1 asked) on train slot 1: 60 xp` (bar 3/80 → 63/80); `11:01:19 guide_id 11208`, `places angel 500000 on train slot 2` (`15-...` to `17-...`). Slots 1-3 opened free at quality 1. 11210 was never saved; `guide_id` stayed 11208. |
+| 5 | `5_2165` purchases and potions take the line-up to 17 with "exp full" | **PASS** | `11:06:57 buys 176x 1100 for 52800 gold`, `11:23:46 buys 57x 1100 for 17100 gold` (`19-...`). 242 potions used in all: the 9 from the kit and the drops, the 233 bought, 25 of them on the angel. The client stops sending on a full hero, and the last potion of each hero is clipped (`... 6 xp`, `... 26 xp`, `... 30 xp`). All four heroes read Lv17 "EXP Full" (`20-...`, `21-...`); DB `heroes.level 17, xp 899` for all four (`db-trained.db`). |
+| 6 | `stage 10022 finished ... won=True` | **PASS** | `11:32:23 stage 10022 entered`, `5_2327 ... team of 4 unit(s) [(2, 100000), (4, 210000), (5, 209000), (6, 104000)]`, `11:33:43 stage 10022 finished by player 1 with 3 star(s), won=True` (`22-...`, `23-...` dragon wave at 02:20, `24-...` Victory, all four "EXP Full"). |
+| 7 | Chapter-1 chest pays (`5_2209`, `chapters` award 1) | **PASS** | The chest shows 9/9 (`29-...`). `11:43:58 loa.level chapter 10000 chest paid to player 1: [(9, 0, 600), (20, 104000, 6), (1, 0, 60000), (20, 1100, 12)]` (`30-...`); DB `chapters = (1, 10000, 1)`. The guide mask blocked the chest until 11000 was played (finding 4). |
+| 8 | Guide 10399/10400→10420 claims the kind-2 achievement (`5_2241`); 10440→10451 if triggered | **PASS** | "You completed an Achievement" (`25-...`); `11:36:52 guide_id 10400`, `11:37:07 guide_id 10410`, `loa.events player 1 claimed event 10920: [(20, 202000, 30), (1, 0, 300000)]` (`26-...`). Then `11:38:06 guide_id 10451`, `hero 202000 called by player 1 for 30x 202000 and 100000 gold` (`27-...`). 10420 and 10440 were not saved server-side. |
+| 9 | Relaunch + server restart: spell levels, `trains`, `diamond_free_day` survive; `login ok`, no `created character` | **PASS** | Force-stop + relaunch: `11:40:09 login ok, player id 1` (`28-...`). Server killed, restarted (`11:45:23` banner), `11:45:57 login ok, player id 1`, `created character` count 0 in `server-restart.err.log`. DB before/after the restart: `heroes` (spell levels 9/6), `diamond_free_day '2026-11-25'` and the three `trains` rows identical; only `energy`/`energy_at` and the passive train settlement (`angels.exp`, `trains.cal_time/addxp`) moved. The tavern shows the free draw used (`33-...`), Train keeps its slots (`32-...`), Rose Knight Lv.9/Lv.6 (`34-...`). |
+| 10 | `grep -cE "Traceback\|ERROR"` = 0; logcat `LUA ERROR` = 0 | **server PASS (0); logcat FAIL (2)** | Server: `server.err.log` 0, `server.out.log` 0, `server-restart.err.log` 0, `server-restart.out.log` 0. Logcat (458,220 lines): `FATAL` 0, `LUA ERROR` **2**: `10:21:17 roleUI/roleLe...:44: attempt to index field 'itemVo' (a nil value)` during the guided equip (the known stock quirk from run 7); `10:53:45 angel/AngelSk...:97: attempt to index local 'curAngelInfo' (a nil value)` in `onUpskill`, which is the zero stub answering `5_2323` (guide 12510 at player level 6; task B1 builds it). |
+| 11 | Unanswered ids vs run 9 | **one new** | `5_2039` (twice, one per login) and `5_2623` as in run 9, plus **new** `5_2323 UpgradeAngelSpellReq` (once, `10:53:46`, guide 12510 → 12530). |
+
+The grind used stage 10012 only (once = 0, 6 player xp), nine replays from 10:41 to 10:58 at 33-50 s
+each with four heroes, all 3 stars. Level 5 at `10:46:18` (guide 11300), level 6 at `10:52:23`
+(guide 12510, angel skill), level 8 at `10:58:47` (guide 11200). After training, the skills
+went to the hero-level-17 cap: skill0 Lv.9 on all four heroes and the knight's skill1 Lv.6.
+Equip All ran again on each hero. The line-up for 10022 was the four heroes plus Idol Angel
+(level 17). Imperial Sentinel arrived only after 10022 (guide 10451), so five heroes fought only
+in 11000 (won, 3 stars, `11:42:00`), which the guide forced before the chest.
+
+Findings (none blocked the run):
+
+1. **The supreme draw without a ticket.** After the free post-guide draw, the reward screen's
+   "Again" sent `5_2123` while the player held no ticket 99. The server charged 2,000 diamonds:
+   `10:37:58 supreme single k=2 ... drop 182100, free=False`, 18,888 → 16,888. The guarantee pool
+   182100 rolled 209000 again, already owned, so it became 18 soul stones (`09-...`). So the
+   "Again" path does not go through the ticket check of settled point 2; the server's
+   diamond fallback (O-W2-4) covered it. The supreme card's label also showed "cost 1 ticket"
+   right after the tutorial draw (`04-...`), because the client decrements its own `freetimes`
+   copy. The next `5_2121` restored "First Draw Free Today".
+2. **Train cells do not show passive xp until the screen reopens.** The server settles a tick
+   every 60 s (`train slot 1 ... 1 ticks, 80 xp to hero 210000`), but the open Train screen kept
+   the values from the last potion. The ranger showed Lv8 43/90 while the DB had level 11, 133 xp
+   (`18-...`). Reopening the screen showed the right numbers. Potions apply one per tap: tap the
+   potion once to arm it, then tap a slot body for each potion.
+3. **Xp past the cap.** After 11000 every trained hero shows `EXP 944/900` at level 17
+   (`34-...`): `level_out` banks fight xp past the cap, as the plan's Risk 5 leaves it. Training
+   still treats them as full. The angel has no cap in training. Idol Angel went from level 6 to
+   19 through passive ticks plus the 25 left-over potions, past the heroes' 17.
+4. **The guide burst after a won fight too.** Three seconds after the 10022 **win** the client
+   sent 10160, 10159, 10290, 10330, 10380, 10500, 10540 and 10580. Five were refused with a WARNING
+   ("has no new_player_guide_info row"), and `guide_id` went 11208 → **10380**. The guide then
+   resumed at 10400 and masked the chapter chest until stage 11000 was played. The run ended at
+   `guide_id` 10490.
+5. **The skill guide's hero.** Guide 11300 points at the first card of the hero list. Once the
+   2-star hero is owned, that card is the 2-star hero, not the knight.
+
+Real-world changes (start → end): player level 1 → 8; gold 1,280,000 → 1,320,648; diamonds
+18,888 → 17,488 (−2,000 for the second draw, +600 from the chest). Five heroes: 100000, 104000,
+210000 and 209000 at 17, and 202000 at 5. Angel level 19. `diamond_single_draws` 3,
+`diamond_free_day` `2026-11-25`. Three `trains` rows hold the mage, the angel and the hunter.
+`chapters (10000, 1)`, `levels` up to 11000, 12 x 1100 left, `guide_id` 10490.
+
+Logs and DB copies (not in the repo): `C:/tmp/loa-accw21/server.err.log`, `server.out.log`,
+`server-restart.err.log`, `server-restart.out.log`, `logcat-part1.txt`, `db-after-tutorial-draw.db`,
+`db-after-guide-10390.db`, `db-after-post-guide-draw.db`, `db-after-second-draw.db`,
+`db-after-skills.db`, `db-level8.db`, `db-after-train-guide.db`, `db-trained.db`,
+`db-pre-10022.db`, `db-after-10022.db`, `db-before-relaunch.db`, `db-before-restart.db`,
+`db-after-restart.db`, `db-end.db`, fight frames `f1-*.png`, `tapper.sh`, `cycle.sh`, `pour.sh`,
+`shooter.sh`. Frames: `docs/screens/en-2026-11-25-acc-w2-1/01-...` to `34-...` (JPEG q85).
+
 ### Pre-launch checklist for the next run
 
 1. **Move `data/player.db` aside, never delete it.** The worlds kept beside it are
