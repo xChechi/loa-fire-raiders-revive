@@ -495,3 +495,29 @@ def test_buy_merchandise_outside_store_999_changes_nothing(reg, cfg, world) -> N
     _buy(reg, handlers, session, other, 1)
     _buy(reg, handlers, session, 1, 1)
     assert session.outbox == []
+
+
+def test_angel_in_training_stops_at_the_heroes_cap_for_the_player_level(reg, world) -> None:
+    """Run 11 finding 4: Idol Angel trained 19 -> 29 at player level 8-ish
+    while the heroes stopped at 17. The client's train screen caps an angel
+    at BOTH angel_info.max_level and xp_for_level[player level].hero_max_level
+    (train/LevelHelp.lua:38-52, `heroLevel <= maxLevel and heroLevel <=
+    maxLevel_exp`), and HeroCell.lua:191-201 shows it "full" at
+    exp + 1 == maxexp. At player level 8 that is min(40, 17) = 17."""
+    conn, pid, handlers, session, clock = world
+    grant_angel(conn, pid, GODDESS, level=16, star=1)
+    _query(reg, handlers, session)
+    assert _use(reg, handlers, session, 2, refer_type=2, refer_id=GODDESS).status == 0
+    clock["now"] = T0 + 86400
+    t = _slot(_query(reg, handlers, session), 2)
+    assert t.level == 17
+    assert t.exp + 1 == t.maxexp
+    row = conn.execute(
+        "SELECT level, exp FROM angels WHERE player_id = ?", (pid,)
+    ).fetchone()
+    assert (int(row["level"]), int(row["exp"]) + 1) == (17, t.maxexp)
+    from server.db import grant_item
+
+    grant_item(conn, pid, 1100, 1)
+    assert _speed_up(reg, handlers, session, slot=2).status == 327945   # 经验值已经满了
+    assert _owned(conn, pid, 1100) == 1

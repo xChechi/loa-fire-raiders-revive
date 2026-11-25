@@ -23,7 +23,8 @@ cal_time on every train request: per tick exp_up x (1 + rate) + base x D/3600,
 the client's own per-hour display formula divided by 3600/D
 (TrainUI.lua:636-662), with train_level_xp keyed by player level and slot
 quality. A hero stops at xp_for_level(player level).hero_max_level with
-need - 1 xp, an angel at angel_info.max_level with need - 1 (O-W2-9).
+need - 1 xp, an angel at the lower of angel_info.max_level and that
+hero_max_level with need - 1 (O-W2-9; train/LevelHelp.lua:38-52).
 """
 
 from __future__ import annotations
@@ -95,14 +96,16 @@ def _hero_cap(cfg: Config, player: sqlite3.Row) -> int:
     return int(caps["hero_max_level"]) if caps else 1
 
 
-def _angel_cap(cfg: Config, angel_row: sqlite3.Row) -> int:
+def _angel_cap(cfg: Config, player: sqlite3.Row, angel_row: sqlite3.Row) -> int:
+    """angel_info.max_level, and never past the heroes' cap for the player
+    level (train/LevelHelp.lua:38-52)."""
     info = cfg.angel_by_star(int(angel_row["angel_entry"]), int(angel_row["star"]))
     if info is None:
         raise KeyError(
             f"angel_info has no row for angel {angel_row['angel_entry']}"
             f" star {angel_row['star']}"
         )
-    return int(info["max_level"])
+    return min(int(info["max_level"]), _hero_cap(cfg, player))
 
 
 def _unit(conn: sqlite3.Connection, pid: int, kind: int, entry: int):
@@ -126,7 +129,7 @@ def unit_state(cfg: Config, conn: sqlite3.Connection, player, kind: int, entry: 
     if kind == REFER_HERO:
         level, xp, cap = int(row["level"]), int(row["xp"]), _hero_cap(cfg, player)
     else:
-        level, xp, cap = int(row["level"]), int(row["exp"]), _angel_cap(cfg, row)
+        level, xp, cap = int(row["level"]), int(row["exp"]), _angel_cap(cfg, player, row)
     need = _need(cfg, kind, level)
     exp = min(xp, need - 1) if level >= cap and need > 0 else xp
     return level, exp, need, cap, room(cfg, kind, level, xp, cap)
