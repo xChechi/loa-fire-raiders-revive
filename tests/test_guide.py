@@ -222,3 +222,37 @@ def test_a_lower_guide_id_outside_the_burst_is_still_saved(reg, settings, cfg) -
     res = _save(reg, settings, conn, cfg, pid, 10400)
     assert res.status == 0
     assert int(find_player(conn, "stefan")["guide_id"]) == 10400
+
+
+# Board f-216389: until Wave 4 the arena and guild do not exist, so the saved
+# 11700 (level 15) and 14202 (level 40) would replay at every login: check(0)
+# follows jump_id (NewGuideManager.lua:255-259) to 11701/14201, whose nextid is
+# the guide again. The chains' own last steps 11750 and 14204 have nextid
+# 99999, which has no row, so playGuide(nil) just clears (:362-366), the same
+# end as 11820 or 11640.
+@pytest.mark.parametrize("stored, reported", [(11700, 11750), (14202, 14204)])
+def test_an_unreachable_guide_is_reported_as_its_chains_finished_step(
+    reg, cfg, settings, stored, reported
+) -> None:
+    assert int(cfg.guide(reported)["nextid"]) == 99999
+    assert int(cfg.guide(reported)["jump_id"]) == 0
+    assert cfg.guide(99999) is None
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_guide_id(conn, pid, stored)
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert res.player.guide_id == reported
+    assert int(find_player(conn, "stefan")["guide_id"]) == stored
+
+
+def test_other_guides_are_reported_unchanged_and_the_stored_value_is_kept(
+    reg, cfg, settings
+) -> None:
+    conn = connect(settings.db_path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    set_guide_id(conn, pid, 11820)
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert res.player.guide_id == 11820
+    set_guide_id(conn, pid, 11700)
+    player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert int(find_player(conn, "stefan")["guide_id"]) == 11700

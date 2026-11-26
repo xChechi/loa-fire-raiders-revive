@@ -192,6 +192,8 @@ Plan A and Plan B1 worlds are kept beside it as `data/player.db.*` backups
 - [ ] **Wave 4: rune engraving (`5_2841`, O-W3-6).** Opens with the catacombs at level 68
       (`RunePanel.lua:485-488`). `hero_rune_develop_info` has 51 rows (levels 0-50) on a full scan; `count(*)`
       says 0 because of the broken autoindex (`docs/protocol-coverage-2026-11-25.md`).
+- [ ] **Wave 4: restore guides 11700/14202** when arena/guild land: delete `guide.REPORTED_AS_FINISHED`
+      (reports them as 11750/14204 at login, Board f-216389).
 - [ ] Later: `.gitattributes`, `Registry.message_class` error type, `fake_client` docstring, commit-trailer
       uniformity (history rewrite is Stefan's call), DecodeError handling is done.
 

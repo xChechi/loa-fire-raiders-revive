@@ -26,6 +26,13 @@ BATTLE_END_GUIDE_IDS = frozenset(
     (10160, 10159, 10290, 10330, 10380, 10500, 10540, 10580)
 )
 
+# Wave 4: remove when arena/guild exist, Board f-216389. 11710 and 14203 have
+# no node yet, so a saved 11700/14202 replays at every login (check(0) follows
+# jump_id 11701/14201, NewGuideManager.lua:255-259). The client is told the
+# chain's last step instead: its nextid 99999 has no row, so playGuide(nil)
+# clears (:362-366), like 11820. Report time only; the stored value is kept.
+REPORTED_AS_FINISHED = {11700: 11750, 14202: 14204}
+
 
 def handlers(
     registry: Registry, settings: Settings, conn: sqlite3.Connection, cfg: Config

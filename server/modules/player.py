@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import angel, events, hero, item, mystery
+from server.modules import angel, events, guide, hero, item, mystery
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -46,7 +46,9 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
         energy=int(row["energy"]),
         max_energy=int(row["max_energy"]),
         avatar=int(row["avatar"]),
-        guide_id=int(row["guide_id"]),
+        guide_id=guide.REPORTED_AS_FINISHED.get(
+            int(row["guide_id"]), int(row["guide_id"])
+        ),
     )
     # Optional in the proto, but ClientPlayer:updateData concatenates these
     # into a print, so an absent value kills the Lua VM right after login.
