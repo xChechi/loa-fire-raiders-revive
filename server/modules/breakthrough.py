@@ -168,7 +168,7 @@ def handlers(
 
     def _ability(row) -> int:
         built = hero_mod.build_client_hero_with_runes(
-            registry, cfg, row, hero_mod.runes_of(conn, row)
+            registry, cfg, row, hero_mod.runes_of(conn, row), conn=conn
         )
         return int(built.ability)
 

@@ -199,7 +199,9 @@ def apply_xp(
         if always or int(row["level"]) != before_level:
             notify.hero_changed(
                 registry, session, int(entry),
-                hero.hero_notify_fields_with_runes(registry, cfg, row, hero.runes_of(conn, row)),
+                hero.hero_notify_fields_with_runes(
+                    registry, cfg, row, hero.runes_of(conn, row), conn=conn
+                ),
             )
         if int(row["level"]) != before_level:
             events.bump(conn, cfg, registry, session, pid, events.KIND_HERO_LEVEL)

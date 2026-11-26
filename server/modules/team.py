@@ -67,13 +67,17 @@ HERO_PLACES = range(1, 7)
 def build_fight_unit(
     registry: Registry, cfg: Config, hero_row: sqlite3.Row, position: int,
     runes: list[tuple[int, int]] | None = None,
+    conn: sqlite3.Connection | None = None,
 ):
     """One ClientFightUnit for an owned hero row, standing at position.
-    `runes` is hero.runes_of(conn, hero_row); None is five level-0 runes."""
+    `runes` is hero.runes_of(conn, hero_row); None is five level-0 runes.
+    `conn` adds the Wave 3 bonuses (hero.build_client_hero_with_runes)."""
     if runes is None:
-        client_hero = hero.build_client_hero(registry, cfg, hero_row)
+        client_hero = hero.build_client_hero(registry, cfg, hero_row, conn=conn)
     else:
-        client_hero = hero.build_client_hero_with_runes(registry, cfg, hero_row, runes)
+        client_hero = hero.build_client_hero_with_runes(
+            registry, cfg, hero_row, runes, conn=conn
+        )
     unit = registry.message_class("ClientFightUnit")(
         type=UNIT_TYPE_HERO,
         refer=client_hero.entry,
@@ -205,7 +209,7 @@ def build_self_team_res(
             )
             continue
         unit = build_fight_unit(
-            registry, cfg, hero_row, slot, hero.runes_of(conn, hero_row)
+            registry, cfg, hero_row, slot, hero.runes_of(conn, hero_row), conn=conn
         )
         ability += int(unit.ability)
         res.team_base.units.add().CopyFrom(unit)

@@ -160,6 +160,21 @@ def rune_bonus(
     return bonus
 
 
+def wave3_bonus(
+    conn: sqlite3.Connection, cfg: Config, row: sqlite3.Row, bonus: dict[str, float]
+) -> dict[str, float]:
+    """Add the bonus() of hero develop, blessing, signets, breakthrough,
+    rebirth and artifacts to `bonus`, as rune_bonus does for runes. The
+    artifact numbers are the player's equipped set, the same for every hero
+    (artifact.bonus). Imported here: those modules import this one."""
+    from server.modules import artifact, bless, breakthrough, herodevelop, rebirth, signet
+
+    for module in (herodevelop, bless, signet, breakthrough, rebirth, artifact):
+        for field, value in module.bonus(conn, cfg, row).items():
+            bonus[field] = bonus.get(field, 0.0) + value
+    return bonus
+
+
 LEVELLED_SPELLS = 4                  # skill0..skill3; skill4 (awaken) is W3
 
 
@@ -178,16 +193,24 @@ def spell_at_level(cfg: Config, base: int, level: int) -> int:
     return spell
 
 
-def build_client_hero(registry: Registry, cfg: Config, row: sqlite3.Row):
+def build_client_hero(
+    registry: Registry, cfg: Config, row: sqlite3.Row,
+    conn: sqlite3.Connection | None = None,
+):
     """Five level-0 runes: right for a hero born this moment; any other caller
     that has the connection should use build_client_hero_with_runes."""
-    return build_client_hero_with_runes(registry, cfg, row, [(0, 0)] * RUNE_SLOTS)
+    return build_client_hero_with_runes(
+        registry, cfg, row, [(0, 0)] * RUNE_SLOTS, conn=conn
+    )
 
 
 def build_client_hero_with_runes(
     registry: Registry, cfg: Config, row: sqlite3.Row, runes: list[tuple[int, int]],
+    conn: sqlite3.Connection | None = None,
 ):
-    """`runes` is runes_of(conn, row): ClientHero.runes and their unit stats."""
+    """`runes` is runes_of(conn, row): ClientHero.runes and their unit stats.
+    With `conn`, unit also carries the Wave 3 bonuses (wave3_bonus); every
+    server caller passes it, so a notify never drops them."""
     entry = int(row["entry"])
     star = int(row["star"])
     level = int(row["level"])
@@ -218,11 +241,11 @@ def build_client_hero_with_runes(
         level=level,
         ability=int(npc_row["ability"] or 0),
     )
+    bonus = rune_bonus(cfg, entry, runes, gear_bonus(cfg, row))
+    if conn is not None:
+        wave3_bonus(conn, cfg, row, bonus)
     msg.unit.CopyFrom(
-        build_client_hero_unit(
-            registry, cfg, npc_row, growth_row, level,
-            rune_bonus(cfg, entry, runes, gear_bonus(cfg, row)),
-        )
+        build_client_hero_unit(registry, cfg, npc_row, growth_row, level, bonus)
     )
     msg.base_unit.CopyFrom(
         build_client_hero_unit(registry, cfg, npc_row, growth_row, level)
@@ -255,12 +278,13 @@ def hero_notify_fields(registry: Registry, cfg: Config, row: sqlite3.Row) -> dic
 
 def hero_notify_fields_with_runes(
     registry: Registry, cfg: Config, row: sqlite3.Row, runes: list[tuple[int, int]],
+    conn: sqlite3.Connection | None = None,
 ) -> dict:
     """The ident-2 field set for one heroes row (ClientHero:updateByFields):
     the six slots, the unit stats that are HERO_FIELDS names (they go to
     ClientHero.unit), ability, level, xp, star, quality, prototype, max_level.
     The values are the ones build_client_hero sends, so the two never drift."""
-    hero = build_client_hero_with_runes(registry, cfg, row, runes)
+    hero = build_client_hero_with_runes(registry, cfg, row, runes, conn=conn)
     fields: dict = {f"item{i}": int(v) for i, v in enumerate(hero.items)}
     for name in NPC_UNIT_FIELDS:
         if name in HERO_FIELDS:
@@ -383,7 +407,7 @@ def handlers(
 
     def _hero_fields(hero_id: int, names) -> dict:
         row = conn.execute("SELECT * FROM heroes WHERE id = ?", (hero_id,)).fetchone()
-        full = hero_notify_fields_with_runes(registry, cfg, row, runes_of(conn, row))
+        full = hero_notify_fields_with_runes(registry, cfg, row, runes_of(conn, row), conn=conn)
         return {k: v for k, v in full.items() if k in names}
 
     def _take_all(pid: int, costs: dict[int, int]) -> list[tuple[int, int]]:
@@ -566,7 +590,7 @@ def handlers(
             "SELECT * FROM heroes WHERE id = ?", (int(row["id"]),)
         ).fetchone()
         built = build_client_hero_with_runes(
-            registry, cfg, new_row, runes_of(conn, new_row)
+            registry, cfg, new_row, runes_of(conn, new_row), conn=conn
         )
         fields = _hero_fields(
             int(row["id"]),
@@ -618,7 +642,7 @@ def handlers(
             "SELECT * FROM heroes WHERE id = ?", (int(row["id"]),)
         ).fetchone()
         built = build_client_hero_with_runes(
-            registry, cfg, new_row, runes_of(conn, new_row)
+            registry, cfg, new_row, runes_of(conn, new_row), conn=conn
         )
         notify.items_changed(registry, session, pairs)
         notify.player_changed(registry, session, {"gold": _gold(pid)})
@@ -666,7 +690,7 @@ def handlers(
             conn, pid, entry, quality, star=top, level=int(info["init_level"] or 1)
         )
         new_row = conn.execute("SELECT * FROM heroes WHERE id = ?", (hero_id,)).fetchone()
-        notify.hero_added(registry, session, build_client_hero(registry, cfg, new_row))
+        notify.hero_added(registry, session, build_client_hero(registry, cfg, new_row, conn=conn))
         notify.items_changed(registry, session, pairs)
         notify.player_changed(registry, session, {"gold": _gold(pid)})
         events.refresh(conn, cfg, registry, session, pid)

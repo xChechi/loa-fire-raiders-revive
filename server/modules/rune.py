@@ -236,7 +236,7 @@ def handlers(
                 {k: int(money[k]) for k, v in (("gold", gold), ("diamond", diamond)) if v},
             )
         fields = hero.hero_notify_fields_with_runes(
-            registry, cfg, row, hero.runes_of(conn, row)
+            registry, cfg, row, hero.runes_of(conn, row), conn=conn
         )
         notify.hero_changed(
             registry, session, entry,
@@ -261,7 +261,7 @@ def handlers(
                         owner, int(req.entry), pid)
         else:
             built = hero.build_client_hero_with_runes(
-                registry, cfg, row, hero.runes_of(conn, row)
+                registry, cfg, row, hero.runes_of(conn, row), conn=conn
             )
             res.ability = built.ability
             res.runes.extend(built.runes)

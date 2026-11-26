@@ -296,7 +296,7 @@ def handlers(
                 "SELECT * FROM heroes WHERE id = ?", (hero_row_id,)
             ).fetchone()
             notify.hero_added(
-                registry, session, hero.build_client_hero(registry, cfg, hero_row)
+                registry, session, hero.build_client_hero(registry, cfg, hero_row, conn=conn)
             )
         item.announce(registry, session, changed)
         notify.items_changed(registry, session, changed["items"])

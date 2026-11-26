@@ -478,7 +478,7 @@ def handlers(
             if entry not in owned:
                 continue
             unit = team.build_fight_unit(
-                registry, cfg, owned[entry], position, hero.runes_of(conn, owned[entry])
+                registry, cfg, owned[entry], position, hero.runes_of(conn, owned[entry]), conn=conn
             )
             unit.unit.max_hp = int(unit.unit.max_hp * factor)
             for field in SCALED_FIELDS:
@@ -495,7 +495,7 @@ def handlers(
             strongest = sorted(
                 _owned_heroes(pid).values(),
                 key=lambda r: -team.build_fight_unit(
-                    registry, cfg, r, 0, hero.runes_of(conn, r)
+                    registry, cfg, r, 0, hero.runes_of(conn, r), conn=conn
                 ).ability,
             )
             pending = {
@@ -662,7 +662,7 @@ def handlers(
         live = find_live(state["units"], UNIT_HERO, entry)
         if live is None:
             unit = team.build_fight_unit(
-                registry, cfg, hero_row, 0, hero.runes_of(conn, hero_row)
+                registry, cfg, hero_row, 0, hero.runes_of(conn, hero_row), conn=conn
             ).unit
             live = {
                 "type": UNIT_HERO, "refer": entry, "hp": int(unit.max_hp),

@@ -197,7 +197,7 @@ def build_query_myself_res(
     msg.gold_trails.prize = int(row["gold_trails_prize"]) if gold_today else 0
     for hero_row in db.heroes_of(conn, int(row["id"])):
         msg.heroes.add().CopyFrom(hero.build_client_hero_with_runes(
-            registry, cfg, hero_row, hero.runes_of(conn, hero_row)
+            registry, cfg, hero_row, hero.runes_of(conn, hero_row), conn=conn
         ))
     for stock in item.build_inventory(registry, conn, int(row["id"])):
         msg.inventory.add().CopyFrom(stock)

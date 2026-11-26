@@ -337,7 +337,7 @@ def handlers(
                     notify.hero_changed(
                         registry, session, entry,
                         hero.hero_notify_fields_with_runes(
-                            registry, cfg, hero_row, hero.runes_of(conn, hero_row)
+                            registry, cfg, hero_row, hero.runes_of(conn, hero_row), conn=conn
                         ),
                     )
             if angel_xp is not None:

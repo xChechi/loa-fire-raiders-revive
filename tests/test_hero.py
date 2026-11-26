@@ -231,3 +231,111 @@ def test_client_angel_carries_advance_and_glory(reg, cfg, tmp_path) -> None:
     angel = build_client_angel(reg, cfg, angels_of(conn, pid)[0])
     assert (angel.advance_level, angel.glory_level, angel.glory_star) == (4, 2, 5)
     angel.SerializeToString()
+
+
+# --- Wave 3 C1: the six Wave 3 bonuses reach ClientHero.unit -----------------
+W3_HERO = 100000                    # vocation 1: blessed by medal 10000
+W3_PLACED = (203000, 207000, 213000)  # bless medal 10000 units (test_bless)
+W3_SIGNET = 106010511               # fixed attrs: main 9|176, subs (test_signet)
+W3_DAGGER = 1502000                 # artifact, position 7 (test_artifact)
+
+
+def _wave3_world(tmp_path, cfg):
+    """One level-60 hero with one entry per Wave 3 stat system, plus a
+    level-2 rune and an item so the Wave 2 bonuses are in play too."""
+    import json
+
+    from server.db import add_artifact, add_signet, set_hero_items
+    from server.modules import artifact, signet
+
+    conn = connect(tmp_path / "w3c1.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    hid = grant_hero(conn, pid, W3_HERO, 10, star=1, level=60)
+    for entry in W3_PLACED:
+        grant_hero(conn, pid, entry, 10, level=45)
+    set_hero_items(conn, hid, [10000, 0, 0, 0, 0, 0])
+    conn.execute(
+        "UPDATE heroes SET breakthrough_level = 3, transmigrate_level = 1 WHERE id = ?",
+        (hid,),
+    )
+    conn.execute(
+        "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 1, 2, 7)",
+        (pid, W3_HERO),
+    )
+    conn.execute(
+        "INSERT INTO hero_develop (player_id, hero, constellation, p0, p1, p2, p3)"
+        " VALUES (?, ?, 0, 2, 4, 20, 1)", (pid, W3_HERO),
+    )
+    conn.execute(
+        "INSERT INTO bless (player_id, medal, slots, units) VALUES (?, 10000, '[3]', ?)",
+        (pid, json.dumps([0, *W3_PLACED, 0, 0])),
+    )
+    sid = add_signet(conn, pid, W3_SIGNET)
+    signet.ensure_rolled(
+        conn, cfg, conn.execute("SELECT * FROM signets WHERE id = ?", (sid,)).fetchone()
+    )
+    conn.execute("UPDATE signets SET hero = ? WHERE id = ?", (W3_HERO, sid))
+    aid = add_artifact(conn, pid, W3_DAGGER)
+    conn.execute("UPDATE artifacts SET level = 1, hero = ? WHERE id = ?",
+                 (artifact.EQUIPPED, aid))
+    conn.commit()
+    row = conn.execute("SELECT * FROM heroes WHERE id = ?", (hid,)).fetchone()
+    return conn, pid, row
+
+
+def test_hero_unit_sums_wave3_bonuses(reg, cfg, tmp_path) -> None:
+    from server.modules import (
+        artifact, bless, breakthrough, herodevelop, player, rebirth, signet, team,
+    )
+    from server.modules.hero import (
+        NPC_UNIT_FIELDS, build_client_hero_with_runes, hero_notify_fields_with_runes,
+        runes_of,
+    )
+
+    conn, pid, row = _wave3_world(tmp_path, cfg)
+    runes = runes_of(conn, row)
+    wave2 = build_client_hero_with_runes(reg, cfg, row, runes)
+    parts = [m.bonus(conn, cfg, row)
+             for m in (herodevelop, bless, signet, breakthrough, rebirth, artifact)]
+    assert all(parts), [bool(p) for p in parts]
+    built = build_client_hero_with_runes(reg, cfg, row, runes, conn=conn)
+    for field in NPC_UNIT_FIELDS:
+        extra = sum(p.get(field, 0.0) for p in parts)
+        got, plain = getattr(built.unit, field), getattr(wave2.unit, field)
+        if field == "max_hp":
+            # an int on the wire: the float sum is truncated once
+            assert abs(got - (plain + extra)) < 1
+        else:
+            assert got == pytest.approx(plain + extra, rel=1e-5), field
+    assert built.base_unit == wave2.base_unit
+    # The login payload, the notify fields and the fight unit carry the same.
+    player_row = conn.execute("SELECT * FROM players WHERE id = ?", (pid,)).fetchone()
+    sent = player.build_query_myself_res(reg, cfg, conn, player_row).heroes
+    assert next(h for h in sent if h.entry == W3_HERO).unit == built.unit
+    fields = hero_notify_fields_with_runes(reg, cfg, row, runes, conn=conn)
+    assert fields["power"] == built.unit.power
+    fight = team.build_fight_unit(reg, cfg, row, 1, runes, conn=conn)
+    assert fight.unit == built.unit
+
+
+def test_wave2_unit_unchanged_without_wave3_rows(reg, cfg, tmp_path) -> None:
+    from server.modules.hero import build_client_hero_with_runes, runes_of
+
+    from server.db import set_hero_items
+
+    conn = connect(tmp_path / "w2.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    hid = grant_hero(conn, pid, W3_HERO, 10, star=1, level=60)
+    set_hero_items(conn, hid, [10000, 0, 0, 0, 0, 0])
+    conn.execute(
+        "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 1, 2, 7)",
+        (pid, W3_HERO),
+    )
+    conn.commit()
+    row = heroes_of(conn, pid)[0]
+    runes = runes_of(conn, row)
+    wave2 = build_client_hero_with_runes(reg, cfg, row, runes)
+    with_conn = build_client_hero_with_runes(reg, cfg, row, runes, conn=conn)
+    assert with_conn.unit == wave2.unit
+    assert with_conn.base_unit == wave2.base_unit
+    assert wave2.unit != wave2.base_unit      # gear and rune still count

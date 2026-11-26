@@ -380,7 +380,7 @@ def handlers(
                 "SELECT * FROM heroes WHERE id = ?", (hero_row_id,)
             ).fetchone()
             notify.hero_added(
-                registry, session, hero.build_client_hero(registry, cfg, hero_row)
+                registry, session, hero.build_client_hero(registry, cfg, hero_row, conn=conn)
             )
         notify.items_changed(registry, session, changed["items"])
         # grant_prizes returns absolute balances, which is what

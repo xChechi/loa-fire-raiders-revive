@@ -194,7 +194,7 @@ def handlers(
         gold = int(conn.execute("SELECT gold FROM players WHERE id = ?", (pid,)).fetchone()["gold"])
         notify.player_changed(registry, session, {"gold": gold})
         fields = hero_mod.hero_notify_fields_with_runes(
-            registry, cfg, row, hero_mod.runes_of(conn, row)
+            registry, cfg, row, hero_mod.runes_of(conn, row), conn=conn
         )
         fields["transmigrate_level"] = current + 1
         notify.hero_changed(registry, session, int(row["entry"]), fields)
