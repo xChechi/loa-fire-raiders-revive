@@ -385,3 +385,102 @@ def test_bless_responses_serialise(reg, world) -> None:
     for res in responses + [m for _s, _c, m in session.outbox]:
         assert res.IsInitialized()
         type(res).FromString(res.SerializeToString())
+
+
+# C1: bless.bonus() is in every hero's unit (hero.wave3_bonus), so a change
+# of a medal's attributes pushes the full stats of each hero it blesses.
+
+WARRIORS = {WARRIOR_IN_MEDAL, WARRIOR_OUTSIDE}       # medal 10000 blesses vocation 1
+
+
+def _hero_stats(session) -> dict[int, dict]:
+    """{hero entry: {field: value}} merged over the ident-2 notifies."""
+    from server.modules import notify
+
+    out: dict[int, dict] = {}
+    for m in _queued(session, 2008):
+        if m.ident != notify.IDENT_HERO:
+            continue
+        names = [n for i, n in enumerate(notify.HERO_FIELDS) if m.flags >> i & 1]
+        out.setdefault(int(m.refer), {}).update(dict(zip(names, m.data)))
+    return out
+
+
+def _check_pushed(reg, cfg, conn, pid, session, entries) -> None:
+    """The heroes in `entries`, and no other, got a push equal to a fresh
+    full build; then the outbox is cleared."""
+    from server.modules import hero
+
+    stats = _hero_stats(session)
+    assert set(stats) == set(entries)
+    for entry in entries:
+        row = conn.execute(
+            "SELECT * FROM heroes WHERE player_id = ? AND entry = ?", (pid, entry)
+        ).fetchone()
+        want = hero.build_client_hero_with_runes(
+            reg, cfg, row, hero.runes_of(conn, row), conn=conn
+        )
+        assert want.unit != want.base_unit
+        for name in hero.STAT_NAMES:
+            assert stats[entry][name] == pytest.approx(getattr(want.unit, name)), name
+        assert stats[entry]["ability"] == want.ability
+    session.outbox.clear()
+
+
+def _three_heroes(conn, pid) -> None:
+    for entry in (WARRIOR_IN_MEDAL, WARRIOR_OUTSIDE, MAGE_IN_MEDAL):
+        grant_hero(conn, pid, entry, 10, level=45)
+
+
+def test_hero_add_pushes_the_blessed_heroes_stats(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    _three_heroes(conn, pid)
+    _add(reg, handlers, session, WARRIOR_IN_MEDAL, 1)
+    _check_pushed(reg, cfg, conn, pid, session, WARRIORS)
+    # Placing the mage raises the medal score: the warriors gain, not the mage.
+    _add(reg, handlers, session, MAGE_IN_MEDAL, 2)
+    _check_pushed(reg, cfg, conn, pid, session, WARRIORS)
+    # Moving a unit, re-placing it or a refusal leaves the bonus as it was.
+    _add(reg, handlers, session, MAGE_IN_MEDAL, 2)
+    _add(reg, handlers, session, WARRIOR_IN_MEDAL, 3)
+    assert _hero_stats(session) == {}
+
+
+def test_quick_add_pushes_the_blessed_heroes_stats(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    _three_heroes(conn, pid)
+    _quick(reg, handlers, session)
+    _check_pushed(reg, cfg, conn, pid, session, WARRIORS)
+    _quick(reg, handlers, session)
+    assert _hero_stats(session) == {}
+
+
+def test_fusing_pushes_the_blessed_heroes_stats(reg, cfg, world) -> None:
+    conn, pid, handlers, session = world
+    _three_heroes(conn, pid)
+    conn.execute(
+        "INSERT INTO bless (player_id, medal, units) VALUES (?, ?, ?)",
+        (pid, MEDAL, json.dumps([0, WARRIOR_IN_MEDAL, MAGE_IN_MEDAL, 0, 0, 0])),
+    )
+    conn.commit()
+    grant_item(conn, pid, 1600, 19)
+    _fuse(reg, handlers, session)                      # short of items: refused
+    assert _hero_stats(session) == {}
+    for entry, amount in ((1600, 1), (2000000, 1), (2000010, 1), (2000020, 1)):
+        grant_item(conn, pid, entry, amount)
+    _fuse(reg, handlers, session)
+    assert _medal_info(_query(reg, handlers, session).bless_infos).level == 1
+    _check_pushed(reg, cfg, conn, pid, session, WARRIORS)
+
+
+def test_buy_location_and_decompose_push_no_hero_stats(reg, world) -> None:
+    """Opening a slot or decomposing an item places no unit and fuses no
+    crystal, so no hero's bonus can change."""
+    conn, pid, handlers, session = world
+    _three_heroes(conn, pid)
+    _add(reg, handlers, session, WARRIOR_IN_MEDAL, 1)
+    session.outbox.clear()
+    grant_item(conn, pid, PUNCH, 3)
+    _buy(reg, handlers, session, 3)
+    _decompose(reg, handlers, session, PUNCH, 1)
+    assert _hero_stats(session) == {}

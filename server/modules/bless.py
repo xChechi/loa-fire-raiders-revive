@@ -435,13 +435,34 @@ def handlers(
         )
         conn.commit()
 
+    def _attributes(player_id: int, medal_row) -> dict[str, float]:
+        """The stored medal's attributes, what bonus() adds to a blessed hero."""
+        row = _stored(conn, player_id, int(medal_row["entry"]))
+        score = sum(unit_scores(conn, cfg, player_id, placed_units(row)))
+        return medal_attributes(cfg, medal_row, score, crystal_level(row))
+
+    def _heroes_changed(session: Session, player_id: int, medal_row, before: dict) -> None:
+        """bonus() is in ClientHero.unit (hero.wave3_bonus): when the medal's
+        attributes moved from `before`, push every unit stat and ability of
+        each hero the medal blesses."""
+        if _attributes(player_id, medal_row) == before:
+            return
+        for row in db.heroes_of(conn, player_id):
+            if _benefits(cfg, medal_row, row):
+                notify.hero_changed(registry, session, int(row["entry"]),
+                                    hero.hero_notify_fields_with_runes(
+                                        registry, cfg, row, hero.runes_of(conn, row), conn=conn
+                                    ))
+
     def _place(session: Session, player_row, medal_row, units: list[int]) -> None:
-        """Store `units`, the new score with it, and push 5_2588 on a rank
-        change."""
+        """Store `units`, the new score with it, push 5_2588 on a rank
+        change and the blessed heroes' stats on an attribute change."""
         player_id, medal = int(player_row["id"]), int(medal_row["entry"])
+        attributes = _attributes(player_id, medal_row)
         before = sum(unit_scores(conn, cfg, player_id, placed_units(_stored(conn, player_id, medal))))
         after = sum(unit_scores(conn, cfg, player_id, units))
         _save(player_id, medal, units=json.dumps(units), score=after)
+        _heroes_changed(session, player_id, medal_row, attributes)
         pre, cur = rank_entry(cfg, medal, before), rank_entry(cfg, medal, after)
         if pre != cur:
             msg = registry.message_class("BlessLevelUpNotify")(
@@ -636,7 +657,9 @@ def handlers(
             registry, session,
             [(entry, db.take_item(conn, player_id, entry, amount)) for entry, amount in costs],
         )
+        attributes = _attributes(player_id, medal_row)
         _save(player_id, medal, crystal_level=level + 1)
+        _heroes_changed(session, player_id, medal_row, attributes)
         log.info("medal %d of player %d: crystal %d -> %d", medal, player_id, level, level + 1)
         return None
 
