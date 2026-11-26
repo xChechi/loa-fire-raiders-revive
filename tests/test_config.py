@@ -433,3 +433,17 @@ def test_config_chest_by_entry_and_missing_raises(cfg: Config) -> None:
     assert int(last["drops"]) == 1413200
     with pytest.raises(KeyError):
         cfg.chest(43)
+
+
+def test_config_signet_set_by_set_entry_and_quality(cfg: Config) -> None:
+    """signet_set_info (A5b for B5), keyed (set_entry, quality) as the client
+    reads it (StampRenderInfoPanel.lua:105,240): sets 1-10, qualities 1-5."""
+    row = cfg.signet_set(1, 1)
+    assert (int(row["entry"]), int(row["set_number"])) == (10101, 4)
+    assert (int(row["set_attribute_type"]), float(row["attribute_multi"])) == (89, 0.04)
+    assert int(cfg.signet_set(5, 5)["attribute_multi"]) == 1500
+    assert int(cfg.signet_set(6, 5)["set_buff"]) == 15060500
+    with pytest.raises(KeyError):
+        cfg.signet_set(11, 1)
+    with pytest.raises(KeyError):
+        cfg.signet_set(1, 6)

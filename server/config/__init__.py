@@ -325,6 +325,19 @@ class Config:
             "signet_change_info", "signet_change_info", "ORDER BY entry", ()
         )
 
+    def signet_set(self, set_entry: int, quality: int):
+        """signet_set_info by (set_entry, quality), the key the client reads
+        it by (StampRenderInfoPanel.lua:105,240): set_number, the stat
+        (set_attribute_type, attribute_multi) or set_buff. A missing pair is a
+        config error, not a miss."""
+        rows = self._all(
+            "signet_set_info", "signet_set_info", "WHERE set_entry = ? AND quality = ?",
+            (int(set_entry), int(quality)),
+        )
+        if not rows:
+            raise KeyError(f"signet_set_info has no row for set {set_entry} quality {quality}")
+        return rows[0]
+
     def hero_breakthrough(self, level: int):
         rows = self._all(
             "hero_breakthrough_info", "hero_breakthrough_info",
