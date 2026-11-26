@@ -693,6 +693,24 @@ def test_a5b_divine_ruins_columns_added_to_an_existing_world(tmp_path) -> None:
     conn.close()
 
 
+def test_a5b_hero_max_level_added_to_an_existing_world(tmp_path) -> None:
+    # ClientHero.max_level "历史最高等级" (ClientHero.lua:164), the highest
+    # level the hero ever reached; 0 = never above its level (B7 rebirth).
+    from server.db import grant_hero
+
+    path = tmp_path / "player.db"
+    conn = connect(path)
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_hero(conn, pid, 100000, quality=10, level=60)
+    conn.close()
+    conn = _drop_and_reopen(path, "heroes", ["max_level"])
+    col = _columns(conn, "heroes")["max_level"]
+    assert (col["type"], col["notnull"], col["dflt_value"]) == ("INTEGER", 1, "0")
+    row = conn.execute("SELECT * FROM heroes").fetchone()
+    assert (row["entry"], row["level"], row["max_level"]) == (100000, 60, 0)
+    conn.close()
+
+
 def test_add_signet_and_add_artifact_return_row_ids(tmp_path) -> None:
     from server.db import add_artifact, add_signet
 

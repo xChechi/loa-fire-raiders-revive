@@ -379,6 +379,12 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "god_rest_angels", "TEXT NOT NULL DEFAULT '[]'"),
     ("players", "god_reset_bought", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "god_clean_bought", "INTEGER NOT NULL DEFAULT 0"),
+    # A5b for B7 rebirth: ClientHero.max_level "历史最高等级" (ClientHero.lua:164),
+    # the highest level the hero ever reached, kept when a rebirth drops
+    # `level`. 0 = never above the current level; the value sent is
+    # max(level, max_level). Not a level cap (LevelHelp.lua:16-36 caps by the
+    # player level only).
+    ("heroes", "max_level", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
