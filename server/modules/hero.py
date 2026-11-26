@@ -261,7 +261,9 @@ def build_client_hero_with_runes(
         msg.runes.add(idx=idx, level=rune_level, rune_val=rune_val)
     msg.model = 0
     msg.awaken = 0
-    msg.max_level = level
+    # "历史最高等级" (ClientHero.lua:164): a rebirth keeps the old level in
+    # heroes.max_level while `level` drops.
+    msg.max_level = max(level, int(row["max_level"]))
     # Wave 3 A5: B6 breakthrough and B7 rebirth write these; their stats
     # reach `unit` in C1.
     msg.breakthrough_level = int(row["breakthrough_level"])

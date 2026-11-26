@@ -36,9 +36,9 @@ What the client reads (the spec):
 - The level cap does not change: the client caps a hero at
   xp_for_level(player level).hero_max_level only (LevelHelp:checkLevel,
   train/LevelHelp.lua:16-36), so train.py and level.py stay as they are.
-- max_level is "历史最高等级" (ClientHero.lua:164); the server sends it equal to
-  level (hero.build_client_hero_with_runes), and the notify here follows that
-  convention through hero_notify_fields_with_runes.
+- max_level is "历史最高等级" (ClientHero.lua:164): the rebirth stores
+  max(max_level, old level) in heroes.max_level before the level drops, and
+  hero.build_client_hero_with_runes sends max(level, max_level).
 - Function 90000 英雄转生, unlock_level 55.
 
 HeroTransmigrateRes has no `status`, so nothing here can refuse: a miss logs
@@ -186,8 +186,10 @@ def handlers(
             return _warn(STATUS_NOT_ENOUGH_GOLD, str(exc))
         level, xp = level_after(cfg, int(row["level"]), int(row["xp"]), need_level)
         conn.execute(
-            "UPDATE heroes SET transmigrate_level = ?, level = ?, xp = ? WHERE id = ?",
-            (current + 1, level, xp, int(row["id"])),
+            "UPDATE heroes SET transmigrate_level = ?, level = ?, xp = ?,"
+            " max_level = ? WHERE id = ?",
+            (current + 1, level, xp, max(int(row["max_level"]), int(row["level"])),
+             int(row["id"])),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM heroes WHERE id = ?", (int(row["id"]),)).fetchone()

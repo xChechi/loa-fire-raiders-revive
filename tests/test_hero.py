@@ -339,3 +339,24 @@ def test_wave2_unit_unchanged_without_wave3_rows(reg, cfg, tmp_path) -> None:
     assert with_conn.unit == wave2.unit
     assert with_conn.base_unit == wave2.base_unit
     assert wave2.unit != wave2.base_unit      # gear and rune still count
+
+
+def test_client_hero_max_level_is_the_highest_level_reached(reg, cfg, tmp_path) -> None:
+    """ClientHero.max_level is "历史最高等级" (ClientHero.lua:164): the stored
+    heroes.max_level when a rebirth dropped the level below it, else level."""
+    from server.modules import team
+
+    conn = connect(tmp_path / "ml.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    hid = grant_hero(conn, pid, 100000, 10, star=1, level=30)
+    row = heroes_of(conn, pid)[0]
+    assert build_client_hero(reg, cfg, row).max_level == 30
+    conn.execute("UPDATE heroes SET max_level = 60 WHERE id = ?", (hid,))
+    conn.commit()
+    row = heroes_of(conn, pid)[0]
+    assert build_client_hero(reg, cfg, row).max_level == 60
+    assert build_client_hero(reg, cfg, row).level == 30
+    assert team.build_fight_unit(reg, cfg, row, 1).max_level == 60
+    conn.execute("UPDATE heroes SET level = 70 WHERE id = ?", (hid,))
+    conn.commit()
+    assert build_client_hero(reg, cfg, heroes_of(conn, pid)[0]).max_level == 70

@@ -172,6 +172,19 @@ def test_rebirth_reset_follows_need_level_of_the_next_row(
     assert _gold(conn, pid) == 400_000
 
 
+def test_rebirth_stores_the_old_level_as_max_level(reg, settings, cfg, world) -> None:
+    conn, pid, hero_id, session = world
+    _run(reg, settings, conn, cfg, session)
+    assert int(_hero(conn, hero_id)["max_level"]) == 60
+    # A second rebirth from below the stored high keeps the high.
+    conn.execute("UPDATE heroes SET level = 80, max_level = 90 WHERE id = ?", (hero_id,))
+    conn.execute("UPDATE players SET level = 80 WHERE id = ?", (pid,))
+    conn.commit()
+    _run(reg, settings, conn, cfg, session)
+    row = _hero(conn, hero_id)
+    assert int(row["transmigrate_level"]) == 2 and int(row["max_level"]) == 90
+
+
 def test_rebirth_at_need_level_resets_to_1(reg, settings, cfg, world) -> None:
     conn, pid, hero_id, session = world
     conn.execute("UPDATE heroes SET level = 55, xp = 7 WHERE id = ?", (hero_id,))
@@ -189,7 +202,8 @@ def test_rebirth_pushes_hero_notify(reg, settings, cfg, world) -> None:
     fields = _decode(heroes[0], HERO_FIELDS)
     assert fields["transmigrate_level"] == 1
     assert fields["level"] == 49 and fields["xp"] == 26230
-    assert fields["max_level"] == 49
+    # ClientHero.max_level "历史最高等级" keeps the level before the rebirth.
+    assert fields["max_level"] == 60
     assert "ability" in fields and "max_hp" in fields
     players = _notes(reg, session, IDENT_PLAYER)
     assert len(players) == 1
