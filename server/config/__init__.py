@@ -353,6 +353,14 @@ class Config:
         """artifact_level_info's `entry` is the level (1-100, upgrade_exp1..6)."""
         return self._one("artifact_level_info", "artifact_level_info", "entry", int(level))
 
+    def chest(self, entry: int):
+        """chest_info by entry (type, drops, image), for the B8 divine-ruins
+        chests. A missing entry is a config error, not a miss."""
+        row = self._one("chest_info", "chest_info", "entry", int(entry))
+        if row is None:
+            raise KeyError(f"chest_info has no row for {entry}")
+        return row
+
     def magic_army_recommend(self, level_entry: int):
         return self._one(
             "magic_army_recommand_info", "magic_army_recommand_info",

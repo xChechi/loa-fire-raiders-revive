@@ -424,3 +424,12 @@ def test_config_wave3_lookups_key_on_data_columns(cfg: Config) -> None:
     assert int(cfg.artifact(1500100)["position"]) == 7
     assert int(cfg.artifact_level(1)["upgrade_exp1"]) == 56
     assert int(cfg.magic_army_recommend(8010100)["hero_icon0"]) == 313000
+
+
+def test_config_chest_by_entry_and_missing_raises(cfg: Config) -> None:
+    """chest_info (A5b for B8): entries 1-42, all type 1, image 4007."""
+    first, last = cfg.chest(1), cfg.chest(42)
+    assert (int(first["type"]), int(first["drops"]), int(first["image"])) == (1, 1400000, 4007)
+    assert int(last["drops"]) == 1413200
+    with pytest.raises(KeyError):
+        cfg.chest(43)
