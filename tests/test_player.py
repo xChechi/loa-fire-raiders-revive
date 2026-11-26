@@ -557,3 +557,17 @@ def test_query_myself_sends_last_signet_and_signets(reg, cfg, row) -> None:
     conn.execute("UPDATE players SET signet_day = '2000-01-01' WHERE id = ?", (pid,))
     conn.commit()
     assert _query(reg, cfg, conn).stats.signet_buy_cnt == 0
+
+
+def test_bought_signet_fights_above_the_cap_survive_login(reg, cfg, row) -> None:
+    """Bought fights are a negative signet_cnt_used that never recovers
+    (signet.settle_fights); the login count must not clamp them to 0 used."""
+    import time
+
+    conn, r = row
+    conn.execute(
+        "UPDATE players SET signet_cnt_used = -3, signet_cnt_at = ? WHERE id = ?",
+        (int(time.time()) - 10 * 1800, int(r["id"])),
+    )
+    conn.commit()
+    assert _query(reg, cfg, conn).player.signet_fight_cnt == 20 + 3

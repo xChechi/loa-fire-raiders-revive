@@ -114,11 +114,12 @@ def build_daily_stats(
 def signet_fight_count(cfg: Config, row: sqlite3.Row, now: float) -> int:
     """SIGNET_MAX_CNT minus the fights used, after one fight comes back per
     SIGNET_CNT_RECOVER_CYCLE seconds since signet_cnt_at. Read-only: B5
-    settles the recovery into the row when it spends or buys."""
+    settles the recovery into the row when it spends or buys. Bought fights
+    are a negative `used` and do not recover (signet.settle_fights)."""
     cap = cfg.variable_int("SIGNET_MAX_CNT", 0)
     used = int(row["signet_cnt_used"])
     cycle = cfg.variable_int("SIGNET_CNT_RECOVER_CYCLE", 0)
-    if used and cycle > 0:
+    if used > 0 and cycle > 0:
         used = max(0, used - max(0, int(now) - int(row["signet_cnt_at"])) // cycle)
     return cap - used
 
