@@ -494,3 +494,57 @@ def test_sync_red_point_sends_nothing_and_is_registered(
     assert len(lines) == 1
     assert lines[0].levelno == logging.DEBUG
     assert lines[0].getMessage() == "5_2039 SyncRedPointReq has no Res; nothing to send"
+
+
+def test_query_myself_sends_last_signet_and_signets(reg, cfg, row) -> None:
+    """Wave 3 A5: the ClientPlayer, ClientDailyStats and QueryMyselfRes fields
+    the Phase B systems read at login."""
+    import json
+    import time
+
+    from server.db import add_signet, day_key
+
+    conn, r = row
+    pid = int(r["id"])
+    plain = _query(reg, cfg, conn)
+    assert plain.player.last_signet == 0
+    assert plain.player.signet_fight_cnt == 20          # SIGNET_MAX_CNT, none used
+    assert len(plain.signets) == 0
+    assert plain.stats.signet_buy_cnt == 0
+
+    unrolled = add_signet(conn, pid, 10101011)
+    worn = add_signet(conn, pid, 10101012)
+    attrs = [{"attr_type": 1, "attr_value": 220.0}]
+    conn.execute(
+        "UPDATE signets SET level = 2, main_attrs = ?, hero = 100000 WHERE id = ?",
+        (json.dumps(attrs), worn),
+    )
+    conn.execute(
+        "UPDATE players SET last_signet = 9000102, signet_essence = 65, pet_money = 12,"
+        " last_god_level = 50000102, last_god_chest = 3, god_is_draw = 1,"
+        " artifact_smelt = 40, signet_cnt_used = 5, signet_cnt_at = ?,"
+        " signet_buy_cnt = 7, signet_day = ? WHERE id = ?",
+        # Two whole 1800 s recovery cycles have passed: 5 used, 2 back.
+        (int(time.time()) - 2 * 1800 - 100, day_key(5), pid),
+    )
+    conn.commit()
+    res = _query(reg, cfg, conn)
+    p = res.player
+    assert (p.last_signet, p.signet_essence, p.pet_money) == (9000102, 65, 12)
+    assert (p.last_god_level, p.last_god_chest, p.is_draw, p.artifact_smelt) == (
+        50000102, 3, 1, 40
+    )
+    assert p.signet_fight_cnt == 17
+    assert res.stats.signet_buy_cnt == 7
+    by_id = {s.id: s for s in res.signets}
+    assert set(by_id) == {unrolled, worn}
+    assert (by_id[unrolled].entry, by_id[unrolled].level, by_id[unrolled].equip) == (
+        10101011, 0, False
+    )
+    assert len(by_id[unrolled].main_attrs) == 0 and len(by_id[unrolled].sub_attrs) == 0
+    assert (by_id[worn].level, by_id[worn].equip) == (2, True)
+    assert [(a.attr_type, a.attr_value) for a in by_id[worn].main_attrs] == [(1, 220.0)]
+
+    conn.execute("UPDATE players SET signet_day = '2000-01-01' WHERE id = ?", (pid,))
+    conn.commit()
+    assert _query(reg, cfg, conn).stats.signet_buy_cnt == 0

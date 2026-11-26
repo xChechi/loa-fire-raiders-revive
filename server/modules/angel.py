@@ -65,7 +65,10 @@ def build_client_angel(registry: Registry, cfg: Config, row: sqlite3.Row):
         exp=int(row["exp"]),
         star=star,
         ability=0,
-        advance_level=0,
+        advance_level=int(row["advance_level"]),
+        # Not notify fields (notify.ANGEL_FIELDS): Res and login only.
+        glory_level=int(row["glory_level"]),
+        glory_star=int(row["glory_star"]),
     )
     msg.spells.extend(
         [_resolved(cfg, info, row, f"spell{i}") for i in range(SPELL_SLOTS)]

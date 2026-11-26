@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -21,6 +22,8 @@ _red_point_logged = False
 
 # RPGGame sets g_roleData.cspvpState = 99 as "off season" before it asks.
 MAGIC_STATE_OFF_SEASON = 99
+
+SIGNET_DAY_HOUR = 5     # signet buys reset at 05:00 (O-W3-9)
 
 
 def _end_of_today() -> int:
@@ -63,7 +66,17 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     # LevelManager.lua:427-444: 0 = elite just opened, else the last elite
     # stage cleared, the same contract as last_level.
     msg.last_elite = int(row["last_elite"])
-    msg.last_signet = 0
+    # Wave 3 A5: the master-dungeon frontier (LevelManager.lua:446-457, the
+    # same contract as last_level), the coins of categories 75 and 86, the
+    # divine-ruins progress and the artifact smelt points. signet_fight_cnt
+    # needs the config and is set by build_query_myself_res.
+    msg.last_signet = int(row["last_signet"])
+    msg.signet_essence = int(row["signet_essence"])
+    msg.pet_money = int(row["pet_money"])
+    msg.last_god_level = int(row["last_god_level"])
+    msg.last_god_chest = int(row["last_god_chest"])
+    msg.is_draw = int(row["god_is_draw"])
+    msg.artifact_smelt = int(row["artifact_smelt"])
     # Everything else required gets the proto2 zero.
     fill_required(msg)
     return msg
@@ -86,6 +99,36 @@ def build_daily_stats(
             msg.energy_use = int(row["energy_use"])
         if row["gold_trails_day"] == today:
             msg.gold_trails_times = int(row["gold_trails_times"])
+        # Signet buys roll at 05:00 (O-W3-9), not with `today`.
+        if row["signet_day"] == db.day_key(SIGNET_DAY_HOUR):
+            msg.signet_buy_cnt = int(row["signet_buy_cnt"])
+    fill_required(msg)
+    return msg
+
+
+def signet_fight_count(cfg: Config, row: sqlite3.Row, now: float) -> int:
+    """SIGNET_MAX_CNT minus the fights used, after one fight comes back per
+    SIGNET_CNT_RECOVER_CYCLE seconds since signet_cnt_at. Read-only: B5
+    settles the recovery into the row when it spends or buys."""
+    cap = cfg.variable_int("SIGNET_MAX_CNT", 0)
+    used = int(row["signet_cnt_used"])
+    cycle = cfg.variable_int("SIGNET_CNT_RECOVER_CYCLE", 0)
+    if used and cycle > 0:
+        used = max(0, used - max(0, int(now) - int(row["signet_cnt_at"])) // cycle)
+    return cap - used
+
+
+def build_signet_info(registry: Registry, row: sqlite3.Row):
+    """SignetInfo from a signets row; attributes not rolled yet go out empty."""
+    msg = registry.message_class("SignetInfo")(
+        id=int(row["id"]), entry=int(row["entry"]), level=int(row["level"]),
+        equip=int(row["hero"]) != 0,
+    )
+    for field in ("main_attrs", "sub_attrs"):
+        for attr in json.loads(row[field] or "[]"):
+            getattr(msg, field).add(
+                attr_type=int(attr["attr_type"]), attr_value=float(attr["attr_value"])
+            )
     fill_required(msg)
     return msg
 
@@ -122,7 +165,12 @@ def build_query_myself_res(
         status=0, guild=0, mail_new=1 if unread else 0
     )
     msg.player.CopyFrom(build_client_player(registry, row))
+    msg.player.signet_fight_cnt = signet_fight_count(cfg, row, now)
     msg.stats.CopyFrom(build_daily_stats(registry, row, today))
+    for signet_row in conn.execute(
+        "SELECT * FROM signets WHERE player_id = ? ORDER BY id", (player_id,)
+    ):
+        msg.signets.add().CopyFrom(build_signet_info(registry, signet_row))
     # The client counts only paid shop refreshes here (AllShopUI.lua:736-739);
     # a stores row from an older day has had no refresh yet today.
     for store_row in conn.execute(

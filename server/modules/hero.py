@@ -239,6 +239,11 @@ def build_client_hero_with_runes(
     msg.model = 0
     msg.awaken = 0
     msg.max_level = level
+    # Wave 3 A5: B6 breakthrough and B7 rebirth write these; their stats
+    # reach `unit` in C1.
+    msg.breakthrough_level = int(row["breakthrough_level"])
+    msg.breakthrough_score = int(row["breakthrough_score"])
+    msg.transmigrate_level = int(row["transmigrate_level"])
     fill_required(msg)
     return msg
 

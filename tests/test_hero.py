@@ -187,3 +187,47 @@ def test_client_hero_has_five_runes(reg, cfg, tmp_path) -> None:
         assert diff == pytest.approx(float(level2[name] or 0), abs=0.01), name
     assert built.base_unit == plain.base_unit
     built.SerializeToString()
+
+
+# --- Wave 3 A5: client fields of the Wave 3 systems ---------------------------
+
+
+def test_client_hero_carries_breakthrough_and_transmigrate(reg, cfg, tmp_path) -> None:
+    conn = connect(tmp_path / "w3.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_hero(conn, pid, 100000, 10, star=1, level=1)
+    conn.execute(
+        "UPDATE heroes SET breakthrough_level = 3, breakthrough_score = 47,"
+        " transmigrate_level = 2 WHERE player_id = ?", (pid,),
+    )
+    conn.commit()
+    row = heroes_of(conn, pid)[0]
+    hero = build_client_hero(reg, cfg, row)
+    assert (hero.breakthrough_level, hero.breakthrough_score, hero.transmigrate_level) == (3, 47, 2)
+    # The unit is unchanged until C1 adds the Wave 3 bonuses.
+    conn.execute(
+        "UPDATE heroes SET breakthrough_level = 0, breakthrough_score = 0,"
+        " transmigrate_level = 0 WHERE player_id = ?", (pid,),
+    )
+    conn.commit()
+    plain = build_client_hero(reg, cfg, heroes_of(conn, pid)[0])
+    assert plain.unit == hero.unit
+    hero.SerializeToString()
+
+
+def test_client_angel_carries_advance_and_glory(reg, cfg, tmp_path) -> None:
+    from server.db import angels_of, grant_angel
+    from server.modules.angel import build_client_angel
+
+    conn = connect(tmp_path / "w3a.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    entry = int(cfg.angel_star1_rows()[0]["angel_entry"])
+    grant_angel(conn, pid, entry, level=1, star=1)
+    conn.execute(
+        "UPDATE angels SET advance_level = 4, glory_level = 2, glory_star = 5"
+        " WHERE player_id = ?", (pid,),
+    )
+    conn.commit()
+    angel = build_client_angel(reg, cfg, angels_of(conn, pid)[0])
+    assert (angel.advance_level, angel.glory_level, angel.glory_star) == (4, 2, 5)
+    angel.SerializeToString()

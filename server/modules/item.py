@@ -3,7 +3,8 @@
 Categories are the client's own constants (ClientPlayer.lua:146-186) and are the
 same numbers as drop_base.drop_type: 1 gold, 2 energy, 9 diamond, 11 player xp,
 12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel, 51 arena coin, 52
-goddess-trial coin. The nine this server can actually apply are below; any other one raises, because a reward that silently
+goddess-trial coin; Wave 3 adds 21 signet, 75 signet essence and 86 pet money.
+The twelve this server can actually apply are below; any other one raises, because a reward that silently
 shrinks is worse than a crash in a log Stefan reads.
 
 There is no ClientItem message in allProtos.pb: an owned item is a ClientStock
@@ -41,10 +42,25 @@ CATEGORY_HERO = 30
 CATEGORY_ANGEL = 40
 CATEGORY_ARENA_COIN = 51
 CATEGORY_ANGEL_TRY_COIN = 52
+CATEGORY_SIGNET = 21           # COST_MARK_TYPE, refer = signet_info.entry
+CATEGORY_SIGNET_ESSENCE = 75   # COST_SIGNET_TYPE 印记精华
+CATEGORY_PET_MONEY = 86        # PRIZE_PET_MONEY 神兽之魂 (ClientPlayer.lua:149,165,177)
 
 # The players column (and ClientPlayer / notify field) each coin lands on,
 # ClientPlayer.lua:150-151,652-655.
-COIN_FIELDS = {CATEGORY_ARENA_COIN: "arena_point", CATEGORY_ANGEL_TRY_COIN: "angel_money"}
+COIN_FIELDS = {
+    CATEGORY_ARENA_COIN: "arena_point", CATEGORY_ANGEL_TRY_COIN: "angel_money",
+    CATEGORY_SIGNET_ESSENCE: "signet_essence", CATEGORY_PET_MONEY: "pet_money",
+}
+
+STATUS_SIGNET_BAG_FULL = 338114  # language.db 印记数量达到上限，请先去清理
+
+
+class SignetBagFull(ValueError):
+    """A category-21 grant would pass SIGNET_MAX_NUMBER; nothing was written.
+    The caller answers `status` (and B5 pushes 5_2744 SignetBagFullNotify)."""
+
+    status = STATUS_SIGNET_BAG_FULL
 
 # mail_info 99999 物品超限提醒; its body has one "|" for the item names.
 OVERFLOW_MAIL = 99999
@@ -52,7 +68,8 @@ OVERFLOW_MAIL = 99999
 KNOWN_CATEGORIES = frozenset({
     CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_PLAYER_XP,
     CATEGORY_ITEM, CATEGORY_HERO, CATEGORY_ANGEL, CATEGORY_ARENA_COIN,
-    CATEGORY_ANGEL_TRY_COIN,
+    CATEGORY_ANGEL_TRY_COIN, CATEGORY_SIGNET, CATEGORY_SIGNET_ESSENCE,
+    CATEGORY_PET_MONEY,
 })
 
 
@@ -91,6 +108,8 @@ def _checked(cfg: Config, prizes) -> list[tuple[int, int, int]]:
             )
         if category == CATEGORY_ITEM and cfg.item(refer) is None:
             raise KeyError(f"item_info has no row for item {refer}")
+        if category == CATEGORY_SIGNET and cfg.signet(refer) is None:
+            raise KeyError(f"signet_info has no row for signet {refer}")
         if category == CATEGORY_HERO and not cfg.hero_qualities(refer):
             raise KeyError(f"hero_quality has no row for hero {refer}")
         if category == CATEGORY_HERO:
@@ -147,13 +166,29 @@ def grant_prizes(
     None without player xp; `angels` lists the angel entries granted;
     `converted` the indices into `prizes` of the hero prizes that arrived as
     soul stones (mark_converted flags them for the client); `coins` the new
-    absolute arena_point / angel_money, only for the ones a prize touched.
+    absolute arena_point / angel_money / signet_essence / pet_money, only for
+    the ones a prize touched; `signets` the row id of every signet created.
+    A signet grant that would pass SIGNET_MAX_NUMBER raises SignetBagFull
+    before anything is written.
     """
     out: dict = {
         "gold": 0, "diamond": 0, "energy": 0, "items": [], "heroes": [],
         "mails": [], "xp": None, "angels": [], "converted": [], "coins": {},
+        "signets": [],
     }
     overflow: dict[int, int] = {}
+    checked = _checked(cfg, prizes)
+    new_signets = sum(max(1, a) for (c, _r, a) in checked if c == CATEGORY_SIGNET)
+    if new_signets:
+        owned = conn.execute(
+            "SELECT id FROM signets WHERE player_id = ?", (int(player_id),)
+        ).fetchall()
+        cap = cfg.variable_int("SIGNET_MAX_NUMBER", 0)
+        if len(owned) + new_signets > cap:
+            raise SignetBagFull(
+                f"player {player_id} owns {len(owned)} signets, {new_signets} more"
+                f" would pass SIGNET_MAX_NUMBER {cap} ({STATUS_SIGNET_BAG_FULL})"
+            )
 
     def _item(refer: int, amount: int) -> None:
         row = conn.execute(
@@ -168,7 +203,7 @@ def grant_prizes(
         if give:
             out["items"].append((refer, db.grant_item(conn, player_id, refer, give)))
 
-    for index, (category, refer, amount) in enumerate(_checked(cfg, prizes)):
+    for index, (category, refer, amount) in enumerate(checked):
         if category == CATEGORY_GOLD:
             conn.execute(
                 "UPDATE players SET gold = gold + ? WHERE id = ?",
@@ -196,6 +231,9 @@ def grant_prizes(
                 (amount, int(player_id)),
             )
             out["coins"][field] = 0
+        elif category == CATEGORY_SIGNET:
+            for _ in range(max(1, amount)):
+                out["signets"].append(db.add_signet(conn, player_id, refer))
         elif category == CATEGORY_ANGEL:
             for _ in range(max(1, amount)):
                 owned = conn.execute(

@@ -77,14 +77,16 @@ def test_grant_prizes_applies_every_category_this_plan_sends(reg, cfg, conn) -> 
 def test_grant_prizes_returns_exactly_the_keys_callers_read(reg, cfg, conn) -> None:
     """Tasks 11, 14 and 15 read these five keys by name off the return value;
     B3 adds the ids of the overflow mails, the player xp change and the
-    angels granted; W1 the indices of the heroes that became soul stones."""
+    angels granted; W1 the indices of the heroes that became soul stones; W3
+    A5 the row ids of the signets created (B5 pushes 5_2742 for each)."""
     pid = create_player(conn, "stefan", "stefan", guide_id=0)
     out = grant_prizes(conn, cfg, pid, [])
     assert set(out) == {
         "gold", "diamond", "energy", "items", "heroes", "mails", "xp", "angels",
-        "converted", "coins",
+        "converted", "coins", "signets",
     }
     assert out["xp"] is None and out["angels"] == [] and out["converted"] == []
+    assert out["signets"] == []
     assert out["coins"] == {}
 
 
@@ -339,3 +341,83 @@ def test_announce_is_silent_for_plain_prizes_and_angels(reg, cfg, conn) -> None:
     session = _session()
     item.announce(reg, session, grant_prizes(conn, cfg, pid, [(1, 0, 5), (40, 500000, 1)]))
     assert session.outbox == []
+
+
+# --- Wave 3 A5: categories 21 (signet), 75 (signet essence), 86 (pet money) ---
+
+
+def test_grant_category21_adds_a_signet_row(cfg, conn) -> None:
+    # ClientPlayer.COST_MARK_TYPE = 21; refer is a signet_info entry.
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    out = grant_prizes(conn, cfg, pid, [(21, 10101011, 2)])
+    rows = conn.execute("SELECT * FROM signets WHERE player_id = ? ORDER BY id", (pid,)).fetchall()
+    assert [int(r["entry"]) for r in rows] == [10101011, 10101011]
+    assert out["signets"] == [int(r["id"]) for r in rows]
+    assert all(r["main_attrs"] == "" and int(r["hero"]) == 0 for r in rows)
+    with pytest.raises(KeyError):
+        grant_prizes(conn, cfg, pid, [(21, 1, 1)])
+
+
+def test_grant_category21_past_signet_max_number_refused_338114(cfg, conn) -> None:
+    from server.db import add_signet
+    from server.modules import item
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0, gold=5)
+    for _ in range(299):
+        add_signet(conn, pid, 10101011)
+    with pytest.raises(item.SignetBagFull) as refused:
+        grant_prizes(conn, cfg, pid, [(1, 0, 100), (21, 10101011, 2)])
+    assert refused.value.status == 338114     # 印记数量达到上限，请先去清理
+    # Vetted before any write: the gold did not land either.
+    assert int(conn.execute("SELECT gold FROM players").fetchone()[0]) == 5
+    assert conn.execute("SELECT count(*) FROM signets").fetchone()[0] == 299
+    grant_prizes(conn, cfg, pid, [(21, 10101011, 1)])
+    assert conn.execute("SELECT count(*) FROM signets").fetchone()[0] == 300
+
+
+def test_grant_category86_raises_pet_money_and_notifies(reg, cfg, conn) -> None:
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    session = _session()
+    out = grant_prizes(conn, cfg, pid, [(86, 0, 12)])
+    assert int(conn.execute("SELECT pet_money FROM players").fetchone()[0]) == 12
+    assert out["coins"] == {"pet_money": 12}
+    item.announce(reg, session, out)
+    (service, cmd, msg), = session.outbox
+    assert (service, cmd) == (5, 2008)
+    assert msg.flags == notify.flags_for(["pet_money"])
+    assert list(msg.data) == [12.0]
+
+
+def test_grant_category75_raises_signet_essence(reg, cfg, conn) -> None:
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_prizes(conn, cfg, pid, [(75, 0, 50)])
+    out = grant_prizes(conn, cfg, pid, [(75, 0, 15)])
+    assert int(conn.execute("SELECT signet_essence FROM players").fetchone()[0]) == 65
+    assert out["coins"] == {"signet_essence": 65}
+    session = _session()
+    item.announce(reg, session, out)
+    assert session.outbox[0][2].flags == notify.flags_for(["signet_essence"])
+
+
+def test_every_wave3_stage_drop_category_is_grantable(cfg) -> None:
+    """Every drop of the divine-ruins (8), demon-onslaught (12) and
+    master-dungeon (13) stages passes grant_prizes' vetting, and the
+    categories are exactly the ones the inventory found."""
+    from server.modules import item
+
+    seen: dict[int, set[int]] = {}
+    prizes = []
+    for chapter_type in (8, 12, 13):
+        for chapter in cfg.chapters_of_type(chapter_type):
+            for stage in cfg.stages_in_chapter(int(chapter["entry"])):
+                for column in ("visible_drops", "invisible_drops"):
+                    for group in cfg.drop_groups(int(stage[column] or 0)):
+                        for row in cfg.drop_rows(int(group["drop_group_id"])):
+                            seen.setdefault(chapter_type, set()).add(row["drop_type"])
+                            prizes.append((row["drop_type"], row["item_id"], row["amount"]))
+    assert seen == {8: {20}, 12: {20, 86}, 13: {21}}
+    assert len(item._checked(cfg, prizes)) == len(prizes)

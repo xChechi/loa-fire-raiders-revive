@@ -346,3 +346,81 @@ def test_config_hero_runes_100000(cfg: Config) -> None:
     row = cfg.rune_level(10000, 1)
     assert (int(row["gold"]), int(row["max_hp"])) == (2000, 60)
     assert cfg.rune_level(1000000, 1) is None
+
+
+# --- Wave 3 A5 lookups (read out of .stock on 26-11-2026) --------------------
+
+
+def test_config_hero_breakthrough_level0_has_stone8_and_max_score180(cfg: Config) -> None:
+    row = cfg.hero_breakthrough(0)
+    assert row is not None
+    # Every hero_breakthrough_info row stores id = NULL: a lookup on id would
+    # find nothing, so finding the row proves the key is a data column.
+    assert row["id"] is None
+    assert int(row["breakthrough_stone"]) == 8
+    assert (int(row["breakthrough_min"]), int(row["breakthrough_max"])) == (4, 8)
+    assert int(row["max_score"]) == 180
+    assert row["rate"] == "0:0|90:0.02|117:0.08|144:0.2|180:1"
+    assert cfg.hero_breakthrough(20) is not None
+    assert cfg.hero_breakthrough(21) is None
+
+
+def test_config_hero_rune_develop_full_scan_is_51_rows(cfg: Config) -> None:
+    # The count(*) trap (docs/protocol-coverage-2026-11-25.md): the table's
+    # broken autoindex makes count(*) say 0; a full scan finds the 51 rows.
+    conn = cfg.conn("hero_rune_develop_info")
+    assert conn.execute("SELECT count(*) FROM hero_rune_develop_info").fetchone()[0] == 0
+    rows = conn.execute("SELECT * FROM hero_rune_develop_info NOT INDEXED").fetchall()
+    assert len(rows) == 51
+    assert sorted(int(r["rune_develop_level"]) for r in rows) == list(range(51))
+
+
+def test_parse_rate_ladder() -> None:
+    from server.config import parse_rate_ladder
+
+    assert parse_rate_ladder("0:0|90:0.02|117:0.08|144:0.2|180:1") == [
+        (0, 0.0), (90, 0.02), (117, 0.08), (144, 0.2), (180, 1.0),
+    ]
+    assert parse_rate_ladder("0:0|225:0.02|292:0.08|360:0.2|450:1")[-1] == (450, 1.0)
+    assert parse_rate_ladder("") == []
+
+
+def test_config_angel_advance_level0_max_score450(cfg: Config) -> None:
+    row = cfg.angel_advance(0)
+    assert int(row["max_score"]) == 450
+    assert (int(row["gold"]), int(row["advance_stone"])) == (10000, 2)
+    assert row["rate"] == "0:0|225:0.02|292:0.08|360:0.2|450:1"
+    assert cfg.angel_advance(999) is None
+
+
+def test_config_hero_transmigrate_level1_needs_55_costs_300000(cfg: Config) -> None:
+    row = cfg.hero_transmigrate(1)
+    assert int(row["need_level"]) == 55
+    assert int(row["gold_cost"]) == 300000
+    assert float(row["growth_add"]) == 0.1
+    assert cfg.hero_transmigrate(0) is None
+
+
+def test_config_wave3_lookups_key_on_data_columns(cfg: Config) -> None:
+    constellations = cfg.hero_constellations()
+    assert [int(r["idx"]) for r in constellations] == list(range(8))
+    assert [int(constellations[0][f"property_id{k}"]) for k in range(4)] == [3, 5, 1, 16]
+    medals = cfg.bless_medals()
+    assert len(medals) == 10
+    assert (int(medals[0]["entry"]), int(medals[0]["bless_open_level"])) == (10000, 45)
+    crystal = cfg.bless_crystal(10000, 0)
+    assert (int(crystal["gold"]), int(crystal["item0"]), int(crystal["amount0"])) == (10000, 1600, 20)
+    rank0, top = cfg.bless_rank(10000, 0), cfg.bless_rank(10000, 15)
+    assert (int(rank0["entry"]), int(rank0["score"])) == (10000, 3000)
+    assert (int(top["entry"]), int(top["score"])) == (10150, 0)
+    assert cfg.bless_rank(10000, 16) is None
+    assert int(cfg.angel_glory(0, 0)["cost"]) == 1
+    signet = cfg.signet(10101011)
+    assert (int(signet["star"]), int(signet["part"])) == (1, 1)
+    upgrade = cfg.signet_upgrade(1, 0)
+    assert (int(upgrade["cost_essence"]), int(upgrade["cost_gold"])) == (15, 150)
+    assert len(cfg.signet_attributes()) == 66
+    assert len(cfg.signet_changes()) == 150
+    assert int(cfg.artifact(1500100)["position"]) == 7
+    assert int(cfg.artifact_level(1)["upgrade_exp1"]) == 56
+    assert int(cfg.magic_army_recommend(8010100)["hero_icon0"]) == 313000

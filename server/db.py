@@ -160,6 +160,54 @@ CREATE TABLE IF NOT EXISTS angeltrials (
     units              TEXT    NOT NULL DEFAULT '[]',
     pending            TEXT    NOT NULL DEFAULT '{}'
 );
+-- Wave 3 A5 (B2): hero develop, one row per (hero entry, constellation idx
+-- 0-7); p0..p3 the stored property values, `pending` the JSON preview of a
+-- roll not yet confirmed ('' = none, O-W3-5).
+CREATE TABLE IF NOT EXISTS hero_develop (
+    player_id     INTEGER NOT NULL REFERENCES players(id),
+    hero          INTEGER NOT NULL,
+    constellation INTEGER NOT NULL,
+    p0            REAL    NOT NULL DEFAULT 0,
+    p1            REAL    NOT NULL DEFAULT 0,
+    p2            REAL    NOT NULL DEFAULT 0,
+    p3            REAL    NOT NULL DEFAULT 0,
+    pending       TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (player_id, hero, constellation)
+);
+-- Wave 3 A5 (B5): one row per owned signet. main_attrs/sub_attrs are JSON
+-- lists of {"attr_type": int, "attr_value": float} (SignetAttr's fields);
+-- an empty main_attrs means "not rolled yet" (O-W3-7). `hero` is the hero
+-- entry wearing it, 0 = in the bag.
+CREATE TABLE IF NOT EXISTS signets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id  INTEGER NOT NULL REFERENCES players(id),
+    entry      INTEGER NOT NULL,
+    level      INTEGER NOT NULL DEFAULT 0,
+    main_attrs TEXT    NOT NULL DEFAULT '',
+    sub_attrs  TEXT    NOT NULL DEFAULT '',
+    hero       INTEGER NOT NULL DEFAULT 0
+);
+-- Wave 3 A5 (B1): one row per blessing medal (bless_medal_info.entry); slots
+-- and units are JSON lists.
+CREATE TABLE IF NOT EXISTS bless (
+    player_id     INTEGER NOT NULL REFERENCES players(id),
+    medal         INTEGER NOT NULL,
+    crystal_level INTEGER NOT NULL DEFAULT 0,
+    score         INTEGER NOT NULL DEFAULT 0,
+    slots         TEXT    NOT NULL DEFAULT '[]',
+    units         TEXT    NOT NULL DEFAULT '[]',
+    PRIMARY KEY (player_id, medal)
+);
+-- Wave 3 A5 (B9): one row per owned artifact; `hero` is the hero entry
+-- wearing it, 0 = in the bag.
+CREATE TABLE IF NOT EXISTS artifacts (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    entry     INTEGER NOT NULL,
+    level     INTEGER NOT NULL DEFAULT 0,
+    exp       INTEGER NOT NULL DEFAULT 0,
+    hero      INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # The Plan A schema exactly as it shipped, for the migration test only. Keep it
@@ -275,6 +323,41 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "legends_stay", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "legends_shown", "INTEGER NOT NULL DEFAULT 0"),
     ("players", "legends_day", "TEXT NOT NULL DEFAULT ''"),
+    # Wave 3 A5, the Phase B groundwork. B5 signets and the master dungeon:
+    # the last type-13 stage cleared (ClientPlayer.last_signet,
+    # LevelManager.lua:446-457), fights used and the epoch their recovery runs
+    # from, fights bought today, essence (category 75) and the day.
+    ("players", "last_signet", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "signet_cnt_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "signet_cnt_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "signet_buy_cnt", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "signet_essence", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "signet_day", "TEXT NOT NULL DEFAULT ''"),
+    # Category 86 (ClientPlayer.PRIZE_PET_MONEY, ClientPlayer.lua:177).
+    ("players", "pet_money", "INTEGER NOT NULL DEFAULT 0"),
+    # B3 demon onslaught: runs today and their day.
+    ("players", "mojun_times", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "mojun_day", "TEXT NOT NULL DEFAULT ''"),
+    # B8 divine ruins (ClientPlayer.last_god_level/last_god_chest/is_draw).
+    ("players", "last_god_level", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "last_god_chest", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_cd_until", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_reset_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_clean_used", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_is_draw", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_day", "TEXT NOT NULL DEFAULT ''"),
+    # B9 artifact (ClientPlayer.artifact_smelt; the start kit flag, O-W3-10).
+    ("players", "artifact_smelt", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "artifact_init", "INTEGER NOT NULL DEFAULT 0"),
+    # B6 breakthrough and B7 rebirth (ClientHero fields 23, 24, 19).
+    ("heroes", "breakthrough_level", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "breakthrough_score", "INTEGER NOT NULL DEFAULT 0"),
+    ("heroes", "transmigrate_level", "INTEGER NOT NULL DEFAULT 0"),
+    # B10 angel advance and B4 radiance (ClientAngel fields 8, 9, 10).
+    ("angels", "advance_level", "INTEGER NOT NULL DEFAULT 0"),
+    ("angels", "advance_score", "INTEGER NOT NULL DEFAULT 0"),
+    ("angels", "glory_level", "INTEGER NOT NULL DEFAULT 0"),
+    ("angels", "glory_star", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -468,6 +551,26 @@ def grant_angel(
         "INSERT INTO angels (player_id, angel_entry, level, exp, star)"
         " VALUES (?, ?, ?, 0, ?)",
         (int(player_id), int(entry), int(level), int(star)),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def add_signet(conn: sqlite3.Connection, player_id: int, entry: int) -> int:
+    """Insert one unrolled, unequipped level-0 signet; returns its row id."""
+    cur = conn.execute(
+        "INSERT INTO signets (player_id, entry) VALUES (?, ?)",
+        (int(player_id), int(entry)),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def add_artifact(conn: sqlite3.Connection, player_id: int, entry: int) -> int:
+    """Insert one level-0, unequipped artifact; returns its row id."""
+    cur = conn.execute(
+        "INSERT INTO artifacts (player_id, entry) VALUES (?, ?)",
+        (int(player_id), int(entry)),
     )
     conn.commit()
     return int(cur.lastrowid)

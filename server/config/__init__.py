@@ -20,6 +20,18 @@ SPLIT_RELPATH = Path("assets/res/data/split")
 DROP_BASE_SPLIT = 10_000_000
 
 
+def parse_rate_ladder(text: str) -> list[tuple[int, float]]:
+    """'0:0|90:0.02|…|180:1' (hero_breakthrough_info.rate,
+    angel_advance_info.rate) as (score, rate) pairs in the table's order."""
+    out: list[tuple[int, float]] = []
+    for step in str(text or "").split("|"):
+        if not step:
+            continue
+        score, rate = step.split(":")
+        out.append((int(float(score)), float(rate)))
+    return out
+
+
 class Config:
     def __init__(self, split_dir: Path) -> None:
         self.split_dir = Path(split_dir)
@@ -248,6 +260,104 @@ class Config:
             (int(rune), int(level)),
         )
         return rows[0] if rows else None
+
+    # --- Wave 3 (A5) ---------------------------------------------------------
+    # Keyed on data columns only, never `id`: hero_breakthrough_info stores
+    # id = NULL on every row, and four stock tables have an autoindex that
+    # does not match their rows (docs/protocol-coverage-2026-11-25.md).
+    def hero_constellations(self) -> list:
+        """hero_constellation_info, the eight constellations in idx order."""
+        return self._all(
+            "hero_constellation_info", "hero_constellation_info", "ORDER BY idx", ()
+        )
+
+    def bless_medals(self) -> list:
+        return self._all(
+            "bless_medal_info", "bless_medal_info", "ORDER BY entry", ()
+        )
+
+    def bless_crystal(self, crystal_id: int, level: int):
+        """bless_crystal_level_info stores every column as TEXT."""
+        rows = self._all(
+            "bless_crystal_level_info", "bless_crystal_level_info",
+            "WHERE CAST(crystal_id AS INTEGER) = ? AND CAST(crystal_level AS INTEGER) = ?",
+            (int(crystal_id), int(level)),
+        )
+        return rows[0] if rows else None
+
+    def bless_rank(self, medal_id: int, level: int):
+        """The medal's bless_medal_ranklevel row at rank `level` (0-15). The
+        client looks rows up by `entry`, which the server sends as ranklevel
+        (BlessBreakView.lua:30, BlessMedalDataHelp.lua:466). `score` is not a
+        floor: the top row (level 15) has score 0, so how a score maps to a
+        level is B1's to settle. The table stores TEXT."""
+        rows = self._all(
+            "bless_medal_ranklevel", "bless_medal_ranklevel",
+            "WHERE CAST(medal_id AS INTEGER) = ? AND CAST(level AS INTEGER) = ?",
+            (int(medal_id), int(level)),
+        )
+        return rows[0] if rows else None
+
+    def angel_glory(self, level: int, star: int):
+        rows = self._all(
+            "angel_glory_info", "angel_glory_info", "WHERE level = ? AND star = ?",
+            (int(level), int(star)),
+        )
+        return rows[0] if rows else None
+
+    def signet(self, entry: int):
+        return self._one("signet_info", "signet_info", "entry", int(entry))
+
+    def signet_upgrade(self, star: int, level: int):
+        rows = self._all(
+            "signet_upgrade_info", "signet_upgrade_info", "WHERE star = ? AND level = ?",
+            (int(star), int(level)),
+        )
+        return rows[0] if rows else None
+
+    def signet_attributes(self) -> list:
+        return self._all(
+            "signet_attribute_info", "signet_attribute_info", "ORDER BY entry", ()
+        )
+
+    def signet_changes(self) -> list:
+        return self._all(
+            "signet_change_info", "signet_change_info", "ORDER BY entry", ()
+        )
+
+    def hero_breakthrough(self, level: int):
+        rows = self._all(
+            "hero_breakthrough_info", "hero_breakthrough_info",
+            "WHERE type = 1 AND hero_breakthrough_level = ?", (int(level),),
+        )
+        return rows[0] if rows else None
+
+    def hero_transmigrate(self, level: int):
+        rows = self._all(
+            "hero_transmigrate", "hero_transmigrate", "WHERE transmigrate_level = ?",
+            (int(level),),
+        )
+        return rows[0] if rows else None
+
+    def angel_advance(self, level: int):
+        rows = self._all(
+            "angel_advance_info", "angel_advance_info", "WHERE type = 1 AND level = ?",
+            (int(level),),
+        )
+        return rows[0] if rows else None
+
+    def artifact(self, entry: int):
+        return self._one("artifact_info", "artifact_info", "entry", int(entry))
+
+    def artifact_level(self, level: int):
+        """artifact_level_info's `entry` is the level (1-100, upgrade_exp1..6)."""
+        return self._one("artifact_level_info", "artifact_level_info", "entry", int(level))
+
+    def magic_army_recommend(self, level_entry: int):
+        return self._one(
+            "magic_army_recommand_info", "magic_army_recommand_info",
+            "level_entry", int(level_entry),
+        )
 
     # --- angels -------------------------------------------------------------
     # AngelManager.lua:79,295 only ever count angel_info rows whose

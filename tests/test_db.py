@@ -593,3 +593,115 @@ def test_legends_columns_added(tmp_path) -> None:
         assert players[name]["notnull"] == 1, name
         assert players[name]["dflt_value"] == ("''" if text else "0"), name
     conn.close()
+
+
+# --- Wave 3 A5: the Phase B schema --------------------------------------------
+
+WAVE3_PLAYER_COLUMNS = {
+    "last_signet", "signet_cnt_used", "signet_cnt_at", "signet_buy_cnt", "signet_essence",
+    "signet_day", "pet_money", "mojun_times", "mojun_day",
+    "last_god_level", "last_god_chest", "god_cd_until", "god_reset_used",
+    "god_clean_used", "god_is_draw", "god_day", "artifact_smelt", "artifact_init",
+}
+WAVE3_HERO_COLUMNS = {"breakthrough_level", "breakthrough_score", "transmigrate_level"}
+WAVE3_ANGEL_COLUMNS = {"advance_level", "advance_score", "glory_level", "glory_star"}
+WAVE3_TABLES = {
+    "hero_develop": {"player_id", "hero", "constellation", "p0", "p1", "p2", "p3", "pending"},
+    "signets": {"id", "player_id", "entry", "level", "main_attrs", "sub_attrs", "hero"},
+    "bless": {"player_id", "medal", "crystal_level", "score", "slots", "units"},
+    "artifacts": {"id", "player_id", "entry", "level", "exp", "hero"},
+}
+
+
+def _columns(conn, table) -> dict:
+    return {r["name"]: r for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def test_wave3_tables_and_columns_exist(tmp_path) -> None:
+    conn = connect(tmp_path / "player.db")
+    for table, names in (
+        ("players", WAVE3_PLAYER_COLUMNS), ("heroes", WAVE3_HERO_COLUMNS),
+        ("angels", WAVE3_ANGEL_COLUMNS),
+    ):
+        cols = _columns(conn, table)
+        assert names <= set(cols), table
+        for name in names:
+            text = name.endswith("_day")
+            assert cols[name]["type"] == ("TEXT" if text else "INTEGER"), name
+            assert cols[name]["notnull"] == 1, name
+            assert cols[name]["dflt_value"] == ("''" if text else "0"), name
+    for table, names in WAVE3_TABLES.items():
+        assert set(_columns(conn, table)) == names, table
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.execute(
+        "INSERT INTO hero_develop (player_id, hero, constellation) VALUES (?, 100000, 0)", (pid,)
+    )
+    conn.execute("INSERT INTO bless (player_id, medal) VALUES (?, 10000)", (pid,))
+    develop = conn.execute("SELECT * FROM hero_develop").fetchone()
+    assert [develop[f"p{k}"] for k in range(4)] == [0, 0, 0, 0]
+    assert develop["pending"] == ""
+    bless = conn.execute("SELECT * FROM bless").fetchone()
+    assert (bless["crystal_level"], bless["score"], bless["slots"], bless["units"]) == (
+        0, 0, "[]", "[]"
+    )
+    conn.close()
+
+
+def test_add_signet_and_add_artifact_return_row_ids(tmp_path) -> None:
+    from server.db import add_artifact, add_signet
+
+    conn = connect(tmp_path / "player.db")
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    first, second = add_signet(conn, pid, 10101011), add_signet(conn, pid, 10101011)
+    assert second == first + 1
+    signet = conn.execute("SELECT * FROM signets WHERE id = ?", (first,)).fetchone()
+    assert (signet["player_id"], signet["entry"], signet["level"]) == (pid, 10101011, 0)
+    assert (signet["main_attrs"], signet["sub_attrs"], signet["hero"]) == ("", "", 0)
+    art = add_artifact(conn, pid, 1500100)
+    row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (art,)).fetchone()
+    assert (row["entry"], row["level"], row["exp"], row["hero"]) == (1500100, 0, 0, 0)
+    conn.close()
+
+
+def test_wave2_world_migrates_without_loss(tmp_path) -> None:
+    """The world kept before Wave 2 acceptance run 2 opens in a COPY, keeps
+    every row of every table, and reads the Wave 3 defaults."""
+    import shutil
+    import sqlite3
+
+    import pytest
+
+    src = Path("data") / "player.db.pre-w2-acc2"
+    if not src.exists():
+        pytest.skip("data/player.db.pre-w2-acc2 is not in this tree")
+    copy = tmp_path / "player.db"
+    shutil.copy2(src, copy)
+    raw = sqlite3.connect(copy)
+    tables = [
+        r[0] for r in raw.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+            " AND name != 'sqlite_sequence'"
+        )
+    ]
+    before = {t: sorted(raw.execute(f"SELECT * FROM {t}").fetchall()) for t in tables}
+    columns = {t: [r[1] for r in raw.execute(f"PRAGMA table_info({t})")] for t in tables}
+    raw.close()
+    assert before["players"], "the kept world has a character"
+
+    conn = connect(copy)
+    for table, rows in before.items():
+        cols = columns[table]
+        after = sorted(
+            tuple(r) for r in conn.execute(f"SELECT {', '.join(cols)} FROM {table}")
+        )
+        assert after == rows, table
+    player = conn.execute("SELECT * FROM players ORDER BY id").fetchone()
+    assert int(player["last_signet"]) == 0 and int(player["pet_money"]) == 0
+    assert player["signet_day"] == "" and player["god_day"] == ""
+    for hero in conn.execute("SELECT * FROM heroes"):
+        assert int(hero["breakthrough_level"]) == 0
+    for angel in conn.execute("SELECT * FROM angels"):
+        assert int(angel["glory_level"]) == 0
+    for table in WAVE3_TABLES:
+        assert conn.execute(f"SELECT * FROM {table}").fetchall() == []
+    conn.close()
