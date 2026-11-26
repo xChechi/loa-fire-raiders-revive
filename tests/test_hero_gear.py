@@ -105,7 +105,7 @@ def test_equip_10000_on_100000_slot0_consumes_one_and_notifies_item0(reg, cfg, w
     assert fields["item0"] == 10000
     assert "item1" not in fields
     # 10000 adds max_hp 10 over the gear-free level-2 stats.
-    built = hero.build_client_hero(reg, cfg, _hero_row(conn, pid))
+    built = hero.build_client_hero(reg, cfg, _hero_row(conn, pid), conn=conn)
     assert fields["max_hp"] == built.base_unit.max_hp + 10
     assert "ability" in fields and "quality" not in fields
 

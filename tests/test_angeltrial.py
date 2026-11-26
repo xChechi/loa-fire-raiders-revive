@@ -307,7 +307,7 @@ def test_fighting_req_returns_scaled_enemy_units_and_buff_effects(world, reg, cf
     assert (enemy.type, enemy.refer, enemy.position) == (1, KNIGHT, 1)
     info = cfg.angeltrials_level(1)
     factor = info["fa_fix_battle_hard"] * (info["floor_fa_fix4"] + info["ceiling_fa_fix4"]) / 2
-    own = team.build_fight_unit(reg, cfg, heroes_of(conn, pid)[0], 1)
+    own = team.build_fight_unit(reg, cfg, heroes_of(conn, pid)[0], 1, conn=conn)
     assert enemy.unit.max_hp == int(own.unit.max_hp * factor)
     assert enemy.unit.power == pytest.approx(own.unit.power * factor)
     assert enemy.hp == enemy.unit.max_hp
@@ -432,7 +432,7 @@ def test_trial_fights_carry_the_heroes_rune_stats(world, reg, cfg):
     conn.commit()
     row = heroes_of(conn, pid)[0]
     bare = team.build_fight_unit(reg, cfg, row, 1)
-    own = team.build_fight_unit(reg, cfg, row, 1, runes=hero.runes_of(conn, row))
+    own = team.build_fight_unit(reg, cfg, row, 1, runes=hero.runes_of(conn, row), conn=conn)
     assert own.unit.max_hp > bare.unit.max_hp
     _fight_floor(conn, pid, reg, handlers, session)
     (enemy,) = _fight(reg, handlers, session, 2).enemyUnits

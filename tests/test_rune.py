@@ -111,7 +111,8 @@ def test_feed_items_adds_rune_val(reg, world) -> None:
 def test_gold_charge_levels_rune_and_adds_unit_stats(reg, cfg, world) -> None:
     conn, pid, handlers, session = world
     before = hero.build_client_hero_with_runes(
-        reg, cfg, heroes_of(conn, pid)[0], hero.runes_of(conn, heroes_of(conn, pid)[0])
+        reg, cfg, heroes_of(conn, pid)[0], hero.runes_of(conn, heroes_of(conn, pid)[0]),
+        conn=conn,
     )
     grant_item(conn, pid, CRYSTAL_S, 2)
     res = _level_up(reg, handlers, session, 1, items=[(CRYSTAL_S, 2)])
@@ -119,7 +120,7 @@ def test_gold_charge_levels_rune_and_adds_unit_stats(reg, cfg, world) -> None:
     assert (res.rune.level, res.rune.rune_val) == (1, 0)
     assert _money(conn, pid)[0] == 100000 - 2000
     row = heroes_of(conn, pid)[0]
-    after = hero.build_client_hero_with_runes(reg, cfg, row, hero.runes_of(conn, row))
+    after = hero.build_client_hero_with_runes(reg, cfg, row, hero.runes_of(conn, row), conn=conn)
     assert after.unit.max_hp == before.unit.max_hp + 60
     assert after.base_unit.max_hp == before.base_unit.max_hp
     hero_notes = _notifies(session, notify.IDENT_HERO)
@@ -201,4 +202,4 @@ def test_query_hero_rune_lists_five_runes_and_ability(reg, cfg, world) -> None:
         (0, 0, 10), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0),
     ]
     row = heroes_of(conn, pid)[0]
-    assert res.ability == hero.build_client_hero(reg, cfg, row).ability
+    assert res.ability == hero.build_client_hero(reg, cfg, row, conn=conn).ability

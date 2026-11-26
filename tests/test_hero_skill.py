@@ -189,7 +189,7 @@ def test_levelled_skill0_survives_quality_up(reg, cfg, world) -> None:
         session, reg.message_class("HeroQualityUpReq")(hero=100000)
     )
     assert res.status == 0
-    built = hero.build_client_hero(reg, cfg, _row(conn, pid))
+    built = hero.build_client_hero(reg, cfg, _row(conn, pid), conn=conn)
     assert built.quality == 20
     assert list(built.spells) == [1000001, 1001000]
     fields = _decode(

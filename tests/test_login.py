@@ -521,12 +521,20 @@ def test_login_hero_payload_carries_the_rune_stats(reg, settings, cfg) -> None:
         "INSERT INTO runes (player_id, hero, idx, level, rune_val) VALUES (?, ?, 1, 2, 7)",
         (pid, 100000),
     )
+    # A confirmed constellation (Wave 3): only a build with conn carries it.
+    conn.execute(
+        "INSERT INTO hero_develop (player_id, hero, constellation, p0, p1, p2, p3)"
+        " VALUES (?, ?, 2, 4, 6, 40, 2)", (pid, 100000),
+    )
     conn.commit()
     sent = player.build_query_myself_res(reg, cfg, conn, row).heroes[0]
     hero_row = heroes_of(conn, pid)[0]
     expected = hero.build_client_hero_with_runes(
-        reg, cfg, hero_row, hero.runes_of(conn, hero_row)
+        reg, cfg, hero_row, hero.runes_of(conn, hero_row), conn=conn
     )
+    assert expected.unit != hero.build_client_hero_with_runes(
+        reg, cfg, hero_row, hero.runes_of(conn, hero_row)
+    ).unit
     assert [(r.idx, r.level, r.rune_val) for r in sent.runes][1] == (1, 2, 7)
     assert sent.unit == expected.unit
     assert sent.unit != plain.unit
