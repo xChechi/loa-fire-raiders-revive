@@ -25,6 +25,16 @@ MAGIC_STATE_OFF_SEASON = 99
 
 SIGNET_DAY_HOUR = 5     # signet buys reset at 05:00 (O-W3-9)
 
+# Double-reward switches (YunyinActivity) sent closed: one is open while
+# s_time <= now < e_time (NpcTowerUI.lua:691-692), so s_time = e_time = 0 is
+# closed; times 1 is "no multiplier". NpcTowerUI.lua:682 reads god_switch.times
+# with no nil check, and once god_switch is set GameToolsBtn.lua:199-210
+# indexes the other four with none either.
+CLOSED_SWITCHES = (
+    "god_switch", "angel_double_switch", "hero_double_switch",
+    "gold_trails_switch", "memory_double_switch",
+)
+
 
 def _end_of_today() -> int:
     tomorrow = (datetime.now() + timedelta(days=1)).replace(
@@ -82,6 +92,8 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     # A5b: category 70 reaches the client as guildlevel_point
     # (ClientPlayer.lua:436, gve_money = d.guildlevel_point).
     msg.guildlevel_point = int(row["gve_money"])
+    # The divine-ruins floor's dead groups (ClientPlayer.lua:427,542-547).
+    msg.fight_status = int(row["god_fight_status"])
     # Everything else required gets the proto2 zero.
     fill_required(msg)
     return msg
@@ -198,6 +210,10 @@ def build_query_myself_res(
     gold_today = row["gold_trails_day"] == today
     msg.gold_trails.damage = int(row["gold_trails_best"]) if gold_today else 0
     msg.gold_trails.prize = int(row["gold_trails_prize"]) if gold_today else 0
+    for name in CLOSED_SWITCHES:
+        getattr(msg, name).CopyFrom(
+            registry.message_class("YunyinActivity")(s_time=0, e_time=0, times=1)
+        )
     for hero_row in db.heroes_of(conn, int(row["id"])):
         msg.heroes.add().CopyFrom(hero.build_client_hero_with_runes(
             registry, cfg, hero_row, hero.runes_of(conn, hero_row), conn=conn

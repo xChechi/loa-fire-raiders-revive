@@ -618,3 +618,37 @@ def test_login_clears_last_weeks_breakthrough_scores(reg, cfg, row) -> None:
     conn.execute("UPDATE heroes SET breakthrough_score = 50 WHERE id = ?", (hid,))
     conn.commit()
     assert _query(reg, cfg, conn).heroes[0].breakthrough_score == 50
+
+
+def test_login_sends_the_double_reward_switches_closed(reg, cfg, row) -> None:
+    """NpcTowerUI.lua:682 reads g_roleData.god_switch.times with no nil check,
+    and a switch is open while s_time <= now < e_time (NpcTowerUI.lua:691-692),
+    so god_switch goes out closed (0, 0, times 1). Once it is set,
+    GameToolsBtn.lua:199-210 also indexes the angel, hero, gold-trial and
+    chronicle switches, so those four go out closed as well."""
+    import time
+
+    conn, _r = row
+    res = _query(reg, cfg, conn)
+    now = int(time.time())
+    for name in ("god_switch", "angel_double_switch", "hero_double_switch",
+                 "gold_trails_switch", "memory_double_switch"):
+        assert res.HasField(name), name
+        switch = getattr(res, name)
+        assert (switch.s_time, switch.e_time, switch.times) == (0, 0, 1.0), name
+        assert not switch.s_time <= now < switch.e_time
+    # The copy-screen switches are read only behind their own nil checks
+    # (GameToolsBtn.lua:130,264) and stay absent.
+    for name in ("common_double_switch", "elite_double_switch", "signet_double_switch"):
+        assert not res.HasField(name), name
+
+
+def test_login_sends_the_divine_ruins_fight_status(reg, cfg, row) -> None:
+    """ClientPlayer.fight_status (ClientPlayer.lua:427) is the floor's dead
+    groups bitmask NpcTowerUI reads (:877, :947); godtower keeps it in
+    players.god_fight_status."""
+    conn, r = row
+    assert _query(reg, cfg, conn).player.fight_status == 0
+    conn.execute("UPDATE players SET god_fight_status = 5 WHERE id = ?", (int(r["id"]),))
+    conn.commit()
+    assert _query(reg, cfg, conn).player.fight_status == 5
