@@ -310,6 +310,15 @@ def test_chapters_only_contains_real_chapter_entries(reg, settings, cfg) -> None
     res.SerializeToString()
 
 
+def test_query_myself_sends_gve_money_as_guildlevel_point(reg, cfg, row) -> None:
+    """ClientPlayer.lua:436: gve_money = d.guildlevel_point (field 50)."""
+    conn, r = row
+    conn.execute("UPDATE players SET gve_money = 125 WHERE id = ?", (int(r["id"]),))
+    conn.commit()
+    res = player.build_query_myself_res(reg, cfg, conn, find_player(conn, "stefan"))
+    assert res.player.guildlevel_point == 125
+
+
 # --- Plan B2 T6: angels, mail flag, events, login-award bits, daily counters --
 
 def _query(reg, cfg, conn, today=None):

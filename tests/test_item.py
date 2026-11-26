@@ -403,6 +403,22 @@ def test_grant_category75_raises_signet_essence(reg, cfg, conn) -> None:
     assert session.outbox[0][2].flags == notify.flags_for(["signet_essence"])
 
 
+def test_grant_category70_raises_gve_money_and_notifies(reg, cfg, conn) -> None:
+    # ClientPlayer.COST_GVE_TYPE = 70 (ClientPlayer.lua:157, read :666-667).
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_prizes(conn, cfg, pid, [(70, 0, 25)])
+    out = grant_prizes(conn, cfg, pid, [(70, 0, 100)])
+    assert int(conn.execute("SELECT gve_money FROM players").fetchone()[0]) == 125
+    assert out["coins"] == {"gve_money": 125}
+    session = _session()
+    item.announce(reg, session, out)
+    (_service, _cmd, msg), = session.outbox
+    assert msg.flags == notify.flags_for(["gve_money"])
+    assert list(msg.data) == [125.0]
+
+
 def test_every_wave3_stage_drop_category_is_grantable(cfg) -> None:
     """Every drop of the divine-ruins (8), demon-onslaught (12) and
     master-dungeon (13) stages passes grant_prizes' vetting, and the

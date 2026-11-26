@@ -79,6 +79,9 @@ def build_client_player(registry: Registry, row: sqlite3.Row):
     msg.last_god_chest = int(row["last_god_chest"])
     msg.is_draw = int(row["god_is_draw"])
     msg.artifact_smelt = int(row["artifact_smelt"])
+    # A5b: category 70 reaches the client as guildlevel_point
+    # (ClientPlayer.lua:436, gve_money = d.guildlevel_point).
+    msg.guildlevel_point = int(row["gve_money"])
     # Everything else required gets the proto2 zero.
     fill_required(msg)
     return msg

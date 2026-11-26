@@ -1,4 +1,4 @@
-"""Blessing (护佑): 5_2577, 5_2571, 5_2573, 5_2597, 5_2575 and bless.bonus.
+"""Blessing (护佑): 5_2577, 5_2571, 5_2573, 5_2597, 5_2575, 5_2671 and bless.bonus.
 
 Medal 10000 (战之斗魂) opens at 45 for warriors (medal_effect_type 1, arg 1).
 Its slots: 0 (angel), 1 and 2 free at level 1; 3 at 45 for 5000 diamonds,
@@ -280,10 +280,61 @@ def test_crystal_at_top_refused_338002(reg, world, caplog) -> None:
     assert _medal_info(res.bless_infos).level == 14
 
 
-def test_decompose_is_not_handled_yet(reg, world) -> None:
-    """5_2671 pays category 70 (秘藏币), which has no players column: A5b."""
-    _conn, _pid, handlers, _session = world
-    assert (5, 2671) not in handlers
+def _decompose(reg, handlers, session, entry, amount):
+    return _call(reg, handlers, session, (5, 2671), "BlessDecomposeReq",
+                 id=entry, amount=amount)
+
+
+def _gve(conn, pid) -> int:
+    return int(conn.execute(
+        "SELECT gve_money FROM players WHERE id = ?", (pid,)
+    ).fetchone()["gve_money"])
+
+
+def test_decompose_pays_floored_category70_per_item(reg, world) -> None:
+    """2000000 has arg0 10: floor(10 / 0.4 × 0.5) = 12 each, × 3."""
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, 2000000, 5)
+    res = _decompose(reg, handlers, session, 2000000, 3)
+    assert [(p.category, p.refer, p.amount) for p in res.prizes] == [(70, 0, 36)]
+    assert _gve(conn, pid) == 36
+    assert _item(conn, pid, 2000000) == 2
+    (note,) = [m for m in _queued(session, 2008) if m.ident == 1]
+    assert list(note.data) == [36.0]
+    assert res.IsInitialized()
+    type(res).FromString(res.SerializeToString())
+
+
+def test_decompose_punch_pays_from_bless_hole_price(reg, world) -> None:
+    """1500 has arg0 0 and class 70: floor(100 / 0.4 × 0.5) = 125 each."""
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, PUNCH, 2)
+    res = _decompose(reg, handlers, session, PUNCH, 2)
+    assert [(p.category, p.amount) for p in res.prizes] == [(70, 250)]
+    assert (_gve(conn, pid), _item(conn, pid, PUNCH)) == (250, 0)
+
+
+def test_decompose_more_than_owned_changes_nothing_327942(reg, world, caplog) -> None:
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, 2000000, 2)
+    with caplog.at_level(logging.WARNING, logger="loa.bless"):
+        res = _decompose(reg, handlers, session, 2000000, 3)
+    assert "327942" in caplog.text
+    assert list(res.prizes) == []
+    assert (_gve(conn, pid), _item(conn, pid, 2000000)) == (0, 2)
+    assert session.outbox == []
+
+
+def test_decompose_non_bless_item_changes_nothing(reg, world, caplog) -> None:
+    """Only tag 50 class 70/71 shows the button (BagLeftPanel.lua:160-161);
+    1600 is tag 50 class 101."""
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, 1600, 5)
+    with caplog.at_level(logging.WARNING, logger="loa.bless"):
+        res = _decompose(reg, handlers, session, 1600, 1)
+    assert "327681" in caplog.text
+    assert list(res.prizes) == []
+    assert (_gve(conn, pid), _item(conn, pid, 1600)) == (0, 5)
 
 
 def test_bonus_adds_medal_percentages(reg, cfg, world) -> None:

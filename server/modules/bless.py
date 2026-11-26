@@ -1,7 +1,7 @@
 """Blessing (护佑, function 10420, level 45): 5_2577 BlessQueryReq,
 5_2571 BlessBuyLocationReq, 5_2573 BlessHeroAddReq, 5_2597
-BlessQuickAddUnitReq, 5_2575 BlessFusingReq; pushes 5_2594 BlessInfoNotify
-and 5_2588 BlessLevelUpNotify.
+BlessQuickAddUnitReq, 5_2575 BlessFusingReq, 5_2671 BlessDecomposeReq;
+pushes 5_2594 BlessInfoNotify and 5_2588 BlessLevelUpNotify.
 
 What the client reads (step 1):
 
@@ -79,9 +79,15 @@ Not in the client, so decided here (see the B1 report):
 - Placing a unit that already sits in another slot of the medal moves it.
 - Quick add re-seats every open slot with the best-scoring owned eligible
   units, ties by entry.
-- 5_2671 BlessDecomposeReq is not handled: it pays category 70 (秘藏币,
-  BagResolvePanel.lua:108,145; 338005 秘藏币不足), which has no players
-  column and no item.py grant (A5b).
+- 5_2671 BlessDecomposeReq {id = item entry, amount} (BagResolvePanel.lua:
+  193, BagCtr.lua:92-96) pays category 70, gve_money (costIcon70,
+  BagResolvePanel.lua:108; 338005 秘藏币不足). Only a tag 50, class 70/71
+  item shows the button (BagLeftPanel.lua:160-161). One item is worth
+  floor(arg0 / BLESS_MONEY_VALUE × BLESS_ITEM_RECOVERY_RATE), and the class-70
+  item with arg0 0 (the punch 1500) floor(BLESS_HOLE_PRICE / BLESS_MONEY_VALUE
+  × BLESS_ITEM_RECOVERY_RATE) (BagResolvePanel.lua:18-22,144-147); the total
+  is that times the amount (:162). The answer's `prizes` go to
+  MMDropRewardPanel (BagCtr.lua:98-100).
 
 No Bless*Res has a `status` field, so nothing here refuses on the wire: a
 shortfall changes nothing, logs a WARNING with the language.db code, and
@@ -97,7 +103,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import hero, notify
+from server.modules import hero, item, notify
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -124,6 +130,11 @@ CRYSTAL_ITEMS = 4                   # item0..3 / amount0..3
 
 EFFECT_VOCATION = 1
 EFFECT_GENDER = 2
+
+# Decomposable items (BagLeftPanel.lua:160-161): tag 50, class 70 or 71.
+DECOMPOSE_TAG = 50
+DECOMPOSE_CLASSES = (70, 71)
+PUNCH_CLASS = 70                    # arg0 0: priced from BLESS_HOLE_PRICE
 
 # getAttrisByEntry's twelve attributes (BlessMedalDataHelp.lua:289-338):
 # (bless_medal_info / bless_medal_ranklevel column, ClientHeroUnit field).
@@ -347,6 +358,21 @@ def build_info(registry: Registry, conn: sqlite3.Connection, cfg: Config,
         msg.info.entry, msg.info.star = int(angel_row["angel_entry"]), int(angel_row["star"])
     fill_required(msg)
     return msg
+
+
+def decompose_value(cfg: Config, item_row) -> int | None:
+    """The gve_money one item decomposes into (BagResolvePanel.lua:144-147),
+    None for an item the bag offers no decompose for."""
+    if int(item_row["tag"] or 0) != DECOMPOSE_TAG:
+        return None
+    if int(item_row["class"] or 0) not in DECOMPOSE_CLASSES:
+        return None
+    base = float(item_row["arg0"] or 0)
+    if not base and int(item_row["class"]) == PUNCH_CLASS:
+        base = _variable(cfg, "BLESS_HOLE_PRICE")
+    return int(math.floor(
+        base / _variable(cfg, "BLESS_MONEY_VALUE") * _variable(cfg, "BLESS_ITEM_RECOVERY_RATE")
+    ))
 
 
 def open_medals(cfg: Config, player_level: int) -> list:
@@ -614,10 +640,49 @@ def handlers(
         log.info("medal %d of player %d: crystal %d -> %d", medal, player_id, level, level + 1)
         return None
 
+    def decompose(session: Session, req):
+        res = registry.message_class("BlessDecomposeRes")()
+        player_row = _player(session)
+        entry, amount = int(req.id), int(req.amount)
+        if player_row is None:
+            log.warning("5_2671 with no player (%d)", STATUS_INTERNAL_ERROR)
+            fill_required(res)
+            return res
+        player_id = int(player_row["id"])
+        item_row = cfg.item(entry)
+        value = decompose_value(cfg, item_row) if item_row is not None else None
+        owned = conn.execute(
+            "SELECT amount FROM items WHERE player_id = ? AND entry = ?", (player_id, entry)
+        ).fetchone()
+        have = int(owned["amount"]) if owned else 0
+        if value is None:
+            log.warning("5_2671: item %d cannot be decomposed (%d)", entry, STATUS_INTERNAL_ERROR)
+        elif amount <= 0 or have < amount:
+            log.warning(
+                "5_2671: %d x item %d asked, player has %d (%d)",
+                amount, entry, have, STATUS_NOT_ENOUGH_ITEMS,
+            )
+        else:
+            prizes = [(item.CATEGORY_GVE_MONEY, 0, value * amount)]
+            granted = item.grant_prizes(conn, cfg, player_id, prizes)
+            notify.items_changed(
+                registry, session, [(entry, db.take_item(conn, player_id, entry, amount))]
+            )
+            item.announce(registry, session, granted)
+            for category, refer, total in prizes:
+                res.prizes.add(category=category, refer=refer, amount=total)
+            log.info(
+                "player %d decomposed %d x item %d for %d gve_money",
+                player_id, amount, entry, value * amount,
+            )
+        fill_required(res)
+        return res
+
     return {
         (5, 2577): query,
         (5, 2571): buy_location,
         (5, 2573): hero_add,
         (5, 2597): quick_add,
         (5, 2575): fusing,
+        (5, 2671): decompose,
     }

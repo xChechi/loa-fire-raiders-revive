@@ -358,6 +358,10 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("angels", "advance_score", "INTEGER NOT NULL DEFAULT 0"),
     ("angels", "glory_level", "INTEGER NOT NULL DEFAULT 0"),
     ("angels", "glory_star", "INTEGER NOT NULL DEFAULT 0"),
+    # A5b: category 70 (ClientPlayer.COST_GVE_TYPE, ClientPlayer.lua:157),
+    # what blessing decompose pays; sent as ClientPlayer.guildlevel_point
+    # (ClientPlayer.lua:436).
+    ("players", "gve_money", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
