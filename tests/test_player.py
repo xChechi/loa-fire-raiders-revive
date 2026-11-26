@@ -594,3 +594,27 @@ def test_login_hero_carries_its_worn_signets_by_part(reg, cfg, row) -> None:
     assert list(heroes[100000].signets) == [part1, part2, 0, 0]
     assert list(heroes[101000].signets) == [0, 0, 0, 0]
     assert bag not in heroes[100000].signets
+
+
+def test_login_clears_last_weeks_breakthrough_scores(reg, cfg, row) -> None:
+    """The scores reset every Monday 05:00 (h12024); QueryMyselfRes.heroes is
+    what the panel shows, so the week turns before they are built."""
+    import time
+    from datetime import date, timedelta
+
+    from server.modules import breakthrough
+
+    conn, r = row
+    pid = int(r["id"])
+    hid = grant_hero(conn, pid, 100000, 10, star=1, level=54)
+    this_week = breakthrough.week_key(time.time())
+    last_week = (date.fromisoformat(this_week) - timedelta(days=7)).isoformat()
+    conn.execute("UPDATE heroes SET breakthrough_score = 50 WHERE id = ?", (hid,))
+    conn.execute("UPDATE players SET breakthrough_week = ? WHERE id = ?", (last_week, pid))
+    conn.commit()
+    assert _query(reg, cfg, conn).heroes[0].breakthrough_score == 0
+    assert find_player(conn, "stefan")["breakthrough_week"] == this_week
+    # Within the same week a score stays.
+    conn.execute("UPDATE heroes SET breakthrough_score = 50 WHERE id = ?", (hid,))
+    conn.commit()
+    assert _query(reg, cfg, conn).heroes[0].breakthrough_score == 50

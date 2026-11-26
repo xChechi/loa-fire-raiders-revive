@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from server import db
 from server.config import Config
-from server.modules import angel, events, guide, hero, item, mystery
+from server.modules import angel, breakthrough, events, guide, hero, item, mystery
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
 from server.settings import Settings
@@ -161,6 +161,8 @@ def build_query_myself_res(
     player_id = int(row["id"])
     today = today or date.today().isoformat()
     db.ensure_today(conn, player_id, today)
+    # Monday 05:00 clears the breakthrough scores before the heroes go out.
+    breakthrough.ensure_week(conn, player_id, time.time())
     row = conn.execute("SELECT * FROM players WHERE id = ?", (player_id,)).fetchone()
     now = int(time.time())
     unread = conn.execute(
