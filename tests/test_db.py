@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from server.db import connect, create_player, find_player
@@ -644,6 +645,51 @@ def test_wave3_tables_and_columns_exist(tmp_path) -> None:
     assert (bless["crystal_level"], bless["score"], bless["slots"], bless["units"]) == (
         0, 0, "[]", "[]"
     )
+    conn.close()
+
+
+def _drop_and_reopen(path, table: str, names) -> sqlite3.Connection:
+    """A world from before an A5b step: the columns are dropped from a fresh
+    db, a row is kept, and connect() must add them back on the next open."""
+    conn = connect(path)
+    for name in names:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+    conn.commit()
+    conn.close()
+    return connect(path)
+
+
+A5B_GOD_COLUMNS = {
+    # GodChallengeRes.fight_status, a bitmask of the stage's beaten groups
+    # (ClientPlayer:isGodPveMonstorPass, ClientPlayer.lua:541-548).
+    "god_fight_status": ("INTEGER", "0"),
+    # GodChallengeRes.heros / .angel, the units that already fought on this
+    # floor (excludeHeros/excludeAngels, NpcTowerUI.lua:914), JSON lists.
+    "god_rest_heroes": ("TEXT", "'[]'"),
+    "god_rest_angels": ("TEXT", "'[]'"),
+    # God(Query)BuyLevelResetRes.used and God(Query)BuyChapterCleanRes.used,
+    # the resets and sweeps bought today (NpcTowerUI.lua:329,
+    # NpcTowerSweepDetailUI.lua:61).
+    "god_reset_bought": ("INTEGER", "0"),
+    "god_clean_bought": ("INTEGER", "0"),
+}
+
+
+def test_a5b_divine_ruins_columns_added_to_an_existing_world(tmp_path) -> None:
+    path = tmp_path / "player.db"
+    conn = connect(path)
+    create_player(conn, "stefan", "stefan", guide_id=0)
+    conn.close()
+    conn = _drop_and_reopen(path, "players", A5B_GOD_COLUMNS)
+    cols = _columns(conn, "players")
+    for name, (kind, default) in A5B_GOD_COLUMNS.items():
+        assert cols[name]["type"] == kind, name
+        assert cols[name]["notnull"] == 1, name
+        assert cols[name]["dflt_value"] == default, name
+    row = conn.execute("SELECT * FROM players").fetchone()
+    assert row["username"] == "stefan"
+    assert (row["god_fight_status"], row["god_reset_bought"], row["god_clean_bought"]) == (0, 0, 0)
+    assert (row["god_rest_heroes"], row["god_rest_angels"]) == ("[]", "[]")
     conn.close()
 
 

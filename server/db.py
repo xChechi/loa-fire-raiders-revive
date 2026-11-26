@@ -365,6 +365,20 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # A5b: breakthrough.week_key (the Monday of the 05:00 week) the heroes'
     # breakthrough_score belong to; '' = never stamped (h12024).
     ("players", "breakthrough_week", "TEXT NOT NULL DEFAULT ''"),
+    # A5b for B8 divine ruins. GodChallengeRes.fight_status: bit k = group k
+    # of the current stage beaten (ClientPlayer.lua:541-548), 0 after a
+    # reset (NpcTowerUI.lua:350). GodChallengeRes.heros/.angel: the units that
+    # already fought on this floor (excludeHeros/excludeAngels,
+    # NpcTowerUI.lua:914), JSON lists like stores.slots. The resets and
+    # sweeps bought today, God(Query)BuyLevelResetRes.used and
+    # God(Query)BuyChapterCleanRes.used (NpcTowerUI.lua:329,
+    # NpcTowerSweepDetailUI.lua:61); god_reset_used/god_clean_used stay the
+    # ones spent.
+    ("players", "god_fight_status", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_rest_heroes", "TEXT NOT NULL DEFAULT '[]'"),
+    ("players", "god_rest_angels", "TEXT NOT NULL DEFAULT '[]'"),
+    ("players", "god_reset_bought", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "god_clean_bought", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
