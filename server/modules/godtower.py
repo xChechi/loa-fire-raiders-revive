@@ -46,6 +46,35 @@ What the client reads (the spec):
   "战斗进入CD的总时间"): every fight adds 300 s to players.god_cd_until; the
   tower is locked while the time left is >= 1200 (the ruling for B8).
 
+Resets and sweeps (commit 2):
+
+- 5_2519 GodLevelResetReq {} replays the current floor: fight_status 0,
+  nobody resting, cooldown 0, one reset used (NpcTowerUI.lua:347-357). The
+  button needs fight_status != 0 (:877, 947; 336011) and a reset left
+  (336002). Resets a day: vip_info 20120 神器PVE关卡免费重置VIP次数, plus
+  the ones bought; max = both, balance = max - used.
+- 5_2521/5_2523 {} -> {max, used, diamond}: buys allowed per day = vip_info
+  20150 神器PVE关卡购买VIP次数 (336003), `used` = bought today, `diamond` =
+  the next buy's GOD_LEVEL_RESET_COST tier ("price|count,..."), x07011.
+- 5_2525 GodChapterCleanReq {chapter, times, silver_card, gold_card}
+  (NpcTowerSweepDetailUI.lua:280-285): only a chapter whose every floor is
+  cleared (ClientPlayer:isCanSweepNpcTower, 336007); `times` from the sweeps
+  left (336004 none left, 336006 too few); energy = times x the chapter's
+  floor energy (:34-36, 262); the cards cost times x floors x
+  GOD_SILVER_CARD_COST / GOD_GOLD_CARD_COST diamonds (:294-300). The Res
+  holds one GodCleanLevelEntry per floor in idx order (NpcTowerSweepList.lua:
+  136-158 pairs drops[i] with stageList[i]) and `times` = sweeps left after
+  it (:128). Each floor pays per sweep what clearing it and turning the
+  bronze card pay (invisible_drops + visible_drops, as the campaign sweep
+  pays both), the silver card stage_info.silver_card, the gold card
+  gold_card, and the floor's player_xp.
+- 5_2527/5_2529 {} -> {max, used, clean_num, clean_max, diamond}: free sweeps
+  a day = vip_info 20130 神器PVE扫荡免费VIP次数, buys = 20140
+  神器PVE扫荡购买VIP次数 (336005) at GOD_CHAPTER_CLEAN_COST tiers; clean_max
+  = free + bought, clean_num = used (:58-66). No discount is sent (the
+  optional discount fields stay unset, which the client reads as none).
+- Every counter rolls at 05:00 (players.god_day, db.day_key(5)).
+
 No God*Res has a `status` field (allProtos.proto:7853-8071), so a refusal
 changes nothing, logs a WARNING with its language.db code and answers the
 current state.
@@ -80,8 +109,15 @@ STATUS_NO_ENERGY = 327939       # language.db 体力不足
 STATUS_LEVEL = 327957           # language.db 未满足此玩法的等级
 STATUS_NOT_ENTERED = 328196     # language.db 没有进入关卡
 STATUS_ENTER = 336001           # language.db 您不满足进入条件
+STATUS_RESET_USED = 336002      # language.db 关卡重置次数已经用完
+STATUS_RESET_BUY_MAX = 336003   # language.db 关卡重置购买次数已达上限
+STATUS_CLEAN_USED = 336004      # language.db 章节扫荡次数已经用完
+STATUS_CLEAN_BUY_MAX = 336005   # language.db 章节扫荡购买次数已达上限
+STATUS_CLEAN_SHORT = 336006     # language.db 章节扫荡次数不足
+STATUS_CLEAN_LOCKED = 336007    # language.db 不能扫荡该章节
 STATUS_CHEST_TAKEN = 336008     # language.db 宝箱已经领过了
 STATUS_RESTING = 336009         # language.db 这位英雄/女神正在休息中，不可出战
+STATUS_NO_RESET_NEEDED = 336011 # language.db 当前未击败任何对手，无需重置
 STATUS_IN_CD = 336012           # language.db 战斗cd中
 STATUS_BAD_DATA = 336013        # language.db 数据异常,
 
@@ -90,6 +126,11 @@ CHAPTER_GOD = 8                 # chapter_info.type of 5000000-5190000
 DAY_START_HOUR = 5              # x07044, O-W3-9
 GROUP_COLUMNS = ("group0", "group1", "group2")
 ALL_CARDS = 0b111               # bronze, silver, gold (NpcTowerCardUI.lua:140-146)
+
+VIP_FREE_RESETS = 20120         # vip_info 神器PVE关卡免费重置VIP次数
+VIP_FREE_CLEANS = 20130         # vip_info 神器PVE扫荡免费VIP次数
+VIP_BUY_CLEANS = 20140          # vip_info 神器PVE扫荡购买VIP次数
+VIP_BUY_RESETS = 20150          # vip_info 神器PVE关卡购买VIP次数
 
 FLAG_OK = 0
 FLAG_REFUSED = 1
@@ -102,6 +143,26 @@ def var_int(cfg: Config, key: str) -> int:
     if raw in (None, ""):
         raise KeyError(f"variables.{key} is missing")
     return int(float(raw))
+
+
+def vip_int(cfg: Config, entry: int, vip: int) -> int:
+    raw = cfg.vip_value(entry, vip)
+    if raw in (None, ""):
+        raise KeyError(f"vip_info has no value for {entry} at VIP {vip}")
+    return int(float(raw))
+
+
+def tier_price(cost: str, n: int) -> int:
+    """The price of purchase number n (1-based) on a "price|count,..." ladder
+    (GOD_LEVEL_RESET_COST, GOD_CHAPTER_CLEAN_COST); past the end, the last."""
+    price, running = 0, 0
+    for part in (p for p in str(cost).split(",") if p):
+        tier, count = part.split("|")
+        price = int(tier)
+        running += int(count)
+        if running >= n:
+            break
+    return price
 
 
 def floors(cfg: Config) -> list[int]:
@@ -124,6 +185,16 @@ def full_mask(stage) -> int:
 
 def cd_left(row, now: float) -> int:
     return max(0, int(row["god_cd_until"]) - int(now))
+
+
+def chapter_cleared(conn: sqlite3.Connection, cfg: Config, pid: int, chapter: int) -> bool:
+    """Every floor of the chapter cleared: its last floor has a `levels` row,
+    which only a clear writes, and floors are climbed in order."""
+    stages = cfg.stages_in_chapter(chapter)
+    if not stages:
+        return False
+    progress = db.level_progress(conn, pid, int(stages[-1]["entry"]))
+    return progress is not None and int(progress["star"]) > 0
 
 
 def handlers(
@@ -158,6 +229,28 @@ def handlers(
     def _locked(row, now: float) -> bool:
         return cd_left(row, now) >= var_int(cfg, "GOD_NOT_FIGHT_CD")
 
+    def _today(pid: int, now: float):
+        """The player row with the four daily counters zeroed when they
+        belong to an earlier 05:00 day."""
+        today = db.day_key(DAY_START_HOUR, now)
+        conn.execute(
+            "UPDATE players SET god_reset_used = 0, god_reset_bought = 0,"
+            " god_clean_used = 0, god_clean_bought = 0, god_day = ?"
+            " WHERE id = ? AND god_day != ?",
+            (today, pid, today),
+        )
+        conn.commit()
+        return _row(pid)
+
+    def _resets(row) -> tuple[int, int]:
+        """(balance, max) of today's floor resets."""
+        total = vip_int(cfg, VIP_FREE_RESETS, int(row["vip"])) + int(row["god_reset_bought"])
+        return max(0, total - int(row["god_reset_used"])), total
+
+    def _sweeps_left(row) -> int:
+        total = vip_int(cfg, VIP_FREE_CLEANS, int(row["vip"])) + int(row["god_clean_bought"])
+        return max(0, total - int(row["god_clean_used"]))
+
     # 5_2517 GodChallengeReq {} -> GodChallengeRes
     def state(session: Session, req):
         res = registry.message_class("GodChallengeRes")(
@@ -169,6 +262,7 @@ def handlers(
             fill_required(res)
             return res
         now = now_of()
+        row = _today(int(row["id"]), now)
         need = cfg.function_unlock(FUNCTION_GOD)
         if int(row["level"]) < need:
             log.warning(
@@ -179,6 +273,7 @@ def handlers(
         floor = cfg.stage(current_floor(cfg, row))
         res.cd = 1 if _locked(row, now) else 0
         res.cd_time = cd_left(row, now)
+        res.balance, res.max = _resets(row)
         res.chapter = int(floor["chapter"])
         res.fight_status = int(row["god_fight_status"])
         res.heros.extend(int(e) for e in json.loads(row["god_rest_heroes"] or "[]"))
@@ -437,8 +532,229 @@ def handlers(
         fill_required(res)
         return res
 
+    def _warn(name: str, code: int, why: str) -> None:
+        log.warning("%s refused (%d): %s; no status field, answering the current state",
+                    name, code, why)
+
+    # 5_2519 GodLevelResetReq {} -> GodLevelResetRes {}
+    def reset(session: Session, req):
+        row = _player(session)
+        if row is None:
+            log.warning("5_2519 before any character exists")
+            return _res("GodLevelResetRes")
+        pid = int(row["id"])
+        row = _today(pid, now_of())
+        balance, _total = _resets(row)
+        if balance <= 0:
+            _warn("5_2519", STATUS_RESET_USED, f"player {pid} has no reset left")
+        elif int(row["god_fight_status"]) == 0:
+            _warn("5_2519", STATUS_NO_RESET_NEEDED, f"player {pid} beat no team yet")
+        else:
+            conn.execute(
+                "UPDATE players SET god_reset_used = god_reset_used + 1,"
+                " god_fight_status = 0, god_rest_heroes = '[]', god_rest_angels = '[]',"
+                " god_cd_until = 0 WHERE id = ?", (pid,),
+            )
+            conn.commit()
+            log.info("5_2519 player %d reset floor %d (%d reset(s) left)",
+                     pid, current_floor(cfg, row), balance - 1)
+        return _res("GodLevelResetRes")
+
+    def _buy_reset_res(name: str, row):
+        bought = int(row["god_reset_bought"])
+        return _res(
+            name, max=vip_int(cfg, VIP_BUY_RESETS, int(row["vip"])), used=bought,
+            diamond=tier_price(cfg.variable("GOD_LEVEL_RESET_COST") or "", bought + 1),
+        )
+
+    # 5_2521 GodQueryBuyLevelResetReq {} -> {max, used, diamond}
+    def query_buy_reset(session: Session, req):
+        row = _player(session)
+        if row is None:
+            return _res("GodQueryBuyLevelResetRes", max=0, used=0, diamond=0)
+        return _buy_reset_res("GodQueryBuyLevelResetRes", _today(int(row["id"]), now_of()))
+
+    # 5_2523 GodBuyLevelResetReq {} -> {max, used, diamond}
+    def buy_reset(session: Session, req):
+        row = _player(session)
+        if row is None:
+            return _res("GodBuyLevelResetRes", max=0, used=0, diamond=0)
+        pid = int(row["id"])
+        row = _today(pid, now_of())
+        bought, limit = int(row["god_reset_bought"]), vip_int(cfg, VIP_BUY_RESETS, int(row["vip"]))
+        price = tier_price(cfg.variable("GOD_LEVEL_RESET_COST") or "", bought + 1)
+        if bought >= limit:
+            _warn("5_2523", STATUS_RESET_BUY_MAX, f"{bought} of {limit} bought at VIP {row['vip']}")
+        elif int(row["diamond"]) < price:
+            _warn("5_2523", STATUS_NO_DIAMOND, f"needs {price} diamonds, has {row['diamond']}")
+        else:
+            db.spend(conn, pid, diamond=price)
+            conn.execute(
+                "UPDATE players SET god_reset_bought = god_reset_bought + 1 WHERE id = ?",
+                (pid,),
+            )
+            conn.commit()
+            row = _row(pid)
+            notify.player_changed(registry, session, {"diamond": int(row["diamond"])})
+            log.info("5_2523 player %d bought reset %d for %d diamonds", pid, bought + 1, price)
+        return _buy_reset_res("GodBuyLevelResetRes", row)
+
+    def _buy_clean_fields(row) -> dict:
+        bought = int(row["god_clean_bought"])
+        return {
+            "max": vip_int(cfg, VIP_BUY_CLEANS, int(row["vip"])), "used": bought,
+            "diamond": tier_price(cfg.variable("GOD_CHAPTER_CLEAN_COST") or "", bought + 1),
+        }
+
+    # 5_2527 GodQueryBuyChapterCleanReq {} -> {max, used, clean_num, clean_max, diamond}
+    def query_buy_clean(session: Session, req):
+        row = _player(session)
+        if row is None:
+            return _res("GodQueryBuyChapterCleanRes", max=0, used=0, clean_num=0,
+                        clean_max=0, diamond=0)
+        row = _today(int(row["id"]), now_of())
+        used = int(row["god_clean_used"])
+        return _res(
+            "GodQueryBuyChapterCleanRes", clean_num=used,
+            clean_max=used + _sweeps_left(row), **_buy_clean_fields(row),
+        )
+
+    # 5_2529 GodBuyChapterCleanReq {} -> {max, used, diamond}
+    def buy_clean(session: Session, req):
+        row = _player(session)
+        if row is None:
+            return _res("GodBuyChapterCleanRes", max=0, used=0, diamond=0)
+        pid = int(row["id"])
+        row = _today(pid, now_of())
+        fields = _buy_clean_fields(row)
+        bought, limit, price = fields["used"], fields["max"], fields["diamond"]
+        if bought >= limit:
+            _warn("5_2529", STATUS_CLEAN_BUY_MAX, f"{bought} of {limit} bought at VIP {row['vip']}")
+        elif int(row["diamond"]) < price:
+            _warn("5_2529", STATUS_NO_DIAMOND, f"needs {price} diamonds, has {row['diamond']}")
+        else:
+            db.spend(conn, pid, diamond=price)
+            conn.execute(
+                "UPDATE players SET god_clean_bought = god_clean_bought + 1 WHERE id = ?",
+                (pid,),
+            )
+            conn.commit()
+            row = _row(pid)
+            notify.player_changed(registry, session, {"diamond": int(row["diamond"])})
+            log.info("5_2529 player %d bought sweep %d for %d diamonds", pid, bought + 1, price)
+        return _res("GodBuyChapterCleanRes", **_buy_clean_fields(row))
+
+    # 5_2525 GodChapterCleanReq {chapter, times, silver_card, gold_card}
+    def sweep(session: Session, req):
+        chapter, times = int(req.chapter), int(req.times)
+        silver, gold = bool(req.silver_card), bool(req.gold_card)
+        res = registry.message_class("GodChapterCleanRes")(times=0)
+        row = _player(session)
+        if row is None:
+            log.warning("5_2525 before any character exists")
+            fill_required(res)
+            return res
+        pid, now = int(row["id"]), now_of()
+        row = db.refresh_energy(conn, cfg, _today(pid, now))
+        left = _sweeps_left(row)
+        res.times = left
+        info = cfg.chapter(chapter)
+        stages = cfg.stages_in_chapter(chapter) if info is not None else []
+        energy = times * sum(int(s["energy"] or 0) for s in stages)
+        card_cost = (var_int(cfg, "GOD_SILVER_CARD_COST") if silver else 0) + (
+            var_int(cfg, "GOD_GOLD_CARD_COST") if gold else 0)
+        diamond = times * len(stages) * card_cost
+        need = cfg.function_unlock(FUNCTION_GOD)
+        why = None
+        if int(row["level"]) < need:
+            why = STATUS_LEVEL, f"player level {row['level']} < {need}"
+        elif info is None or int(info["type"]) != CHAPTER_GOD:
+            why = STATUS_CLEAN_LOCKED, f"chapter {chapter} is not a divine-ruins chapter"
+        elif not chapter_cleared(conn, cfg, pid, chapter):
+            why = STATUS_CLEAN_LOCKED, f"chapter {chapter} is not fully cleared"
+        elif left <= 0:
+            why = STATUS_CLEAN_USED, "no sweep left today"
+        elif times < 1 or times > left:
+            why = STATUS_CLEAN_SHORT, f"times {times}, {left} left"
+        elif int(row["energy"]) < energy:
+            why = STATUS_NO_ENERGY, f"needs {energy} energy, has {row['energy']}"
+        elif int(row["diamond"]) < diamond:
+            why = STATUS_NO_DIAMOND, f"needs {diamond} diamonds, has {row['diamond']}"
+        if why is not None:
+            _warn(f"5_2525 chapter {chapter} x{times}", *why)
+            fill_required(res)
+            return res
+
+        # Per floor, every sweep's rolls in order: base, then silver, then gold.
+        base = [[] for _ in stages]
+        cards: dict[str, list[list]] = {"silver_card": [[] for _ in stages],
+                                       "gold_card": [[] for _ in stages]}
+        picked = [c for c, on in (("silver_card", silver), ("gold_card", gold)) if on]
+        for _ in range(times):
+            for i, stage in enumerate(stages):
+                base[i] += drops.roll(cfg, int(stage["invisible_drops"] or 0), rng=rng)
+                base[i] += drops.roll(cfg, int(stage["visible_drops"] or 0), rng=rng)
+                for column in picked:
+                    cards[column][i] += drops.roll(cfg, int(stage[column] or 0), rng=rng)
+        lists = [base] + [cards[c] for c in picked]
+        flat = [d for per_floor in lists for rolled in per_floor for d in rolled]
+        granted = item.grant_prizes(conn, cfg, pid, drops.as_triples(flat))
+        try:
+            if diamond:
+                db.spend(conn, pid, diamond=diamond)
+            db.spend_energy(conn, pid, energy)
+            mystery.on_energy_spent(conn, cfg, registry, session, pid, energy, rng=rng, now=now)
+            conn.execute(
+                "UPDATE players SET god_clean_used = god_clean_used + ? WHERE id = ?",
+                (times, pid),
+            )
+            conn.commit()
+            xp_change = db.add_player_xp(
+                conn, cfg, pid, times * sum(int(s["player_xp"] or 0) for s in stages)
+            )
+        except Exception:
+            log.error("5_2525 chapter %d x%d: prizes %s granted to player %d but a later "
+                      "write failed", chapter, times, drops.as_triples(flat), pid,
+                      exc_info=True)
+            raise
+
+        targets = [res.drops] + [
+            res.silver_drops if c == "silver_card" else res.gold_drops for c in picked
+        ]
+        for target, per_floor in zip(targets, lists):
+            for rolled in per_floor:
+                level_entry = target.add()
+                for prize in drops.to_prize_entries(registry, rolled):
+                    level_entry.drop.add().CopyFrom(prize)
+        # The same order as `flat`, which is what grant_prizes indexed.
+        item.mark_converted([d for t in targets for e in t for d in e.drop], granted)
+        res.times = _sweeps_left(_row(pid))
+        item.announce(registry, session, granted)
+        notify.items_changed(registry, session, granted["items"])
+        fresh = _row(pid)
+        notify.player_changed(registry, session, {
+            "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
+            "xp": int(fresh["xp"]), "level": int(fresh["level"]),
+            "energy": int(fresh["energy"]), "max_energy": int(fresh["max_energy"]),
+        })
+        if xp_change["levelled"]:
+            before, after = xp_change["before"], xp_change["after"]
+            notify.level_up(registry, session, (before[0], before[2], before[3]),
+                            (after[0], after[2], after[3]))
+        log.info("5_2525 player %d swept chapter %d x%d (cards %s): %d energy, %d "
+                 "diamonds, prizes %s", pid, chapter, times, picked, energy, diamond,
+                 drops.as_triples(flat))
+        fill_required(res)
+        return res
+
     return {
         (5, 2517): state,
+        (5, 2519): reset,
+        (5, 2521): query_buy_reset,
+        (5, 2523): buy_reset,
+        (5, 2525): sweep,
+        (5, 2527): query_buy_clean,
+        (5, 2529): buy_clean,
         (5, 2531): fight,
         (5, 2547): chest,
         (5, 2551): enter,

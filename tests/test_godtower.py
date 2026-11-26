@@ -255,3 +255,140 @@ def test_floor_without_chest_leaves_none(reg, world):
     _fight(reg, handlers, session, FLOOR1, 0)
     _fight(reg, handlers, session, FLOOR1, 1)
     assert int(_player(conn, pid)["last_god_chest"]) == 0
+
+
+# --- resets and sweeps ------------------------------------------------------
+# vip_info at VIP 8: 20120 free resets 4, 20150 reset buys 999, 20130 free
+# sweeps 2, 20140 sweep buys 0. At VIP 7 the reset buys are 0; at VIP 18 the
+# sweep buys are 10. GOD_LEVEL_RESET_COST = 100|2,200|3,..., GOD_CHAPTER_CLEAN_
+# COST = 1000|2,2000|2,...
+LAST_OF_CHAPTER1 = 5000900
+CHAPTER2 = 5010000
+
+
+def test_reset_tiers_and_limit(reg, settings, cfg, caplog):
+    conn, pid, handlers, session, _clock = _world(settings, cfg, reg, diamond=1000, vip=8)
+    state = _state(reg, handlers, session)
+    assert (state.balance, state.max) == (4, 4)
+    conn.execute("UPDATE players SET god_reset_used = 4, god_fight_status = 1 WHERE id = ?",
+                 (pid,))
+    conn.commit()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        _call(reg, handlers, session, 2519, "GodLevelResetReq")
+    assert "336002" in caplog.text
+    assert int(_player(conn, pid)["god_fight_status"]) == 1
+
+    q = _call(reg, handlers, session, 2521, "GodQueryBuyLevelResetReq")
+    assert (q.max, q.used, q.diamond) == (999, 0, 100)
+    prices = []
+    for _ in range(3):
+        before = int(_player(conn, pid)["diamond"])
+        res = _call(reg, handlers, session, 2523, "GodBuyLevelResetReq")
+        prices.append(before - int(_player(conn, pid)["diamond"]))
+    # Two at 100, then the 200 tier; the Res names the next price.
+    assert prices == [100, 100, 200] and (res.used, res.diamond) == (3, 200)
+    state = _state(reg, handlers, session)
+    assert (state.balance, state.max) == (3, 7)
+
+    conn.execute("UPDATE players SET god_rest_heroes = '[300000]', god_cd_until = ?"
+                 " WHERE id = ?", (int(T0) + 900, pid))
+    conn.commit()
+    _call(reg, handlers, session, 2519, "GodLevelResetReq")
+    state = _state(reg, handlers, session)
+    assert (state.fight_status, state.cd_time, state.balance) == (0, 0, 2)
+    assert list(state.heros) == []
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        _call(reg, handlers, session, 2519, "GodLevelResetReq")
+    assert "336011" in caplog.text and _state(reg, handlers, session).balance == 2
+
+
+def test_reset_buy_limit_at_vip7_refused_336003(reg, settings, cfg, caplog):
+    conn, pid, handlers, session, _clock = _world(settings, cfg, reg, diamond=1000, vip=7)
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        res = _call(reg, handlers, session, 2523, "GodBuyLevelResetReq")
+    assert "336003" in caplog.text and (res.max, res.used) == (0, 0)
+    assert int(_player(conn, pid)["diamond"]) == 1000
+
+
+def _clear_chapter1(conn, pid):
+    conn.execute("INSERT INTO levels (player_id, level, star) VALUES (?, ?, 1)",
+                 (pid, LAST_OF_CHAPTER1))
+    conn.commit()
+
+
+def test_sweep_with_gold_card_costs_1000(reg, settings, cfg, caplog):
+    conn, pid, handlers, session, _clock = _world(settings, cfg, reg, diamond=20000, vip=8)
+    q = _call(reg, handlers, session, 2527, "GodQueryBuyChapterCleanReq")
+    assert (q.clean_num, q.clean_max, q.max, q.used, q.diamond) == (0, 2, 0, 0, 1000)
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        res = _call(reg, handlers, session, 2525, "GodChapterCleanReq",
+                    chapter=CHAPTER1, times=1, gold_card=True)
+    assert "336007" in caplog.text and len(res.drops) == 0 and res.times == 2
+
+    _clear_chapter1(conn, pid)
+    before = _player(conn, pid)
+    res = _call(reg, handlers, session, 2525, "GodChapterCleanReq",
+                chapter=CHAPTER1, times=1, gold_card=True)
+    row = _player(conn, pid)
+    # The gold card is 1000 diamonds per floor, ten floors.
+    assert int(before["diamond"]) - int(row["diamond"]) == 10 * 1000
+    assert int(before["energy"]) - int(row["energy"]) == 10 * 6
+    assert len(res.drops) == 10 and len(res.gold_drops) == 10 and len(res.silver_drops) == 0
+    assert all(len(e.drop) == 2 for e in res.drops)      # invisible + visible
+    assert all(len(e.drop) == 1 for e in res.gold_drops)
+    assert res.times == 1
+    paid = _items(conn, pid)
+    for entry in list(res.drops) + list(res.gold_drops):
+        for prize in entry.drop:
+            assert paid[prize.refer] >= prize.amount
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        res = _call(reg, handlers, session, 2525, "GodChapterCleanReq",
+                    chapter=CHAPTER1, times=2)
+    assert "336006" in caplog.text and res.times == 1
+    _call(reg, handlers, session, 2525, "GodChapterCleanReq", chapter=CHAPTER1, times=1)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        res = _call(reg, handlers, session, 2525, "GodChapterCleanReq",
+                    chapter=CHAPTER1, times=1)
+    assert "336004" in caplog.text and res.times == 0
+    # A sweep of a chapter not yet climbed is refused even with sweeps left.
+    assert not godtower.chapter_cleared(conn, cfg, pid, CHAPTER2)
+
+
+def test_sweep_buys(reg, settings, cfg, caplog):
+    conn, pid, handlers, session, _clock = _world(settings, cfg, reg, diamond=5000, vip=18)
+    res = _call(reg, handlers, session, 2529, "GodBuyChapterCleanReq")
+    assert (res.max, res.used, res.diamond) == (10, 1, 1000)
+    res = _call(reg, handlers, session, 2529, "GodBuyChapterCleanReq")
+    assert (res.used, res.diamond) == (2, 2000)
+    assert int(_player(conn, pid)["diamond"]) == 3000
+    q = _call(reg, handlers, session, 2527, "GodQueryBuyChapterCleanReq")
+    assert (q.clean_num, q.clean_max) == (0, 4)
+    conn.execute("UPDATE players SET vip = 8 WHERE id = ?", (pid,))
+    conn.commit()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        _call(reg, handlers, session, 2529, "GodBuyChapterCleanReq")
+    assert "336005" in caplog.text and int(_player(conn, pid)["diamond"]) == 3000
+
+
+def test_day_reset_at_5am(reg, settings, cfg):
+    conn, pid, handlers, session, clock = _world(settings, cfg, reg, vip=8)
+    _state(reg, handlers, session)          # stamps today's god_day
+    conn.execute(
+        "UPDATE players SET god_reset_used = 4, god_reset_bought = 1, god_clean_used = 2,"
+        " god_clean_bought = 1, god_fight_status = 1 WHERE id = ?", (pid,),
+    )
+    conn.commit()
+    clock["now"] = datetime(2026, 11, 26, 4, 59).timestamp()
+    state = _state(reg, handlers, session)
+    assert (state.balance, state.max) == (1, 5)
+    clock["now"] = datetime(2026, 11, 26, 5, 0).timestamp()
+    state = _state(reg, handlers, session)
+    assert (state.balance, state.max) == (4, 4)
+    q = _call(reg, handlers, session, 2527, "GodQueryBuyChapterCleanReq")
+    assert (q.clean_num, q.clean_max, q.used) == (0, 2, 0)
+    # The day boundary rolls counters only; the climb itself stays.
+    assert state.fight_status == 1
