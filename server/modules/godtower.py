@@ -75,6 +75,16 @@ Resets and sweeps (commit 2):
   optional discount fields stay unset, which the client reads as none).
 - Every counter rolls at 05:00 (players.god_day, db.day_key(5)).
 
+The card draw (commit 3): 5_2543 GodDrawReq {idx 0..2} -> {drops, diamond}
+(NpcTowerCardUI.lua:265-267). Card idx is bit idx of is_draw; a turned card
+clears it (:64-67, 336010 when already turned). Bronze (0) is free, silver
+(1) costs GOD_SILVER_CARD_COST, gold (2) GOD_GOLD_CARD_COST diamonds
+(:232-253). The cards belong to the floor just cleared: the current floor
+when fight_status != 0 (the tower's last floor, no next one), else the one
+before it (:29-35). Bronze pays that floor's visible_drops (the ruling),
+silver its stage_info.silver_card, gold its gold_card. `diamond` carries
+the price paid: no Lua reads it.
+
 No God*Res has a `status` field (allProtos.proto:7853-8071), so a refusal
 changes nothing, logs a WARNING with its language.db code and answers the
 current state.
@@ -117,6 +127,7 @@ STATUS_CLEAN_SHORT = 336006     # language.db 章节扫荡次数不足
 STATUS_CLEAN_LOCKED = 336007    # language.db 不能扫荡该章节
 STATUS_CHEST_TAKEN = 336008     # language.db 宝箱已经领过了
 STATUS_RESTING = 336009         # language.db 这位英雄/女神正在休息中，不可出战
+STATUS_DRAWN = 336010           # language.db 已翻牌
 STATUS_NO_RESET_NEEDED = 336011 # language.db 当前未击败任何对手，无需重置
 STATUS_IN_CD = 336012           # language.db 战斗cd中
 STATUS_BAD_DATA = 336013        # language.db 数据异常,
@@ -126,6 +137,8 @@ CHAPTER_GOD = 8                 # chapter_info.type of 5000000-5190000
 DAY_START_HOUR = 5              # x07044, O-W3-9
 GROUP_COLUMNS = ("group0", "group1", "group2")
 ALL_CARDS = 0b111               # bronze, silver, gold (NpcTowerCardUI.lua:140-146)
+CARD_DROPS = ("visible_drops", "silver_card", "gold_card")
+CARD_COSTS = (None, "GOD_SILVER_CARD_COST", "GOD_GOLD_CARD_COST")
 
 VIP_FREE_RESETS = 20120         # vip_info 神器PVE关卡免费重置VIP次数
 VIP_FREE_CLEANS = 20130         # vip_info 神器PVE扫荡免费VIP次数
@@ -747,6 +760,61 @@ def handlers(
         fill_required(res)
         return res
 
+    # 5_2543 GodDrawReq {idx} -> GodDrawRes {drops, diamond}
+    def draw(session: Session, req):
+        idx = int(req.idx)
+        res = registry.message_class("GodDrawRes")()
+        row = _player(session)
+        if row is None:
+            log.warning("5_2543 before any character exists")
+            fill_required(res)
+            return res
+        pid = int(row["id"])
+        cards = int(row["god_is_draw"])
+        order = floors(cfg)
+        at = order.index(current_floor(cfg, row))
+        if int(row["god_fight_status"]) == 0:
+            at -= 1         # moved on: the cards are the previous floor's
+        why = None
+        if not 0 <= idx < len(CARD_DROPS):
+            why = STATUS_BAD_DATA, f"card {idx}"
+        elif not cards & (1 << idx):
+            why = STATUS_DRAWN, f"card {idx} is not on offer (is_draw {cards})"
+        elif at < 0:
+            why = STATUS_BAD_DATA, "no floor cleared yet"
+        if why is not None:
+            _warn(f"5_2543 player {pid}", *why)
+            fill_required(res)
+            return res
+        cost = var_int(cfg, CARD_COSTS[idx]) if CARD_COSTS[idx] else 0
+        if int(row["diamond"]) < cost:
+            _warn(f"5_2543 player {pid}", STATUS_NO_DIAMOND,
+                  f"card {idx} needs {cost} diamonds, has {row['diamond']}")
+            fill_required(res)
+            return res
+        stage = cfg.stage(order[at])
+        rolled = drops.roll(cfg, int(stage[CARD_DROPS[idx]] or 0), rng=rng)
+        granted = item.grant_prizes(conn, cfg, pid, drops.as_triples(rolled))
+        if cost:
+            db.spend(conn, pid, diamond=cost)
+        conn.execute("UPDATE players SET god_is_draw = ? WHERE id = ?",
+                     (cards & ~(1 << idx), pid))
+        conn.commit()
+        for prize in drops.to_prize_entries(registry, rolled):
+            res.drops.add().CopyFrom(prize)
+        item.mark_converted(res.drops, granted)
+        res.diamond = cost
+        item.announce(registry, session, granted)
+        notify.items_changed(registry, session, granted["items"])
+        fresh = _row(pid)
+        notify.player_changed(registry, session, {
+            "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
+        })
+        log.info("5_2543 player %d turned card %d of floor %d for %d diamonds: %s",
+                 pid, idx, order[at], cost, drops.as_triples(rolled))
+        fill_required(res)
+        return res
+
     return {
         (5, 2517): state,
         (5, 2519): reset,
@@ -756,6 +824,7 @@ def handlers(
         (5, 2527): query_buy_clean,
         (5, 2529): buy_clean,
         (5, 2531): fight,
+        (5, 2543): draw,
         (5, 2547): chest,
         (5, 2551): enter,
         (5, 2563): cd_reset,

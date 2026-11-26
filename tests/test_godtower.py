@@ -392,3 +392,50 @@ def test_day_reset_at_5am(reg, settings, cfg):
     assert (q.clean_num, q.clean_max, q.used) == (0, 2, 0)
     # The day boundary rolls counters only; the climb itself stays.
     assert state.fight_status == 1
+
+
+# --- the card draw ----------------------------------------------------------
+# Floor 1 (5000000): visible_drops 1500010 (bronze), silver_card 1510000,
+# gold_card 1520000; GOD_SILVER_CARD_COST 400, GOD_GOLD_CARD_COST 1000.
+
+
+def _draw(reg, handlers, session, idx):
+    return _call(reg, handlers, session, 2543, "GodDrawReq", idx=idx)
+
+
+def _pool(cfg, drop_id):
+    return {(r["drop_type"], r["item_id"], r["amount"])
+            for g in cfg.drop_groups(drop_id) for r in cfg.drop_rows(int(g["drop_group_id"]))}
+
+
+def test_draw_pays(reg, settings, cfg, caplog):
+    conn, pid, handlers, session, _clock = _world(settings, cfg, reg, diamond=1000)
+    _fight(reg, handlers, session, FLOOR1, 0)
+    assert _fight(reg, handlers, session, FLOOR1, 1).is_draw == 0b111
+
+    bronze = _draw(reg, handlers, session, 0)
+    got = [(d.category, d.refer, d.amount) for d in bronze.drops]
+    assert len(got) == 1 and got[0] in _pool(cfg, 1500010)
+    assert bronze.diamond == 0 and int(_player(conn, pid)["diamond"]) == 1000
+    assert _items(conn, pid)[got[0][1]] >= got[0][2]
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        assert len(_draw(reg, handlers, session, 0).drops) == 0
+    assert "336010" in caplog.text
+
+    gold = _draw(reg, handlers, session, 2)
+    got = [(d.category, d.refer, d.amount) for d in gold.drops]
+    assert len(got) == 1 and got[0] in _pool(cfg, 1520000)
+    assert gold.diamond == 1000 and int(_player(conn, pid)["diamond"]) == 0
+    assert int(_player(conn, pid)["god_is_draw"]) == 0b010
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        assert len(_draw(reg, handlers, session, 1).drops) == 0
+    assert "327938" in caplog.text and int(_player(conn, pid)["god_is_draw"]) == 0b010
+
+    # The next fight closes the offer (FunctionType.lua:323 copies is_draw).
+    assert _fight(reg, handlers, session, FLOOR2, 0).is_draw == 0
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="loa.godtower"):
+        _draw(reg, handlers, session, 1)
+    assert "336010" in caplog.text
