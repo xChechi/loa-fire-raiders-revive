@@ -189,6 +189,9 @@ Plan A and Plan B1 worlds are kept beside it as `data/player.db.*` backups
       `py -3.14 -m client.build_assets`, `client\android\gradlew.bat assembleRelease` (JAVA_HOME = Android
       Studio JBR), same keystore, sideload. Firewall rule on the Private profile only; never forward port 8112
       (the server has no authentication: anyone on the LAN who connects is the character).
+- [ ] **Wave 4: rune engraving (`5_2841`, O-W3-6).** Opens with the catacombs at level 68
+      (`RunePanel.lua:485-488`). `hero_rune_develop_info` has 51 rows (levels 0-50) on a full scan; `count(*)`
+      says 0 because of the broken autoindex (`docs/protocol-coverage-2026-11-25.md`).
 - [ ] Later: `.gitattributes`, `Registry.message_class` error type, `fake_client` docstring, commit-trailer
       uniformity (history rewrite is Stefan's call), DecodeError handling is done.
 
