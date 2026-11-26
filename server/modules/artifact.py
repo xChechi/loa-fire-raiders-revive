@@ -87,7 +87,7 @@ import sqlite3
 
 from server import db
 from server.config import Config
-from server.modules import item, notify
+from server.modules import hero, item, notify
 from server.modules.signet import ATTR_FIELDS
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
@@ -358,6 +358,15 @@ def handlers(
     def _locked(player) -> bool:
         return int(player["level"]) < cfg.function_unlock(FUNCTION_ARTIFACT)
 
+    def _heroes_changed(session: Session, pid: int) -> None:
+        """The equipped set is in every hero's unit (bonus, hero.wave3_bonus):
+        push each hero's unit stats and ability."""
+        for row in db.heroes_of(conn, pid):
+            fields = hero.hero_notify_fields_with_runes(
+                registry, cfg, row, hero.runes_of(conn, row), conn=conn
+            )
+            notify.hero_changed(registry, session, int(row["entry"]), fields)
+
     def _row(pid: int, artifact_id: int):
         return conn.execute(
             "SELECT * FROM artifacts WHERE id = ? AND player_id = ?", (int(artifact_id), pid)
@@ -444,6 +453,7 @@ def handlers(
         conn.execute("UPDATE artifacts SET hero = ? WHERE id = ?", (EQUIPPED, artifact_id))
         conn.commit()
         attrs_changed(registry, session, before, _sum(cfg, _equipped(conn, pid)))
+        _heroes_changed(session, pid)
         log.info("player %d equipped artifact %d (%d) at position %d",
                  pid, artifact_id, entry, position)
         return _main_res("ArtifactEquipRes", pid)
@@ -576,6 +586,7 @@ def handlers(
             "gold": int(fresh["gold"]), "artifact_smelt": int(fresh["artifact_smelt"]),
         })
         attrs_changed(registry, session, before, _sum(cfg, _equipped(conn, pid)))
+        _heroes_changed(session, pid)
         log.info("player %d: artifact %d +%d xp (%d absorbed, %d -> %d essence) level %d -> %d,"
                  " %d gold", pid, artifact_id, xp, absorbed, overflow, essence, level,
                  new_level, gold)
@@ -632,6 +643,7 @@ def handlers(
         notify.items_changed(registry, session, _amounts(pid, need))
         notify.player_changed(registry, session, {"gold": int(_player(session)["gold"])})
         attrs_changed(registry, session, before, _sum(cfg, _equipped(conn, pid)))
+        _heroes_changed(session, pid)
         log.info("player %d: artifact %d advanced %d -> %d for %d gold", pid, artifact_id,
                  entry, nxt, cost)
         return answer()

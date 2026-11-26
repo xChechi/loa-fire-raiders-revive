@@ -332,11 +332,10 @@ def handlers(
                 (*values, pid, entry, c),
             )
             conn.commit()
-            # The stats reach ClientHero.unit in C1; until then only ability.
-            fields = hero.hero_notify_fields_with_runes(
+            # The confirmed values are in ClientHero.unit (hero.wave3_bonus).
+            notify.hero_changed(registry, session, entry, hero.hero_notify_fields_with_runes(
                 registry, cfg, row, hero.runes_of(conn, row), conn=conn
-            )
-            notify.hero_changed(registry, session, entry, {"ability": fields["ability"]})
+            ))
             log.info("5_2705 hero %d constellation %d of player %d confirmed: %s",
                      entry, c, pid, values)
         elif insure == 1:

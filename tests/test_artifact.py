@@ -378,3 +378,56 @@ def test_crystals_are_every_class_133_item():
     finally:
         ro.close()
     assert tuple(int(r[0]) for r in rows) == artifact.CRYSTALS
+
+
+def _hero_stats(session) -> dict[int, dict]:
+    """{hero entry: {field: value}} merged over the ident-2 notifies."""
+    out: dict[int, dict] = {}
+    for m in _queued(session, 5, 2008):
+        if m.ident != notify.IDENT_HERO:
+            continue
+        names = [n for i, n in enumerate(notify.HERO_FIELDS) if m.flags >> i & 1]
+        out.setdefault(int(m.refer), {}).update(dict(zip(names, m.data)))
+    return out
+
+
+def test_equip_level_up_and_advance_push_every_heros_stats(world, reg, cfg):
+    """C1: the equipped set's attributes are in every hero's unit (artifact.
+    bonus), so 5_2541, 5_2537 and 5_2539 push all heroes' unit stats."""
+    from server.db import grant_hero
+    from server.modules import hero
+
+    conn, pid, handlers, session = world
+    grant_hero(conn, pid, 100000, 10, star=1, level=10)
+    grant_hero(conn, pid, 101000, 10, star=1, level=10)
+
+    def check():
+        stats = _hero_stats(session)
+        assert set(stats) == {100000, 101000}
+        for row in conn.execute("SELECT * FROM heroes WHERE player_id = ?", (pid,)):
+            want = hero.build_client_hero_with_runes(
+                reg, cfg, row, hero.runes_of(conn, row), conn=conn
+            )
+            assert want.unit != want.base_unit
+            for name in hero.STAT_NAMES:
+                got = stats[int(row["entry"])][name]
+                assert got == pytest.approx(getattr(want.unit, name)), name
+            assert stats[int(row["entry"])]["ability"] == want.ability
+        session.outbox.clear()
+
+    _give(conn, pid, DAGGER, 1)
+    _equip(handlers, session, reg, entry=DAGGER)
+    check()
+    aid = _rows(conn, pid)[0]["id"]
+    _give(conn, pid, CRYSTAL, 3)
+    _level_up(handlers, session, reg, aid, [(CRYSTAL, 2)])
+    check()
+    conn.execute("UPDATE artifacts SET level = 10 WHERE id = ?", (aid,))
+    conn.commit()
+    _give(conn, pid, STONE, 200)
+    _advance(handlers, session, reg, aid)
+    assert int(_rows(conn, pid)[0]["entry"]) == DAGGER1
+    check()
+    # A refused equip pushes no hero stats.
+    _equip(handlers, session, reg, entry=DAGGER)
+    assert _hero_stats(session) == {}

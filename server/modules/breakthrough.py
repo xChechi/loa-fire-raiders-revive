@@ -249,11 +249,12 @@ def handlers(
                 break
         if tries:
             notify.items_changed(registry, session, [(STONE_ITEM, _stones(pid))])
-            notify.hero_changed(registry, session, int(row["entry"]), {
-                "breakthrough_level": int(row["breakthrough_level"]),
-                "breakthrough_score": int(row["breakthrough_score"]),
-                "ability": _ability(row),
-            })
+            fields = hero_mod.hero_notify_fields_with_runes(
+                registry, cfg, row, hero_mod.runes_of(conn, row), conn=conn
+            )
+            fields["breakthrough_level"] = int(row["breakthrough_level"])
+            fields["breakthrough_score"] = int(row["breakthrough_score"])
+            notify.hero_changed(registry, session, int(row["entry"]), fields)
             log.info(
                 "hero %d of player %d: %d breakthrough tries, %dx %d, level %d score %d%s",
                 row["entry"], pid, tries, spent, STONE_ITEM, row["breakthrough_level"],

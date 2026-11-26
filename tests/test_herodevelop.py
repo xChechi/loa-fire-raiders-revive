@@ -312,3 +312,26 @@ def test_bonus_maps_property_ids(reg, cfg, world) -> None:
         "defence": 2 + 3, "magic_defence": 4, "max_hp": 20 + 30,
         "tenacity_base": 1, "power": 5, "magic": 5, "block_base": 7,
     }
+
+
+def test_confirm_pushes_the_full_hero_stats(reg, cfg, world) -> None:
+    """C1: the confirmed values reach ClientHero.unit, so the notify carries
+    every unit stat and ability, the numbers the login payload would send."""
+    from server.modules import hero
+
+    conn, pid, handlers, session = world
+    grant_item(conn, pid, STONE, 3)
+    _roll(reg, handlers, session, method=1)
+    session.outbox.clear()
+    _ensure(reg, handlers, session, 1)
+    [note] = _notifies(session, notify.IDENT_HERO)
+    names = [n for i, n in enumerate(notify.HERO_FIELDS) if note.flags >> i & 1]
+    fields = dict(zip(names, note.data))
+    row = heroes_of(conn, pid)[0]
+    built = hero.build_client_hero_with_runes(reg, cfg, row, hero.runes_of(conn, row), conn=conn)
+    for name in hero.STAT_NAMES:
+        assert fields[name] == pytest.approx(getattr(built.unit, name)), name
+    assert fields["ability"] == built.ability
+    # One roll from zero adds 2/2/20/1 (module docstring).
+    assert fields["defence"] == pytest.approx(built.base_unit.defence + 2)
+    assert fields["max_hp"] == built.base_unit.max_hp + 20

@@ -428,6 +428,15 @@ def handlers(
         fill_required(res)
         return res
 
+    def _hero_changed(session: Session, pid: int, entry: int, extra: dict) -> None:
+        """The worn signets are in ClientHero.unit (hero.wave3_bonus): push
+        every unit stat and ability with `extra`."""
+        row = _hero(pid, entry)
+        fields = hero_mod.hero_notify_fields_with_runes(
+            registry, cfg, row, hero_mod.runes_of(conn, row), conn=conn
+        )
+        notify.hero_changed(registry, session, entry, {**fields, **extra})
+
     def _locked(player) -> bool:
         need = cfg.function_unlock(FUNCTION_SIGNET)
         return int(player["level"]) < need
@@ -512,7 +521,7 @@ def handlers(
                     log.info("signet %d replaced on hero %d and destroyed", int(other["id"]), entry)
             conn.execute("UPDATE signets SET hero = ? WHERE id = ?", (entry, sid))
             conn.commit()
-            notify.hero_changed(registry, session, entry, {f"signet{part - 1}": sid})
+            _hero_changed(session, pid, entry, {f"signet{part - 1}": sid})
         return _res("SignetEquipRes")
 
     # 5_2735 SignetUnequipReq {hero_entry, signet_id} -> {}
@@ -532,7 +541,7 @@ def handlers(
         db.spend(conn, pid, diamond=cost)
         conn.execute("UPDATE signets SET hero = 0 WHERE id = ?", (sid,))
         conn.commit()
-        notify.hero_changed(registry, session, entry, {f"signet{int(info['part']) - 1}": 0})
+        _hero_changed(session, pid, entry, {f"signet{int(info['part']) - 1}": 0})
         notify.player_changed(registry, session, {"diamond": int(_row(conn, pid)["diamond"])})
         return _res("SignetUnequipRes")
 
@@ -601,6 +610,8 @@ def handlers(
             })
             log.info("player %d: signet %d %d level-up tries (%d diamonds), +%d -> +%d",
                      pid, sid, tries, diamonds, int(row["level"]), level)
+        if level != int(row["level"]) and int(row["hero"]):
+            _hero_changed(session, pid, int(row["hero"]), {})
         if tries and level == int(row["level"]):
             _warn(name, STATUS_FAILED, f"signet {sid} stays +{level} after {tries} tries")
         res = registry.message_class("SignetLevelUpRes")()

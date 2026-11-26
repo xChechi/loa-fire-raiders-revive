@@ -304,7 +304,7 @@ def test_equip_unequip_cost_by_star(reg, settings, cfg, world) -> None:
     unequip = lambda sid: h[(5, 2735)](session, reg.message_class("SignetUnequipReq")(hero_entry=HERO, signet_id=sid))
     equip(old).SerializeToString()
     assert int(_signet_row(conn, old)["hero"]) == HERO
-    assert _hero_values(session, HERO) == {"signet0": old}
+    assert _hero_values(session, HERO)["signet0"] == old
     # A second part-1 signet replaces the first, which is gone (fu00032).
     equip(new)
     assert _signet_row(conn, old) is None
@@ -313,7 +313,7 @@ def test_equip_unequip_cost_by_star(reg, settings, cfg, world) -> None:
     unequip(new).SerializeToString()                         # star 1: 20 diamonds
     assert int(_signet_row(conn, new)["hero"]) == 0
     assert int(find_player(conn, "stefan")["diamond"]) == 5000 - 20
-    assert _hero_values(session, HERO) == {"signet0": 0}
+    assert _hero_values(session, HERO)["signet0"] == 0
     assert _player_values(session, "diamond") == [5000 - 20]
     equip(star6)
     conn.execute("UPDATE players SET diamond = 999 WHERE id = ?", (pid,))
@@ -429,3 +429,43 @@ def test_bonus_sums_equipped_attrs(reg, settings, cfg, world) -> None:
     assert out["crit_base"] == pytest.approx(220)
     assert out["crit_damage_base"] == pytest.approx(220)
     assert "defence" not in out
+
+
+def test_equip_unequip_and_level_up_push_the_full_hero_stats(reg, settings, cfg, world) -> None:
+    """C1: a worn signet's attributes are in ClientHero.unit, so equip,
+    unequip and a level-up of a worn signet push every unit stat."""
+    from server.db import grant_hero
+    from server.modules import hero
+
+    conn, pid, _h, session = world
+    grant_hero(conn, pid, HERO, 10, star=1, level=10)
+    conn.execute("UPDATE players SET signet_essence = 1000 WHERE id = ?", (pid,))
+    conn.commit()
+    h = _sig_handlers(reg, settings, conn, cfg, FixedRng(0.5))
+    sid = _owned_signet(conn, cfg, pid, PART1)["id"]
+
+    def built():
+        row = conn.execute("SELECT * FROM heroes WHERE entry = ?", (HERO,)).fetchone()
+        return hero.build_client_hero_with_runes(
+            reg, cfg, row, hero.runes_of(conn, row), conn=conn
+        )
+
+    def check(extra: dict) -> None:
+        got, want = _hero_values(session, HERO), built()
+        for name in hero.STAT_NAMES:
+            assert got[name] == pytest.approx(getattr(want.unit, name)), name
+        assert got["ability"] == want.ability
+        for k, v in extra.items():
+            assert got[k] == v
+
+    h[(5, 2733)](session, reg.message_class("SignetEquipReq")(hero_entry=HERO, signet_id=sid))
+    check({"signet0": sid})
+    assert built().unit != built().base_unit
+    session.outbox.clear()
+    h[(5, 2737)](session, reg.message_class("SignetLevelUpReq")(signet_id=sid))
+    assert int(_signet_row(conn, sid)["level"]) == 1
+    check({})
+    session.outbox.clear()
+    h[(5, 2735)](session, reg.message_class("SignetUnequipReq")(hero_entry=HERO, signet_id=sid))
+    check({"signet0": 0})
+    assert built().unit == built().base_unit

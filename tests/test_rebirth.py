@@ -238,3 +238,17 @@ def test_bonus_growth_add_10pct(reg, settings, cfg, world) -> None:
     assert out["max_hp"] == pytest.approx(59 * float(growth["max_hp"]) * 0.1)
     assert out["power"] == pytest.approx(59 * float(growth["power"]) * 0.1)
     assert all(v != 0 for v in out.values())
+
+
+def test_rebirth_notify_carries_the_rebirth_bonus(reg, settings, cfg, world) -> None:
+    """C1: the notify's unit stats include rebirth.bonus at the new level."""
+    from server.modules import hero
+
+    conn, pid, hero_id, session = world
+    _run(reg, settings, conn, cfg, session)
+    fields = _decode(_notes(reg, session, IDENT_HERO)[0], HERO_FIELDS)
+    row = _hero(conn, hero_id)
+    built = hero.build_client_hero_with_runes(reg, cfg, row, hero.runes_of(conn, row), conn=conn)
+    for name in hero.STAT_NAMES:
+        assert fields[name] == pytest.approx(getattr(built.unit, name)), name
+    assert fields["max_hp"] > built.base_unit.max_hp

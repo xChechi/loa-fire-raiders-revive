@@ -113,9 +113,8 @@ def test_attempt_takes_8_stones_and_adds_4_to_8_score(reg, settings, cfg, world)
     assert _stones(conn, pid) == 4
     notes = _hero_notifies(reg, session)
     assert notes and notes[-1].refer == HERO
-    assert notes[-1].flags == flags_for(
-        ["ability", "breakthrough_level", "breakthrough_score"], HERO_FIELDS
-    )
+    want = flags_for(["ability", "breakthrough_level", "breakthrough_score"], HERO_FIELDS)
+    assert notes[-1].flags & want == want      # plus every unit stat (C1)
     res.SerializeToString()
 
 
@@ -341,3 +340,32 @@ def test_unstamped_world_keeps_its_scores(reg, settings, cfg, world) -> None:
     )
     res = handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
     assert res.breakthrough_score == 40
+
+
+def test_attempt_pushes_the_full_hero_stats(reg, settings, cfg, world) -> None:
+    """C1: a new breakthrough level changes the unit (bonus), so the notify
+    carries every unit stat next to the level, score and ability."""
+    from server.modules import hero
+
+    conn, pid, hero_id, session = world
+    grant_item(conn, pid, STONE, 20)
+    # score max_score - 8, then 8: p = 1 (test_score_at_max_succeeds).
+    top = int(cfg.hero_breakthrough(2)["max_score"])
+    conn.execute(
+        "UPDATE heroes SET breakthrough_level = 2, breakthrough_score = ? WHERE id = ?",
+        (top - 8, hero_id),
+    )
+    conn.commit()
+    handlers = _handlers(reg, settings, conn, cfg, FixedRng(8, 0.999999))
+    res = handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    assert res.state == 1
+    [note] = _hero_notifies(reg, session)
+    names = [n for i, n in enumerate(HERO_FIELDS) if note.flags >> i & 1]
+    fields = dict(zip(names, note.data))
+    row = _hero(conn, hero_id)
+    built = hero.build_client_hero_with_runes(reg, cfg, row, hero.runes_of(conn, row), conn=conn)
+    for name in hero.STAT_NAMES:
+        assert fields[name] == pytest.approx(getattr(built.unit, name)), name
+    assert fields["breakthrough_level"] == 3 and fields["breakthrough_score"] == 0
+    assert fields["ability"] == built.ability
+    assert fields["max_hp"] > built.base_unit.max_hp
