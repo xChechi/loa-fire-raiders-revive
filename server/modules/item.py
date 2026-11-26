@@ -3,8 +3,9 @@
 Categories are the client's own constants (ClientPlayer.lua:146-186) and are the
 same numbers as drop_base.drop_type: 1 gold, 2 energy, 9 diamond, 11 player xp,
 12 hero xp, 13 angel xp, 20 item, 30 hero, 40 angel, 51 arena coin, 52
-goddess-trial coin; Wave 3 adds 21 signet, 70 gve_money (blessing decompose),
-75 signet essence and 86 pet money. The thirteen this server can actually apply are below; any other one raises, because a reward that silently
+goddess-trial coin; Wave 3 adds 21 signet, 61 artifact smelt essence, 70
+gve_money (blessing decompose), 75 signet essence and 86 pet money. The
+fourteen this server can actually apply are below; any other one raises, because a reward that silently
 shrinks is worse than a crash in a log Stefan reads.
 
 There is no ClientItem message in allProtos.pb: an owned item is a ClientStock
@@ -46,13 +47,14 @@ CATEGORY_SIGNET = 21           # COST_MARK_TYPE, refer = signet_info.entry
 CATEGORY_SIGNET_ESSENCE = 75   # COST_SIGNET_TYPE 印记精华
 CATEGORY_PET_MONEY = 86        # PRIZE_PET_MONEY 神兽之魂 (ClientPlayer.lua:149,165,177)
 CATEGORY_GVE_MONEY = 70        # COST_GVE_TYPE (ClientPlayer.lua:157,666-667), blessing decompose
+CATEGORY_ARTIFACT_SMELT = 61   # ARTIFACT_COM_TYPE 神器精华 (ClientPlayer.lua:156,188,664-665)
 
 # The players column (and ClientPlayer / notify field) each coin lands on,
 # ClientPlayer.lua:150-151,652-655.
 COIN_FIELDS = {
     CATEGORY_ARENA_COIN: "arena_point", CATEGORY_ANGEL_TRY_COIN: "angel_money",
     CATEGORY_SIGNET_ESSENCE: "signet_essence", CATEGORY_PET_MONEY: "pet_money",
-    CATEGORY_GVE_MONEY: "gve_money",
+    CATEGORY_GVE_MONEY: "gve_money", CATEGORY_ARTIFACT_SMELT: "artifact_smelt",
 }
 
 STATUS_SIGNET_BAG_FULL = 338114  # language.db 印记数量达到上限，请先去清理
@@ -71,7 +73,7 @@ KNOWN_CATEGORIES = frozenset({
     CATEGORY_GOLD, CATEGORY_ENERGY, CATEGORY_DIAMOND, CATEGORY_PLAYER_XP,
     CATEGORY_ITEM, CATEGORY_HERO, CATEGORY_ANGEL, CATEGORY_ARENA_COIN,
     CATEGORY_ANGEL_TRY_COIN, CATEGORY_SIGNET, CATEGORY_SIGNET_ESSENCE,
-    CATEGORY_PET_MONEY, CATEGORY_GVE_MONEY,
+    CATEGORY_PET_MONEY, CATEGORY_GVE_MONEY, CATEGORY_ARTIFACT_SMELT,
 })
 
 
@@ -168,7 +170,7 @@ def grant_prizes(
     None without player xp; `angels` lists the angel entries granted;
     `converted` the indices into `prizes` of the hero prizes that arrived as
     soul stones (mark_converted flags them for the client); `coins` the new
-    absolute arena_point / angel_money / signet_essence / pet_money / gve_money, only for
+    absolute arena_point / angel_money / signet_essence / pet_money / gve_money / artifact_smelt, only for
     the ones a prize touched; `signets` the row id of every signet created.
     A signet grant that would pass SIGNET_MAX_NUMBER raises SignetBagFull
     before anything is written.

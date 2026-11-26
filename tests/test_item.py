@@ -419,6 +419,23 @@ def test_grant_category70_raises_gve_money_and_notifies(reg, cfg, conn) -> None:
     assert list(msg.data) == [125.0]
 
 
+def test_grant_category61_raises_artifact_smelt_and_notifies(reg, cfg, conn) -> None:
+    # ARTIFACT_COM_TYPE = 61 (ClientPlayer.lua:156,188, read :664-665); the
+    # smelt pays it (ArtifactComposeUI.lua:450-452).
+    from server.modules import item, notify
+
+    pid = create_player(conn, "stefan", "stefan", guide_id=0)
+    grant_prizes(conn, cfg, pid, [(61, 0, 30)])
+    out = grant_prizes(conn, cfg, pid, [(61, 0, 10)])
+    assert int(conn.execute("SELECT artifact_smelt FROM players").fetchone()[0]) == 40
+    assert out["coins"] == {"artifact_smelt": 40}
+    session = _session()
+    item.announce(reg, session, out)
+    (_service, _cmd, msg), = session.outbox
+    assert msg.flags == notify.flags_for(["artifact_smelt"])
+    assert list(msg.data) == [40.0]
+
+
 def test_every_wave3_stage_drop_category_is_grantable(cfg) -> None:
     """Every drop of the divine-ruins (8), demon-onslaught (12) and
     master-dungeon (13) stages passes grant_prizes' vetting, and the
