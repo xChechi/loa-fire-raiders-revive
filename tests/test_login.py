@@ -531,3 +531,28 @@ def test_login_hero_payload_carries_the_rune_stats(reg, settings, cfg) -> None:
     assert sent.unit == expected.unit
     assert sent.unit != plain.unit
     assert sent.base_unit == plain.base_unit
+
+
+# Every IMPL/ANS Req of the Wave 3 Phase B inventory (plan 2026-11-26,
+# "Req inventory"); 5_2201/5_2203 on type-13 stages ride level.py's keys.
+WAVE3_IDS = [
+    (5, 2571), (5, 2573), (5, 2575), (5, 2577), (5, 2597), (5, 2671),
+    (5, 2701), (5, 2703), (5, 2705),
+    (5, 2727), (5, 2729), (5, 2731),
+    (5, 2909), (5, 2911), (5, 2913),
+    (5, 2621), (5, 2733), (5, 2735), (5, 2737), (5, 2739), (5, 2805),
+    (5, 2811), (5, 2813), (5, 2815),
+    (5, 2695),
+    *[(5, cmd) for cmd in (2517, 2519, 2521, 2523, 2525, 2527, 2529, 2531, 2543,
+                           2547, 2551, 2563)],
+    *[(5, cmd) for cmd in (2533, 2535, 2537, 2539, 2541, 2545, 2549, 2553, 2555)],
+    (5, 2779), (5, 2781), (5, 2783), (5, 2785), (5, 2803),
+]
+
+
+def test_build_handlers_covers_wave3_ids(reg, settings) -> None:
+    from server.__main__ import build_handlers
+
+    assert len(WAVE3_IDS) == len(set(WAVE3_IDS)) == 51
+    handlers = build_handlers(reg, settings)
+    assert [k for k in WAVE3_IDS if k not in handlers] == []

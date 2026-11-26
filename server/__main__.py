@@ -10,8 +10,10 @@ from pathlib import Path
 from server import db
 from server.config import Config
 from server.modules import (
-    activity, angel, angeltrial, bag, buy, chat, checkin, events, gacha, goldtrial,
-    guide, hero, herotrial, level, login, mail, player, rune, shop, team, train,
+    activity, angel, angeladvance, angelglory, angeltrial, artifact, bag, bless,
+    breakthrough, buy, chat, checkin, events, gacha, godtower, goldtrial, guide,
+    hero, herodevelop, herotrial, level, login, mail, mojun, player, rebirth, rune,
+    shop, signet, team, train,
 )
 from server.net.registry import Registry
 from server.net.server import Server
@@ -81,6 +83,16 @@ def build_handlers(registry: Registry, settings) -> dict:
     handlers.update(herotrial.handlers(registry, settings, conn, cfg))
     handlers.update(angeltrial.handlers(registry, settings, conn, cfg))
     handlers.update(rune.handlers(registry, settings, conn, cfg))
+    handlers.update(bless.handlers(registry, settings, conn, cfg))
+    handlers.update(herodevelop.handlers(registry, settings, conn, cfg))
+    handlers.update(mojun.handlers(registry, settings, conn, cfg))
+    handlers.update(angelglory.handlers(registry, settings, conn, cfg))
+    handlers.update(signet.handlers(registry, settings, conn, cfg))
+    handlers.update(breakthrough.handlers(registry, settings, conn, cfg))
+    handlers.update(rebirth.handlers(registry, settings, conn, cfg))
+    handlers.update(godtower.handlers(registry, settings, conn, cfg))
+    handlers.update(artifact.handlers(registry, settings, conn, cfg))
+    handlers.update(angeladvance.handlers(registry, settings, conn, cfg))
     return handlers
 
 
