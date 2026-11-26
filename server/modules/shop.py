@@ -48,6 +48,7 @@ STATUS_MERCHANT_GONE = 329986        # language.db 商人已经消失
 
 OP_REFRESH = 2
 NO_DISCOUNT = 100
+CHAPTER_DIVINE_RUINS = 8   # chapter_info.type every unlock_chapter belongs to
 
 # Only these two currencies are tracked in Wave 1 (players.gold/diamond).
 CURRENCY_GOLD = item.CATEGORY_GOLD
@@ -74,12 +75,20 @@ def refresh_cost(cost: str, paid_before: int) -> int:
 
 
 def _highest_cleared_chapter(conn: sqlite3.Connection, cfg: Config, pid: int) -> int:
+    """The highest cleared divine-ruins chapter. No Lua reads
+    merchandise_info.unlock_chapter; every non-zero value (store 11 神器商店,
+    5010000-5150000) is a chapter_info type-8 entry, the divine ruins that
+    the artifact get-path lists (ArtifactGetPathItem.lua:99,
+    AssistantData.lua:907). Other chapter types (mojun 8010000+) do not count."""
     best = 0
     for row in db.levels_of(conn, pid):
         if int(row["star"]) <= 0:
             continue
         stage = cfg.stage(int(row["level"]))
-        if stage is not None:
+        if stage is None:
+            continue
+        chapter = cfg.chapter(int(stage["chapter"]))
+        if chapter is not None and int(chapter["type"]) == CHAPTER_DIVINE_RUINS:
             best = max(best, int(stage["chapter"]))
     return best
 

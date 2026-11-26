@@ -380,3 +380,36 @@ def test_send_away_then_query_refused_329986_and_queues_5_2022_store7(reg, legen
     res = _query(reg, handlers, session, store=7)
     assert res.status == 329986
     assert [(s, c, m.store) for (s, c, m) in session.outbox] == [(5, 2022, 7)]
+
+
+# --- store 11 (神器商店): unlock_chapter is a divine-ruins (type 8) chapter --
+
+
+def _store11_unlocks(conn, cfg) -> set[int]:
+    """unlock_chapter of every store-11 row generate_slots may pick."""
+    from server.db import find_player
+
+    store_row = {"entry": 11, "merchandise_amount": 10_000}
+    slots = shop.generate_slots(conn, cfg, find_player(conn, "stefan"), store_row,
+                                random.Random(1))
+    by_entry = {int(r["entry"]): int(r["unlock_chapter"] or 0) for r in cfg.merchandise(11)}
+    return {by_entry[s["merchandise"]] for s in slots}
+
+
+def test_mojun_win_does_not_unlock_store11_items(cfg, world) -> None:
+    """Mojun stages sit in type-12 chapters 8010000+, above every store-11
+    unlock_chapter (5010000-5150000)."""
+    from server.db import upsert_level
+
+    conn, pid, _handlers, _session = world
+    upsert_level(conn, pid, 8010100, star=3)
+    assert _store11_unlocks(conn, cfg) == {0}
+
+
+def test_divine_ruins_clear_unlocks_its_chapter_only(cfg, world) -> None:
+    from server.db import upsert_level
+
+    conn, pid, _handlers, _session = world
+    upsert_level(conn, pid, 5010000, star=1)          # first stage of 第2章
+    upsert_level(conn, pid, 8010100, star=3)
+    assert _store11_unlocks(conn, cfg) == {0, 5010000}
