@@ -3,6 +3,7 @@
 
 import logging
 import random
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -267,3 +268,76 @@ def test_bonus_is_grow_add_of_the_level_growth(reg, settings, cfg, world) -> Non
     # level 10 = nine growth steps, grow_add 0.3 at breakthrough level 3
     assert out["max_hp"] == pytest.approx(9 * float(growth["max_hp"]) * 0.3)
     assert all(v != 0 for v in out.values())
+
+
+# --- the Monday 05:00 score reset (h12024, RoleBreakthroughPanel.lua:635-637) --
+
+# Local time, like db.day_key: Monday 30-11-2026 and the week before it.
+MONDAY_0459 = datetime(2026, 11, 30, 4, 59).timestamp()
+MONDAY_0500 = datetime(2026, 11, 30, 5, 0).timestamp()
+LAST_WEEK = datetime(2026, 11, 26, 12, 0).timestamp()      # Thursday
+
+
+def _scored_last_week(reg, settings, conn, cfg, pid, hero_id, session):
+    """Level 3, score 40, written on Thursday 26-11-2026 (an attempt then
+    stamps that week); no stones, so the later attempts only read."""
+    clock = {"now": LAST_WEEK}
+    handlers = breakthrough.handlers(
+        reg, settings, conn, cfg, rng=FixedRng(6, 0.99), clock=lambda: clock["now"]
+    )
+    handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    conn.execute(
+        "UPDATE heroes SET breakthrough_level = 3, breakthrough_score = 40 WHERE id = ?",
+        (hero_id,),
+    )
+    conn.commit()
+    return handlers, clock
+
+
+def test_score_from_last_week_is_zero_after_monday_0500(reg, settings, cfg, world) -> None:
+    conn, pid, hero_id, session = world
+    handlers, clock = _scored_last_week(reg, settings, conn, cfg, pid, hero_id, session)
+    clock["now"] = MONDAY_0500
+    res = handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    assert (res.breakthrough_level, res.breakthrough_score) == (3, 0)
+    row = _hero(conn, hero_id)
+    assert (int(row["breakthrough_level"]), int(row["breakthrough_score"])) == (3, 0)
+
+
+def test_score_kept_on_monday_0459(reg, settings, cfg, world) -> None:
+    conn, pid, hero_id, session = world
+    handlers, clock = _scored_last_week(reg, settings, conn, cfg, pid, hero_id, session)
+    clock["now"] = MONDAY_0459
+    res = handlers[(5, 2815)](session, reg.message_class("HeroBreakthroughAutoReq")(entry=HERO))
+    assert (res.breakthrough_level, res.breakthrough_score) == (3, 40)
+
+
+def test_reset_clears_every_hero_once_per_week(reg, settings, cfg, world) -> None:
+    """RoleData:clearAllHerosBreakScore clears every hero (RoleData.lua:
+    2509-2520); a score earned after the reset survives the same week."""
+    conn, pid, hero_id, session = world
+    other = grant_hero(conn, pid, 101000, 10, star=1, level=10)
+    handlers, clock = _scored_last_week(reg, settings, conn, cfg, pid, hero_id, session)
+    conn.execute("UPDATE heroes SET breakthrough_score = 25 WHERE id = ?", (other,))
+    conn.commit()
+    clock["now"] = MONDAY_0500
+    handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    assert int(_hero(conn, other)["breakthrough_score"]) == 0
+    conn.execute("UPDATE heroes SET breakthrough_score = 7 WHERE id = ?", (hero_id,))
+    conn.commit()
+    clock["now"] = MONDAY_0500 + 3 * 86400
+    res = handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    assert res.breakthrough_score == 7
+
+
+def test_unstamped_world_keeps_its_scores(reg, settings, cfg, world) -> None:
+    """A world from before the stamp (breakthrough_week '') is stamped, not
+    cleared: its scores are taken as this week's."""
+    conn, pid, hero_id, session = world
+    conn.execute("UPDATE heroes SET breakthrough_score = 40 WHERE id = ?", (hero_id,))
+    conn.commit()
+    handlers = breakthrough.handlers(
+        reg, settings, conn, cfg, rng=FixedRng(6, 0.99), clock=lambda: MONDAY_0500
+    )
+    res = handlers[(5, 2813)](session, reg.message_class("HeroBreakthroughReq")(entry=HERO))
+    assert res.breakthrough_score == 40

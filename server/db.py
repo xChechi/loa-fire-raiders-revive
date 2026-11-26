@@ -362,6 +362,9 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # what blessing decompose pays; sent as ClientPlayer.guildlevel_point
     # (ClientPlayer.lua:436).
     ("players", "gve_money", "INTEGER NOT NULL DEFAULT 0"),
+    # A5b: breakthrough.week_key (the Monday of the 05:00 week) the heroes'
+    # breakthrough_score belong to; '' = never stamped (h12024).
+    ("players", "breakthrough_week", "TEXT NOT NULL DEFAULT ''"),
 )
 
 

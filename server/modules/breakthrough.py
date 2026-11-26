@@ -28,9 +28,13 @@ What the client reads (the spec):
   a shortfall logs a WARNING with the code it would have used and answers the
   current state.
 
-Not done here: h12024 "突破值每周一凌晨5点清空" (RoleBreakthroughPanel.lua:
-635-637) says the score clears every Monday 05:00; RoleData:
-clearAllHerosBreakScore (RoleData.lua:2509-2520) has no caller in the Lua.
+Weekly reset: h12024 "突破值每周一凌晨5点清空" (RoleBreakthroughPanel.lua:
+635-637) clears the score every Monday 05:00, for every hero
+(RoleData:clearAllHerosBreakScore, RoleData.lua:2509-2520, which has no
+caller in the Lua). It runs lazily before every attempt: players.
+breakthrough_week holds the week_key the scores belong to; on a new week
+every hero's breakthrough_score goes to 0 and the level stays. A world from
+before the stamp ('') is stamped, not cleared.
 
 Success rule (O-W3-8, owner's default): each try pays the stones and adds
 randint(breakthrough_min, breakthrough_max) to the score; it succeeds when
@@ -49,6 +53,8 @@ from __future__ import annotations
 import logging
 import random
 import sqlite3
+import time
+from datetime import date, timedelta
 
 from server import db
 from server.config import Config, parse_rate_ladder
@@ -67,6 +73,36 @@ STATUS_NO_HERO = 327941              # 英雄不存在
 STATUS_NOT_ENOUGH_ITEMS = 327942     # 没有足够道具
 STATUS_FUNCTION_LOCKED = 327957      # 未满足此玩法的等级
 STATUS_TOP_LEVEL = 339174            # 已达最大突破等级
+
+WEEK_START_HOUR = 5                  # h12024 每周一凌晨5点
+
+
+def week_key(now: float) -> str:
+    """The ISO date of the Monday that starts `now`'s week, the week turning
+    at Monday 05:00 (the 05:00 day of db.day_key, back to its Monday)."""
+    day = date.fromisoformat(db.day_key(WEEK_START_HOUR, now))
+    return (day - timedelta(days=day.weekday())).isoformat()
+
+
+def ensure_week(conn: sqlite3.Connection, pid: int, now: float) -> None:
+    """Zero every hero's breakthrough_score when the stored week is an
+    earlier one; '' (never stamped) is only stamped."""
+    week = week_key(now)
+    row = conn.execute(
+        "SELECT breakthrough_week FROM players WHERE id = ?", (int(pid),)
+    ).fetchone()
+    stored = row["breakthrough_week"] if row is not None else week
+    if stored == week:
+        return
+    if stored:
+        conn.execute(
+            "UPDATE heroes SET breakthrough_score = 0 WHERE player_id = ?", (int(pid),)
+        )
+        log.info("player %d: breakthrough scores cleared for the week of %s", pid, week)
+    conn.execute(
+        "UPDATE players SET breakthrough_week = ? WHERE id = ?", (week, int(pid))
+    )
+    conn.commit()
 
 
 def success_rate(row, score: int) -> float:
@@ -112,8 +148,10 @@ def handlers(
     conn: sqlite3.Connection,
     cfg: Config,
     rng: random.Random | None = None,
+    clock=None,
 ) -> dict[tuple[int, int], Handler]:
     rand = rng or random.Random()
+    now_of = clock or time.time
 
     def _player(session: Session):
         if session.player_id is not None:
@@ -177,6 +215,7 @@ def handlers(
     def _run(session: Session, req, name: str, auto: bool):
         player = _player(session)
         pid = int(player["id"])
+        ensure_week(conn, pid, now_of())
         row = _hero(pid, req.entry)
         if row is None:
             _warn(name, STATUS_NO_HERO, f"hero {req.entry}")
