@@ -571,3 +571,26 @@ def test_bought_signet_fights_above_the_cap_survive_login(reg, cfg, row) -> None
     )
     conn.commit()
     assert _query(reg, cfg, conn).player.signet_fight_cnt == 20 + 3
+
+
+def test_login_hero_carries_its_worn_signets_by_part(reg, cfg, row) -> None:
+    """ClientHero.signets is "该英雄镶嵌的印记id数组" (ClientHero.lua:166),
+    indexed by signet_info.part 1..4 (StampUI.lua:270, HeroEquipStampView
+    .lua:33-49; ClientHero:updateByFields writes signet0..3 into [1]..[4]),
+    0 for an empty part."""
+    from server.db import add_signet
+
+    conn, r = row
+    pid = int(r["id"])
+    grant_hero(conn, pid, 100000, 10, star=1, level=52)
+    grant_hero(conn, pid, 101000, 10, star=1, level=52)
+    part1 = add_signet(conn, pid, 10101011)        # part 1
+    part2 = add_signet(conn, pid, 10101032)        # part 2
+    bag = add_signet(conn, pid, 10101021)          # part 1, not worn
+    conn.execute("UPDATE signets SET hero = 100000 WHERE id IN (?, ?)", (part1, part2))
+    conn.commit()
+    assert int(cfg.signet(10101032)["part"]) == 2
+    heroes = {h.entry: h for h in _query(reg, cfg, conn).heroes}
+    assert list(heroes[100000].signets) == [part1, part2, 0, 0]
+    assert list(heroes[101000].signets) == [0, 0, 0, 0]
+    assert bag not in heroes[100000].signets

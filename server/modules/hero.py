@@ -54,6 +54,7 @@ SPELL_FIELDS = ("skill0", "skill1", "skill2", "skill3", "skill4")
 UNIT_TYPE_NPC = 3
 
 GEAR_SLOTS = 6
+SIGNET_PARTS = 4                     # signet_info.part 1..4 (ClientHero.lua:352-366)
 
 
 def quality_row_for(cfg: Config, entry: int, quality: int) -> sqlite3.Row:
@@ -259,6 +260,19 @@ def build_client_hero_with_runes(
     msg.items.extend(gear_slots(row))
     for idx, (rune_level, rune_val) in enumerate(runes):
         msg.runes.add(idx=idx, level=rune_level, rune_val=rune_val)
+    if conn is not None:
+        # "该英雄镶嵌的印记id数组" (ClientHero.lua:166), indexed by part
+        # (StampUI.lua:270), 0 for an empty part.
+        signets = [0] * SIGNET_PARTS
+        for worn in conn.execute(
+            "SELECT id, entry FROM signets WHERE player_id = ? AND hero = ? ORDER BY id",
+            (int(row["player_id"]), entry),
+        ):
+            info = cfg.signet(int(worn["entry"]))
+            if info is None:
+                raise KeyError(f"signet_info has no row for worn signet {worn['entry']}")
+            signets[int(info["part"]) - 1] = int(worn["id"])
+        msg.signets.extend(signets)
     msg.model = 0
     msg.awaken = 0
     # "历史最高等级" (ClientHero.lua:164): a rebirth keeps the old level in
