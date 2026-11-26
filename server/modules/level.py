@@ -10,6 +10,15 @@ LevelIntoRes has no status field (fields: drop, urandom, flag, star), so a
 refusal is flag: 1 makes the client float z00224 and reopen the campaign UI,
 2 floats z00225 (LevelLine.lua:37-60). The real language.db code goes to the
 log, which is the only place it can be said.
+
+Master dungeon (王者副本, chapter_info type 13, Wave 3 B5): its frontier is
+last_signet (LevelManager.lua:444-457), the tab opens at function 80020
+(LevelTab.lua:43-47,84-87). An entry costs one signet fight instead of energy
+(stage energy is 0) and a sweep of n costs n (DesSweepPanel.lua:449-453,
+576-579). The client advances its own frontier on a win (LevelManager.lua:
+641-655) and last_signet is not a ClientPlayer notify field, so only
+signet_fight_cnt is pushed. Drops are category-21 signets: each one gets
+5_2742; a full bag mails them (101200) and pushes 5_2744.
 """
 
 from __future__ import annotations
@@ -21,7 +30,7 @@ import time
 
 from server import db
 from server.config import Config
-from server.modules import drops, events, hero, item, mystery, notify
+from server.modules import drops, events, hero, item, mystery, notify, signet
 from server.modules.player import _end_of_today
 from server.net.registry import Registry
 from server.net.server import Handler, Session, fill_required
@@ -47,6 +56,7 @@ STATUS_RESET_LIMIT = 328202         # language.db 达到关卡重置限制
 STATUS_NOT_ENOUGH_DIAMOND = 327938  # language.db 钻石不足
 STATUS_MAX_TIMES = 328195           # language.db 已经达到最大次数
 STATUS_NOT_ENOUGH_ITEM = 327942     # language.db 没有足够道具
+STATUS_LEVEL = 327957               # language.db 未满足此玩法的等级
 
 # item_info 1300 精英扫荡券: 10 of them sweep an elite stage once
 # (CLEAN_ELITE_ITEM_NUM_EVERYTIME), up to CLEAN_ELITE_TIMES_LIMIT a day.
@@ -66,6 +76,8 @@ def roll_urandom(rng: random.Random | None = None) -> list[int]:
 
 
 CHAPTER_ELITE = 2   # chapter_info.type of the elite chapters 110000-127000
+CHAPTER_SIGNET = 13  # the master dungeon, chapters 9001000-9010000
+FUNCTION_MASTER_DUNGEON = 80020     # 王者副本 (LevelTab.lua:43)
 
 
 def chapter_type(cfg: Config, lvl: int) -> int:
@@ -77,8 +89,11 @@ def chapter_type(cfg: Config, lvl: int) -> int:
 
 def frontier(cfg: Config, row: sqlite3.Row, type_: int = 1) -> int:
     """The one stage the player may newly clear. Elite chapters follow
-    last_elite, the rest last_level (LevelManager.lua:409-444)."""
+    last_elite, the master dungeon last_signet, the rest last_level
+    (LevelManager.lua:409-457)."""
     column = "last_elite" if type_ == CHAPTER_ELITE else "last_level"
+    if type_ == CHAPTER_SIGNET:
+        column = "last_signet"
     last = int(row[column])
     return cfg.next_stage(last) if last else cfg.first_stage(type_)
 
@@ -148,6 +163,38 @@ def _required(stage: sqlite3.Row, column: str, lvl: int) -> int:
     return int(value)
 
 
+def _grant_stage_prizes(
+    conn: sqlite3.Connection, cfg: Config, player_id: int, prizes
+) -> tuple[dict, bool]:
+    """item.grant_prizes, except that signets a full bag cannot take go to
+    mail 101200 (fu00073 "印记已满，请到邮件中领取！"). True when they did."""
+    try:
+        return item.grant_prizes(conn, cfg, player_id, prizes), False
+    except item.SignetBagFull:
+        keep = [i for i, p in enumerate(prizes) if int(p[0]) != item.CATEGORY_SIGNET]
+        granted = item.grant_prizes(conn, cfg, player_id, [prizes[i] for i in keep])
+        granted["converted"] = [keep[i] for i in granted["converted"]]
+        mailed = [p for p in prizes if int(p[0]) == item.CATEGORY_SIGNET]
+        granted["mails"].append(
+            signet.mail_signets(conn, cfg, player_id, mailed, int(time.time()))
+        )
+        log.warning("player %d: signet bag full (%d), %d signet(s) mailed",
+                    player_id, signet.STATUS_BAG_FULL, len(mailed))
+        return granted, True
+
+
+def _mark_signets(entries, granted: dict) -> None:
+    """ClientPrizeExtra.signet_id of each category-21 entry, in grant order:
+    TipDrop.lua:65-73 finds the dropped signet by it."""
+    ids = iter(granted["signets"])
+    for entry in entries:
+        signet_id = next(ids, 0) if entry.category == item.CATEGORY_SIGNET else 0
+        if signet_id:
+            # extra.type is required; 0 is "not converted" (mark_converted).
+            entry.extra.type = entry.extra.type
+            entry.extra.signet_id = signet_id
+
+
 def handlers(
     registry: Registry,
     settings: Settings,
@@ -192,6 +239,19 @@ def handlers(
         maxcount = int(stage["maxcount"] or 0)
         if maxcount and progress is not None and int(progress["count"]) >= maxcount:
             return _refused(FLAG_MAX_TIMES, star=int(progress["star"]))
+        master = chapter_type(cfg, lvl) == CHAPTER_SIGNET
+        if master:
+            need = cfg.function_unlock(FUNCTION_MASTER_DUNGEON)
+            if int(row["level"]) < need:
+                log.warning("5_2201 stage %d needs level %d, player is %d (%d)",
+                            lvl, need, int(row["level"]), STATUS_LEVEL)
+                return _refused(FLAG_STAGE_CHANGED)
+            if signet.settle_fights(conn, cfg, int(row["id"])) < 1:
+                log.warning("5_2201 stage %d: no signet fight left (%d)",
+                            lvl, signet.STATUS_NO_FIGHTS)
+                return _refused(
+                    FLAG_MAX_TIMES, star=0 if progress is None else int(progress["star"])
+                )
 
         cost = _required(stage, "energy", lvl)
         if int(row["energy"]) < cost:
@@ -208,6 +268,7 @@ def handlers(
         if cost:
             db.spend_energy(conn, int(row["id"]), cost)
             mystery.on_energy_spent(conn, cfg, registry, session, int(row["id"]), cost)
+        fights_left = signet.spend_fights(conn, cfg, int(row["id"]), 1) if master else None
         visible = drops.roll(cfg, _required(stage, "visible_drops", lvl), rng=rng)
         invisible = drops.roll(cfg, _required(stage, "invisible_drops", lvl), rng=rng)
         # One flat list for the whole entry: level_out grants it all at once.
@@ -226,7 +287,10 @@ def handlers(
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (int(row["id"]),)
         ).fetchone()
-        notify.player_changed(registry, session, {"energy": int(fresh["energy"])})
+        changed = {"energy": int(fresh["energy"])}
+        if fights_left is not None:
+            changed["signet_fight_cnt"] = fights_left
+        notify.player_changed(registry, session, changed)
         log.info(
             "stage %d entered by player %d, %d energy spent, visible drops %s,"
             " invisible %s",
@@ -259,10 +323,12 @@ def handlers(
         rolled = pending.pop(lvl)
         player_id = int(row["id"])
         elite = chapter_type(cfg, lvl) == CHAPTER_ELITE
+        master = chapter_type(cfg, lvl) == CHAPTER_SIGNET
         star = max(0, min(3, int(req.star)))
         won = star > 0
 
         granted = {"gold": int(row["gold"]), "diamond": int(row["diamond"]), "items": []}
+        mailed = False
         hero_xp: list[tuple[int, int, int]] = []
         levels_before: dict[int, int] = {}
         angel_xp: tuple[int, int] | None = None
@@ -275,7 +341,7 @@ def handlers(
             # runs before this handler's own irreversible writes (Task 11). If
             # it raises, the pending entry goes back and the retry can replay.
             try:
-                granted = item.grant_prizes(conn, cfg, player_id, prizes)
+                granted, mailed = _grant_stage_prizes(conn, cfg, player_id, prizes)
             except Exception:
                 pending[lvl] = rolled
                 raise
@@ -309,7 +375,13 @@ def handlers(
                         (lvl, player_id),
                     )
                     conn.commit()
-                elif not elite and lvl == frontier(cfg, row):
+                elif master and lvl == frontier(cfg, row, CHAPTER_SIGNET):
+                    conn.execute(
+                        "UPDATE players SET last_signet = ? WHERE id = ?",
+                        (lvl, player_id),
+                    )
+                    conn.commit()
+                elif not elite and not master and lvl == frontier(cfg, row):
                     db.set_last_level(conn, player_id, lvl)
         except Exception:
             log.error(
@@ -329,6 +401,9 @@ def handlers(
             gold_entry.refer = 0
             gold_entry.amount = int(stage["gold"] or 0)
             item.mark_converted(res.drop, granted)
+            _mark_signets(res.drop, granted)
+            if mailed:
+                res.if_mail = True
 
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (player_id,)
@@ -354,6 +429,9 @@ def handlers(
             # First, so the absolute player values below are the last word.
             item.announce(registry, session, granted)
             notify.items_changed(registry, session, granted["items"])
+            signet.obtained(registry, conn, cfg, session, granted["signets"], rng)
+            if mailed:
+                signet.bag_full(registry, session)
             changed = {
                 "gold": int(fresh["gold"]), "diamond": int(fresh["diamond"]),
                 "xp": int(fresh["xp"]), "level": int(fresh["level"]),
@@ -507,6 +585,13 @@ def handlers(
                 STATUS_MAX_TIMES, f"count {count} + {times} > maxcount {maxcount}",
                 count,
             )
+        master = chapter_type(cfg, lvl) == CHAPTER_SIGNET
+        if master:
+            left = signet.settle_fights(conn, cfg, player_id)
+            if left < times:
+                return _refused(
+                    signet.STATUS_NO_FIGHTS, f"{left} signet fights < {times}", count
+                )
 
         visible_id = _required(stage, "visible_drops", lvl)
         invisible_id = _required(stage, "invisible_drops", lvl)
@@ -518,9 +603,11 @@ def handlers(
         prizes = [t for rolled in per_time for t in drops.as_triples(rolled)]
         prizes.append((item.CATEGORY_GOLD, 0, gold))
         # grant_prizes vets the whole list before it writes, so it runs first.
-        granted = item.grant_prizes(conn, cfg, player_id, prizes)
+        granted, mailed = _grant_stage_prizes(conn, cfg, player_id, prizes)
         db.spend_energy(conn, player_id, cost)
         mystery.on_energy_spent(conn, cfg, registry, session, player_id, cost)
+        if master:
+            fights_left = signet.spend_fights(conn, cfg, player_id, times)
         _ensure_row(conn, player_id, lvl)
         new_count = int(
             db.upsert_level(conn, player_id, lvl, count_delta=times)["count"]
@@ -537,17 +624,26 @@ def handlers(
                 entry.drop.add().CopyFrom(prize)
         # prizes is every time's drops in order, then the gold.
         item.mark_converted([d for e in res.drops for d in e.drop], granted)
+        _mark_signets([d for e in res.drops for d in e.drop], granted)
+        if mailed:
+            res.if_mail = True
 
         fresh = conn.execute(
             "SELECT * FROM players WHERE id = ?", (player_id,)
         ).fetchone()
         item.announce(registry, session, granted)
         notify.items_changed(registry, session, granted["items"])
-        notify.player_changed(registry, session, {
+        signet.obtained(registry, conn, cfg, session, granted["signets"], rng)
+        if mailed:
+            signet.bag_full(registry, session)
+        changed = {
             "gold": int(fresh["gold"]), "xp": int(fresh["xp"]),
             "level": int(fresh["level"]), "energy": int(fresh["energy"]),
             "max_energy": int(fresh["max_energy"]),
-        })
+        }
+        if master:
+            changed["signet_fight_cnt"] = fights_left
+        notify.player_changed(registry, session, changed)
         if xp_change["levelled"]:
             before, after = xp_change["before"], xp_change["after"]
             notify.level_up(
